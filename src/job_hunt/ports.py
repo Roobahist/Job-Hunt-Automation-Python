@@ -4,7 +4,13 @@ from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Protocol
 
-from job_hunt.domain.models import ArtifactBundle, Job, Qualification, TailoredContent
+from job_hunt.domain.models import (
+    ArtifactBundle,
+    Job,
+    PromptDefinition,
+    Qualification,
+    TailoredContent,
+)
 
 
 class JobRepository(Protocol):
@@ -17,13 +23,19 @@ class JobRepository(Protocol):
 
 class Qualifier(Protocol):
     def qualify(
-        self, job: Job, master_cv: Mapping[str, Any], prompts: Mapping[str, str]
+        self,
+        job: Job,
+        master_cv: Mapping[str, Any],
+        prompts: Mapping[str, PromptDefinition],
     ) -> Qualification: ...
 
 
 class Tailor(Protocol):
     def tailor(
-        self, job: Job, master_cv: Mapping[str, Any], prompts: Mapping[str, str]
+        self,
+        job: Job,
+        master_cv: Mapping[str, Any],
+        prompts: Mapping[str, PromptDefinition],
     ) -> TailoredContent: ...
 
 
