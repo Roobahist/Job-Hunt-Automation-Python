@@ -4,6 +4,7 @@ import json
 from collections.abc import Iterable
 from contextlib import ExitStack
 from pathlib import Path
+from typing import Any, cast
 
 import httpx
 
@@ -17,7 +18,7 @@ class TelegramNotifier:
             base_url=f"https://api.telegram.org/bot{token}", timeout=60
         )
 
-    def _post(self, path: str, **kwargs: object) -> dict[str, object]:
+    def _post(self, path: str, **kwargs: Any) -> dict[str, object]:
         try:
             response = self._client.post(path, **kwargs)
         except httpx.TransportError as exc:
@@ -28,8 +29,7 @@ class TelegramNotifier:
                 provider="telegram",
             ) from exc
         raise_provider_error("telegram", response)
-        payload = response.json()
-        return dict(payload)
+        return cast(dict[str, object], response.json())
 
     def send_documents(self, chat_id: str, artifacts: Iterable[Path], caption: str) -> str:
         paths = list(artifacts)
