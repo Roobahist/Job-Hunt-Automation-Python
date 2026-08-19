@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
+from pydantic import ValidationError
+
 from job_hunt.config import TenantRuntimeConfig, parse_configuration_rows
+from job_hunt.domain.models import PromptDefinition
 from job_hunt.errors import ConfigurationError
 from job_hunt.integrations.baserow import BaserowClient
 
@@ -22,6 +26,63 @@ REQUIRED_JOB_FIELDS = {
     "Contract Type",
 }
 
+REQUIRED_PROMPT_KEYS = {
+    "cv_project_selection",
+    "cv_project_rewrite",
+    "cv_work_experience_selection",
+    "cv_work_experience_rewrite",
+    "cv_skills_tailoring",
+    "cv_summary_rewrite",
+    "cover_letter_generation",
+    "job_page_content_extraction",
+    "qualification_scoring",
+}
+
+
+def _field(row: dict[str, Any], *names: str) -> Any:
+    for name in names:
+        if name in row and row[name] is not None:
+            return row[name]
+    return None
+
+
+def _scalar(value: Any) -> Any:
+    if isinstance(value, dict):
+        for key in ("value", "name"):
+            if value.get(key) is not None:
+                return value[key]
+        return value.get("id")
+    if isinstance(value, list) and len(value) == 1:
+        return _scalar(value[0])
+    return value
+
+
+def _enabled(value: Any) -> bool:
+    value = _scalar(value)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value == 1
+    if isinstance(value, str):
+        return value.strip().lower() in {"true", "1", "yes", "enabled"}
+    return False
+
+
+def _output_schema(value: Any, key: str) -> dict[str, Any]:
+    value = _scalar(value)
+    if isinstance(value, dict):
+        schema = value
+    elif isinstance(value, str) and value.strip():
+        try:
+            schema = json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise ConfigurationError(f"Prompt '{key}' has invalid Output Structure JSON") from exc
+    else:
+        raise ConfigurationError(f"Prompt '{key}' has no Output Structure JSON Schema")
+    if not isinstance(schema, dict):
+        raise ConfigurationError(f"Prompt '{key}' Output Structure must be a JSON object")
+    return schema
+
 
 class BaserowConfigurationRepository:
     def __init__(self, client: BaserowClient, configuration_table_id: int) -> None:
@@ -35,22 +96,63 @@ class BaserowConfigurationRepository:
             )
         return parse_configuration_rows(list(self.client.iter_rows(self.configuration_table_id)))
 
-    def prompts(self, table_id: int) -> dict[str, str]:
-        prompts: dict[str, str] = {}
-        for row in self.client.iter_rows(table_id):
-            enabled = row.get("Enabled", row.get("enabled", True))
-            if not enabled:
+    def prompts(self, table_id: int) -> dict[str, PromptDefinition]:
+        prompts: dict[str, PromptDefinition] = {}
+        for raw_row in self.client.iter_rows(table_id):
+            row = dict(raw_row)
+            if not _enabled(_field(row, "Enabled", "enabled")):
                 continue
-            key = str(row.get("Key", row.get("key", ""))).strip()
-            content = str(row.get("Prompt", row.get("prompt", ""))).strip()
-            if key and content:
-                if key in prompts:
-                    raise ConfigurationError(f"Duplicate enabled prompt: {key}")
-                prompts[key] = content
-        if "qualification" not in prompts:
-            raise ConfigurationError("Missing required prompt: qualification")
-        if not any(key != "qualification" for key in prompts):
-            raise ConfigurationError("At least one CV or cover-letter tailoring prompt is required")
+            status = str(_scalar(_field(row, "Status", "status")) or "").strip()
+            if status != "Active":
+                continue
+            key = str(
+                _scalar(_field(row, "Prompt Key", "Key", "prompt_key", "key")) or ""
+            ).strip()
+            if not key:
+                continue
+            if key in prompts:
+                raise ConfigurationError(f"Duplicate active prompt: {key}")
+            template = str(
+                _scalar(
+                    _field(
+                        row,
+                        "Prompt Template",
+                        "Prompt",
+                        "Template",
+                        "prompt_template",
+                        "prompt",
+                    )
+                )
+                or ""
+            ).strip()
+            if not template:
+                raise ConfigurationError(f"Prompt '{key}' has no Prompt Template")
+            try:
+                version = float(_scalar(_field(row, "Version", "Prompt Version", "version")))
+                temperature = float(_scalar(_field(row, "Temperature", "temperature")))
+                prompt = PromptDefinition(
+                    key=key,
+                    version=version,
+                    template=template,
+                    output_structure=_output_schema(
+                        _field(
+                            row,
+                            "Output Structure",
+                            "Output Schema",
+                            "output_structure",
+                            "output_schema",
+                        ),
+                        key,
+                    ),
+                    temperature=temperature,
+                )
+            except (TypeError, ValueError, ValidationError) as exc:
+                raise ConfigurationError(f"Invalid active prompt '{key}': {exc}") from exc
+            prompts[key] = prompt
+
+        missing = REQUIRED_PROMPT_KEYS - prompts.keys()
+        if missing:
+            raise ConfigurationError(f"Missing active prompts: {sorted(missing)}")
         return prompts
 
     def validate_job_table(self, table_id: int) -> None:
