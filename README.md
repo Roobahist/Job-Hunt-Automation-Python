@@ -10,7 +10,7 @@ A Python 3.12, multi-tenant replacement for the Mahsa and Mojtaba n8n workflows.
 - Redis provides queues, run state, replay data, locks, and idempotency coordination.
 - Baserow remains the business system of record and prompt/configuration source.
 
-Documents are generated only when `score >= qualification_threshold` **and** `should_apply` is true. Authenticated API/CLI submissions can deliberately pass `force=true`; Fillout and scheduled discovery cannot.
+Documents are generated when `score >= qualification_threshold`. The `should_apply` value is retained as qualification metadata but does not gate document generation. Authenticated API/CLI submissions can deliberately pass `force=true`; Fillout and scheduled discovery cannot.
 
 ## Local setup
 
