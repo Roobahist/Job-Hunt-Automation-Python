@@ -14,6 +14,17 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from job_hunt.errors import ConfigurationError
 
 
+_DEFAULT_GEMINI_LIMITS = {
+    "gemini-3.6-flash": {"rpm": 5, "tpm": 250000, "rpd": 20},
+    "gemini-3.5-flash": {"rpm": 5, "tpm": 250000, "rpd": 20},
+    "gemini-3-flash-preview": {"rpm": 5, "tpm": 250000, "rpd": 20},
+    "gemini-2.5-flash": {"rpm": 5, "tpm": 250000, "rpd": 20},
+    "gemini-3.5-flash-lite": {"rpm": 15, "tpm": 250000, "rpd": 500},
+    "gemini-3.1-flash-lite": {"rpm": 15, "tpm": 250000, "rpd": 500},
+    "gemini-2.5-flash-lite": {"rpm": 10, "tpm": 250000, "rpd": 20},
+}
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="JOB_HUNT_", env_file=".env", extra="ignore")
 
@@ -25,6 +36,7 @@ class Settings(BaseSettings):
     run_ttl_seconds: int = 604800
     discovery_snapshot_ttl_seconds: int = Field(default=7200, ge=300)
     llm_checkpoint_ttl_seconds: int = Field(default=604800, ge=300)
+    llm_parallelism: int = Field(default=3, ge=1, le=8)
 
     # Provider capacity is shared by every tenant. Each configured key belongs to a separate
     # free-tier account, while all tenants consume the same ordered account pool.
@@ -37,6 +49,7 @@ class Settings(BaseSettings):
     gemini_repair_models: str = (
         "gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-2.5-flash-lite"
     )
+    gemini_limits_json: str = json.dumps(_DEFAULT_GEMINI_LIMITS, separators=(",", ":"))
     provider_quota_cooldown_seconds: int = Field(default=3600, ge=60)
 
     @staticmethod
@@ -76,6 +89,35 @@ class Settings(BaseSettings):
                 "JOB_HUNT_GEMINI_REPAIR_MODELS must contain at least one model"
             )
         return models
+
+    def gemini_limits(self) -> dict[str, dict[str, int]]:
+        try:
+            raw = json.loads(self.gemini_limits_json)
+        except json.JSONDecodeError as exc:
+            raise ConfigurationError("JOB_HUNT_GEMINI_LIMITS_JSON must be valid JSON") from exc
+        if not isinstance(raw, dict):
+            raise ConfigurationError("JOB_HUNT_GEMINI_LIMITS_JSON must be a JSON object")
+        result: dict[str, dict[str, int]] = {}
+        for model, limits in raw.items():
+            if not isinstance(model, str) or not isinstance(limits, dict):
+                raise ConfigurationError("Every Gemini limits entry must map a model to an object")
+            normalized: dict[str, int] = {}
+            for name in ("rpm", "tpm", "rpd"):
+                value = limits.get(name)
+                if value is not None:
+                    try:
+                        integer = int(value)
+                    except (TypeError, ValueError) as exc:
+                        raise ConfigurationError(
+                            f"Gemini limit {model}.{name} must be an integer"
+                        ) from exc
+                    if integer < 1:
+                        raise ConfigurationError(
+                            f"Gemini limit {model}.{name} must be positive"
+                        )
+                    normalized[name] = integer
+            result[model.removeprefix("models/")] = normalized
+        return result
 
 
 class SecretAliases(BaseModel):
