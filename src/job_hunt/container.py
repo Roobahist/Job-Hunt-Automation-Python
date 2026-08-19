@@ -2,15 +2,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
+
+from redis import Redis
 
 from job_hunt.application.normalization import SubmissionNormalizer
 from job_hunt.application.workflow import ApplicationWorkflow
 from job_hunt.config import Settings, TenantRuntimeConfig, load_registry
 from job_hunt.domain.models import PromptDefinition
 from job_hunt.integrations.apify import ApifyProvider
-from job_hunt.integrations.artifacts import CloudinaryBaserowPublisher
+from job_hunt.integrations.artifacts import BaserowArtifactPublisher
 from job_hunt.integrations.baserow import BaserowClient, BaserowJobRepository
-from job_hunt.integrations.cloudinary import CloudinaryPublisher
 from job_hunt.integrations.configuration import (
     MAHSA_PROMPT_KEYS,
     MOJTABA_PROMPT_KEYS,
@@ -21,6 +23,7 @@ from job_hunt.integrations.gemini import GeminiWorkflowAI
 from job_hunt.integrations.gemini_mahsa import MahsaGeminiWorkflowAI
 from job_hunt.integrations.gemini_pool import PooledGeminiStructuredClient
 from job_hunt.integrations.telegram import TelegramNotifier
+from job_hunt.state import RedisState
 from job_hunt.tenants.registry import TenantContext, TenantRegistry
 
 
@@ -34,6 +37,15 @@ class TenantServices:
     normalizer: SubmissionNormalizer
     workflow: ApplicationWorkflow
     discovery: ApifyProvider
+    notifier: TelegramNotifier
+
+    def snapshot(self) -> dict[str, Any]:
+        return {
+            "config": self.config.model_dump(mode="json"),
+            "prompts": {
+                key: definition.model_dump(mode="json") for key, definition in self.prompts.items()
+            },
+        }
 
 
 class Container:
@@ -41,34 +53,48 @@ class Container:
         self.settings = settings or Settings()
         self.project_root = project_root
         self.registry = TenantRegistry(load_registry(self.settings.registry_path), project_root)
+        self.redis = Redis.from_url(self.settings.redis_url, decode_responses=True)
+        self.state = RedisState(self.redis)
 
-    def tenant(self, key: str) -> TenantServices:
+    def tenant(self, key: str, snapshot: dict[str, Any] | None = None) -> TenantServices:
         context = self.registry.get(key)
         bootstrap = context.bootstrap
         baserow = BaserowClient(bootstrap.secret("baserow"), bootstrap.baserow_base_url)
         config_repository = BaserowConfigurationRepository(baserow, bootstrap.config_table_id)
-        config = config_repository.load()
-        if config.tenant_key not in {
-            key,
-            key.replace("_", "-"),
-        } and not config.tenant_key.startswith(key):
+
+        if snapshot is None:
+            config = config_repository.load()
+            config_repository.validate_job_table(config.baserow_table_ids["jobs"])
+            prompts = config_repository.prompts(config.baserow_table_ids["prompts"])
+        else:
+            config = TenantRuntimeConfig.model_validate(snapshot.get("config"))
+            raw_prompts = snapshot.get("prompts")
+            if not isinstance(raw_prompts, dict):
+                raise ValueError("Discovery snapshot has no prompt definitions")
+            prompts = {
+                str(prompt_key): PromptDefinition.model_validate(value)
+                for prompt_key, value in raw_prompts.items()
+            }
+
+        if config.tenant_key not in {key, key.replace("_", "-")} and not config.tenant_key.startswith(key):
             raise ValueError(
                 f"Registry tenant {key} does not match Baserow tenant_key {config.tenant_key}"
             )
-        config_repository.validate_job_table(config.baserow_table_ids["jobs"])
-        prompts = config_repository.prompts(config.baserow_table_ids["prompts"])
 
         discovery = ApifyProvider(
             self.settings.shared_apify_tokens(),
             config.apify_actor_ids["linkedinSearch"],
             config.apify_actor_ids["linkedinSingleJob"],
             quota_cooldown_seconds=self.settings.provider_quota_cooldown_seconds,
+            state=self.state,
         )
         structured_client = PooledGeminiStructuredClient(
             self.settings.shared_gemini_keys(),
             self.settings.content_models(),
             self.settings.repair_models(),
             quota_cooldown_seconds=self.settings.provider_quota_cooldown_seconds,
+            state=self.state,
+            checkpoint_ttl_seconds=self.settings.llm_checkpoint_ttl_seconds,
         )
 
         if bootstrap.renderer == "mahsa":
@@ -99,13 +125,18 @@ class Container:
             ai,
             ai,
             context.renderer,
-            CloudinaryBaserowPublisher(
-                CloudinaryPublisher(bootstrap.secret("cloudinary")), baserow
-            ),
-            TelegramNotifier(bootstrap.secret("telegram")),
+            BaserowArtifactPublisher(baserow),
             self.settings.artifact_root,
         )
         normalizer = SubmissionNormalizer(discovery, ai, config.linkedin_job_url_template)
         return TenantServices(
-            context, config, baserow, config_repository, prompts, normalizer, workflow, discovery
+            context,
+            config,
+            baserow,
+            config_repository,
+            prompts,
+            normalizer,
+            workflow,
+            discovery,
+            TelegramNotifier(bootstrap.secret("telegram")),
         )
