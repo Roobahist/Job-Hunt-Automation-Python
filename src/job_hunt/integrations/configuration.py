@@ -28,23 +28,22 @@ REQUIRED_JOB_FIELDS = {
     "Contract Type",
 }
 
-REQUIRED_PROMPT_KEYS = {
+COMMON_PROMPT_KEYS = {
+    "cover_letter_generation",
+    "job_page_content_extraction",
+    "qualification_scoring",
+}
+
+MOJTABA_PROMPT_KEYS = COMMON_PROMPT_KEYS | {
     "cv_project_selection",
     "cv_project_rewrite",
     "cv_work_experience_selection",
     "cv_work_experience_rewrite",
     "cv_skills_tailoring",
     "cv_summary_rewrite",
-    "cover_letter_generation",
-    "job_page_content_extraction",
-    "qualification_scoring",
 }
 
-_LEGACY_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {"result": {}},
-    "additionalProperties": True,
-}
+MAHSA_PROMPT_KEYS = MOJTABA_PROMPT_KEYS | {"cv_references_inclusion"}
 
 
 def _field(row: dict[str, Any], *names: str) -> Any:
@@ -100,18 +99,14 @@ def _output_schema(value: Any, key: str) -> dict[str, Any]:
     return schema
 
 
-def _is_modern_row(row: dict[str, Any]) -> bool:
-    return any(
-        name in row
-        for name in (
-            "Prompt Key",
-            "Version",
-            "Prompt Template",
-            "Output Structure",
-            "Temperature",
-            "Status",
+def validate_prompt_contract(
+    prompts: dict[str, PromptDefinition], required: set[str], profile: str
+) -> None:
+    missing = required - prompts.keys()
+    if missing:
+        raise ConfigurationError(
+            f"Missing active prompts for {profile}: {sorted(missing)}"
         )
-    )
 
 
 class BaserowConfigurationRepository:
@@ -128,16 +123,13 @@ class BaserowConfigurationRepository:
 
     def prompts(self, table_id: int) -> dict[str, PromptDefinition]:
         prompts: dict[str, PromptDefinition] = {}
-        modern_contract_seen = False
         for raw_row in self.client.iter_rows(table_id):
             row = dict(raw_row)
             if not _enabled(_field(row, "Enabled", "enabled")):
                 continue
 
-            modern = _is_modern_row(row)
-            modern_contract_seen = modern_contract_seen or modern
             status_value = _scalar(_field(row, "Status", "status"))
-            if modern and str(status_value or "").strip() != "Active":
+            if str(status_value or "").strip() != "Active":
                 continue
 
             key = str(
@@ -146,8 +138,7 @@ class BaserowConfigurationRepository:
             if not key:
                 continue
             if key in prompts:
-                label = "active " if modern else "enabled "
-                raise ConfigurationError(f"Duplicate {label}prompt: {key}")
+                raise ConfigurationError(f"Duplicate active prompt: {key}")
 
             template = str(
                 _scalar(
@@ -166,10 +157,11 @@ class BaserowConfigurationRepository:
                 raise ConfigurationError(f"Prompt '{key}' has no Prompt Template")
 
             try:
-                if modern:
-                    version = float(_scalar(_field(row, "Version", "Prompt Version", "version")))
-                    temperature = float(_scalar(_field(row, "Temperature", "temperature")))
-                    schema = _output_schema(
+                prompt = PromptDefinition(
+                    key=key,
+                    version=float(_scalar(_field(row, "Version", "Prompt Version", "version"))),
+                    template=template,
+                    output_structure=_output_schema(
                         _field(
                             row,
                             "Output Structure",
@@ -178,33 +170,16 @@ class BaserowConfigurationRepository:
                             "output_schema",
                         ),
                         key,
-                    )
-                else:
-                    version = 1.0
-                    temperature = 0.2
-                    schema = _LEGACY_SCHEMA
-                prompt = PromptDefinition(
-                    key=key,
-                    version=version,
-                    template=template,
-                    output_structure=schema,
-                    temperature=temperature,
+                    ),
+                    temperature=float(_scalar(_field(row, "Temperature", "temperature"))),
                 )
             except (TypeError, ValueError, ValidationError) as exc:
                 raise ConfigurationError(f"Invalid active prompt '{key}': {exc}") from exc
             prompts[key] = prompt
 
-        if "qualification_scoring" in prompts or modern_contract_seen:
-            missing = REQUIRED_PROMPT_KEYS - prompts.keys()
-            if missing:
-                raise ConfigurationError(f"Missing active prompts: {sorted(missing)}")
-        else:
-            if "qualification" not in prompts:
-                raise ConfigurationError("Missing required prompt: qualification")
-            if not any(key != "qualification" for key in prompts):
-                raise ConfigurationError(
-                    "At least one CV or cover-letter tailoring prompt is required"
-                )
+        missing_common = COMMON_PROMPT_KEYS - prompts.keys()
+        if missing_common:
+            raise ConfigurationError(f"Missing active prompts: {sorted(missing_common)}")
         return prompts
 
     def validate_job_table(self, table_id: int) -> None:
