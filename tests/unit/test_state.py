@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-
 from job_hunt.state import RedisState
 
 
 class Pipeline:
-    def __init__(self, redis: "FakeRedis") -> None:
+    def __init__(self, redis: FakeRedis) -> None:
         self.redis = redis
         self.operations: list[tuple[str, tuple[object, ...]]] = []
 
