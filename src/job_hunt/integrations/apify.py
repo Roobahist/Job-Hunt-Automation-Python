@@ -80,17 +80,16 @@ class ApifyProvider:
         return self.quota_cooldown_seconds
 
     def _available_tokens(self) -> list[str]:
-        if self.state is not None:
+        state = self.state
+        if state is not None:
             available = [
-                token
-                for token in self.tokens
-                if self.state.available("apify", self._token_id(token))
+                token for token in self.tokens if state.available("apify", self._token_id(token))
             ]
             if available:
                 return available
             return sorted(
                 self.tokens,
-                key=lambda token: self.state.remaining_cooldown("apify", self._token_id(token)),
+                key=lambda token: state.remaining_cooldown("apify", self._token_id(token)),
             )[:1]
 
         now = time.monotonic()
