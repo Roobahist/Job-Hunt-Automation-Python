@@ -113,15 +113,26 @@ def process(workflow: ApplicationWorkflow, *, force: bool = False) -> object:
     )
 
 
-def test_failed_gate_stops_expensive_side_effects() -> None:
+def test_below_threshold_stops_expensive_side_effects() -> None:
     repo = Repository()
     workflow, publisher, notifier = make_workflow(
-        repo, Qualification(score=90, should_apply=False, reasoning="no")
+        repo, Qualification(score=32, should_apply=True, reasoning="low")
     )
     result = process(workflow)
     assert not result.passed  # type: ignore[attr-defined]
     assert publisher.calls == notifier.calls == 0
     assert ("qualification", False) in repo.calls
+
+
+def test_should_apply_does_not_block_documents_above_threshold() -> None:
+    repo = Repository()
+    workflow, publisher, notifier = make_workflow(
+        repo, Qualification(score=90, should_apply=False, reasoning="metadata only")
+    )
+    result = process(workflow)
+    assert result.passed  # type: ignore[attr-defined]
+    assert publisher.calls == notifier.calls == 1
+    assert ("qualification", True) in repo.calls
 
 
 def test_force_processes_and_existing_job_resets_first() -> None:
