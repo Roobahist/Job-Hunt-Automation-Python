@@ -30,9 +30,7 @@ def _render(template: str, values: Mapping[str, object], prompt_key: str) -> str
         rendered = rendered.replace(f"[[{key}]]", _compact(value))
     unresolved = sorted(set(_PLACEHOLDER.findall(rendered)))
     if unresolved:
-        raise ConfigurationError(
-            f"Prompt '{prompt_key}' contains unresolved placeholders: {unresolved}"
-        )
+        raise ConfigurationError(f"Prompt '{prompt_key}' contains unresolved placeholders: {unresolved}")
     return rendered
 
 
@@ -179,9 +177,7 @@ class GeminiWorkflowAI:
         self.work_experience_selection_count = work_experience_selection_count
 
     @staticmethod
-    def _definition(
-        prompts: Mapping[str, PromptDefinition], key: str
-    ) -> PromptDefinition:
+    def _definition(prompts: Mapping[str, PromptDefinition], key: str) -> PromptDefinition:
         try:
             return prompts[key]
         except KeyError as exc:
@@ -275,8 +271,7 @@ class GeminiWorkflowAI:
                 raise ValueError(f"Invalid project index: {index}")
         selected = [projects[index] for index in indices]
         rewrite_inputs = [
-            {"title": project.get("title", ""), "content": project.get("content", [])}
-            for project in selected
+            {"title": project.get("title", ""), "content": project.get("content", [])} for project in selected
         ]
         rewritten = self._run(
             self._definition(prompts, "cv_project_rewrite"),
@@ -317,9 +312,7 @@ class GeminiWorkflowAI:
             content = experience.get("content")
             if not isinstance(content, list) or any(not isinstance(x, str) for x in content):
                 raise ValueError(f"Work experience at index {index} must have string content bullets")
-            inputs.append(
-                {"index": index, **{k: v for k, v in experience.items() if k != "description"}}
-            )
+            inputs.append({"index": index, **{k: v for k, v in experience.items() if k != "description"}})
 
         selection = self._run(
             self._definition(prompts, "cv_work_experience_selection"),
@@ -526,8 +519,6 @@ class GeminiWorkflowAI:
             title=str(title),
             description=str(description),
             location=(str(generated["location"]) if generated.get("location") is not None else None),
-            contract_type=(
-                str(generated["contract_type"]) if generated.get("contract_type") is not None else None
-            ),
+            contract_type=(str(generated["contract_type"]) if generated.get("contract_type") is not None else None),
         )
         return assign_identity(job)

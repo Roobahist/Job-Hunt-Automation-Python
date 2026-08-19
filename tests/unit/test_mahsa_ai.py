@@ -29,12 +29,8 @@ def test_mahsa_profile_reuses_shared_operations_and_preserves_sections() -> None
             calls.append(prompt.key)
             outputs: dict[str, dict[str, Any]] = {
                 "cv_work_experience_selection": {"selected_indices": [1]},
-                "cv_work_experience_rewrite": {
-                    "contents": [["Parent tailored"], ["Nested tailored"]]
-                },
-                "cv_skills_tailoring": {
-                    "groups": [{"label": "Design", "skills": ["Figma", "Framer"]}]
-                },
+                "cv_work_experience_rewrite": {"contents": [["Parent tailored"], ["Nested tailored"]]},
+                "cv_skills_tailoring": {"groups": [{"label": "Design", "skills": ["Figma", "Framer"]}]},
                 "cv_references_inclusion": {"include_references": False},
                 "cv_summary_rewrite": {"summary": ["Tailored summary"]},
                 "cover_letter_generation": {"paragraphs": ["One", "Two", "Three"]},

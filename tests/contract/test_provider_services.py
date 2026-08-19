@@ -12,10 +12,7 @@ from job_hunt.integrations.gemini import GeminiStructuredClient, GeminiWorkflowA
 
 
 def bundle(tmp_path: Path) -> ArtifactBundle:
-    paths = [
-        tmp_path / name
-        for name in ("cv.json", "cv.tex", "cv.pdf", "cl.json", "cl.tex", "cl.pdf", "all.zip")
-    ]
+    paths = [tmp_path / name for name in ("cv.json", "cv.tex", "cv.pdf", "cl.json", "cl.tex", "cl.pdf", "all.zip")]
     for path in paths:
         path.write_text("x")
     return ArtifactBundle(
@@ -72,9 +69,7 @@ def test_gemini_schema_failure_calls_auto_fix(monkeypatch: pytest.MonkeyPatch) -
     client = GeminiStructuredClient("primary", "backup", "models/test")
     calls: list[str] = []
 
-    def structured_call(
-        key: str, _: str, __: dict[str, Any], ___: float
-    ) -> tuple[dict[str, Any], str, None]:
+    def structured_call(key: str, _: str, __: dict[str, Any], ___: float) -> tuple[dict[str, Any], str, None]:
         calls.append(key)
         if len(calls) == 1:
             return {"paragraphs": ["one"]}, '{"paragraphs":["one"]}', None
@@ -116,9 +111,7 @@ def test_gemini_workflow_ai_runs_separate_prompt_operations() -> None:
         },
         "cv_project_selection": {
             "type": "object",
-            "properties": {
-                "selected_indices": {"type": "array", "items": {"type": "integer"}}
-            },
+            "properties": {"selected_indices": {"type": "array", "items": {"type": "integer"}}},
             "required": ["selected_indices"],
         },
         "cv_project_rewrite": {
@@ -133,9 +126,7 @@ def test_gemini_workflow_ai_runs_separate_prompt_operations() -> None:
         },
         "cv_work_experience_selection": {
             "type": "object",
-            "properties": {
-                "selected_indices": {"type": "array", "items": {"type": "integer"}}
-            },
+            "properties": {"selected_indices": {"type": "array", "items": {"type": "integer"}}},
             "required": ["selected_indices"],
         },
         "cv_work_experience_rewrite": {
@@ -208,9 +199,7 @@ def test_gemini_workflow_ai_runs_separate_prompt_operations() -> None:
                 "cv_project_rewrite": {"contents": [["Tailored project"]]},
                 "cv_work_experience_selection": {"selected_indices": [0]},
                 "cv_work_experience_rewrite": {"contents": [["Tailored work"]]},
-                "cv_skills_tailoring": {
-                    "groups": [{"label": "Programming", "skills": ["Python"]}]
-                },
+                "cv_skills_tailoring": {"groups": [{"label": "Programming", "skills": ["Python"]}]},
                 "cv_summary_rewrite": {"summary": ["Tailored summary"]},
                 "cover_letter_generation": {"paragraphs": ["One", "Two", "Three"]},
                 "job_page_content_extraction": {
@@ -225,9 +214,7 @@ def test_gemini_workflow_ai_runs_separate_prompt_operations() -> None:
         "summary": ["Old"],
         "skills": [{"label": "Programming", "value": "Python, R"}],
         "projects": [{"title": "P", "content": ["Old project"]}],
-        "work_experience": [
-            {"title": "W", "organization": "O", "content": ["Old work"]}
-        ],
+        "work_experience": [{"title": "W", "organization": "O", "content": ["Old work"]}],
     }
     ai = GeminiWorkflowAI(Structured(), prompts, project_selection_count=1)  # type: ignore[arg-type]
     job = Job(source="x", url="https://x/1", company_name="C", title="T", description="D")

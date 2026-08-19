@@ -1,27 +1,27 @@
 INSTALL_EXIT=0
 Using CPython 3.12.3 interpreter at: /usr/bin/python3.12
 Creating virtual environment at: .venv
-Resolved 111 packages in 153ms
+Resolved 112 packages in 1.02s
    Building job-hunt-automation @ file:///home/runner/work/Job-Hunt-Automation-Python/Job-Hunt-Automation-Python
-Downloading zstandard (5.3MiB)
-Downloading uvloop (4.2MiB)
-Downloading cryptography (4.5MiB)
 Downloading pygments (1.2MiB)
 Downloading impit (4.0MiB)
 Downloading mypy (14.1MiB)
 Downloading pydantic-core (2.0MiB)
+Downloading uvloop (4.2MiB)
 Downloading ruff (10.5MiB)
+Downloading zstandard (5.3MiB)
+Downloading cryptography (4.5MiB)
  Downloaded pydantic-core
- Downloaded pygments
  Downloaded impit
  Downloaded zstandard
- Downloaded uvloop
  Downloaded ruff
+ Downloaded uvloop
  Downloaded cryptography
+ Downloaded pygments
       Built job-hunt-automation @ file:///home/runner/work/Job-Hunt-Automation-Python/Job-Hunt-Automation-Python
  Downloaded mypy
-Prepared 111 packages in 1.56s
-Installed 111 packages in 194ms
+Prepared 112 packages in 2.05s
+Installed 112 packages in 272ms
  + amqp==5.3.1
  + annotated-doc==0.0.5
  + annotated-types==0.8.0
@@ -118,6 +118,7 @@ Installed 111 packages in 194ms
  + tenacity==9.1.4
  + tornado==6.5.8
  + typer==0.27.1
+ + types-jsonschema==4.26.0.20260518
  + typing-extensions==4.16.0
  + typing-inspection==0.4.4
  + tzdata==2026.3
@@ -137,939 +138,23 @@ Installed 111 packages in 194ms
 RUFF_EXIT=0
 All checks passed!
 
-FORMAT_EXIT=1
-unformatted: File would be reformatted
-   --> src/job_hunt/api/app.py:75:29
-    |
-74  |     async def configuration_error(_: Request, exc: ConfigurationError) -> JSONResponse:
-    -         return JSONResponse(
-    -             status_code=503, content={"error": "configuration_error", "message": str(exc)}
-    -         )
-75  +         return JSONResponse(status_code=503, content={"error": "configuration_error", "message": str(exc)})
-76  |
-77  |     @app.exception_handler(WorkflowError)
-78  |     async def workflow_error(_: Request, exc: WorkflowError) -> JSONResponse:
-79  |         code = 400 if exc.kind.value == "validation" else 502
-    -         return JSONResponse(
-    -             status_code=code, content={"error": exc.kind.value, "message": str(exc)}
-    -         )
-80  +         return JSONResponse(status_code=code, content={"error": exc.kind.value, "message": str(exc)})
-81  |
---------------------------------------------------------------------------------
-94  |         except Exception as exc:
-    -             raise HTTPException(
-    -                 status.HTTP_503_SERVICE_UNAVAILABLE, "Redis is unavailable"
-    -             ) from exc
-95  +             raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Redis is unavailable") from exc
-96  |         return {"status": "ready"}
---------------------------------------------------------------------------------
-107 |         submission_root = payload.get("submission", {})
-    -         nested_form_id = (
-    -             submission_root.get("formId") if isinstance(submission_root, dict) else None
-    -         )
-108 +         nested_form_id = submission_root.get("formId") if isinstance(submission_root, dict) else None
-109 |         form_id = payload.get("formId") or payload.get("form_id") or nested_form_id
-110 |         if form_id != services.config.fillout_form_id:
-    -             raise HTTPException(
-    -                 status.HTTP_400_BAD_REQUEST, "Fillout form ID does not match tenant"
-    -             )
-111 +             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Fillout form ID does not match tenant")
-112 |         submission = fillout_submission(payload, services.config.fillout_field_ids)
---------------------------------------------------------------------------------
-127 |         expected = services.context.bootstrap.secret("telegram_webhook", required=False)
-    -         if not expected or not x_telegram_bot_api_secret_token or not hmac.compare_digest(
-    -             expected, x_telegram_bot_api_secret_token
-128 +         if (
-129 +             not expected
-130 +             or not x_telegram_bot_api_secret_token
-131 +             or not hmac.compare_digest(expected, x_telegram_bot_api_secret_token)
-132 |         ):
-    |
-
-unformatted: File would be reformatted
-  --> src/job_hunt/application/discovery.py:21:12
-   |
-20 |     }
-   -     return (
-   -         base_url.rstrip("?")
-   -         + "?"
-   -         + urlencode({key: value for key, value in params.items() if value})
-   -     )
-21 +     return base_url.rstrip("?") + "?" + urlencode({key: value for key, value in params.items() if value})
-22 |
-   |
-
-unformatted: File would be reformatted
-   --> src/job_hunt/application/normalization.py:26:19
-    |
-25  |     title = data.get("title") or data.get("jobTitle") or data.get("job_title")
-    -     description = (
-    -         data.get("description") or data.get("jobDescription") or data.get("job_description")
-    -     )
-26  +     description = data.get("description") or data.get("jobDescription") or data.get("job_description")
-27  |     published = data.get("publishedAt") or data.get("published_at")
---------------------------------------------------------------------------------
-37  |             contract_type=str(data.get("contractType") or data.get("contract_type") or "") or None,
-    -             published_at=datetime.fromisoformat(str(published).replace("Z", "+00:00"))
-    -             if published
-    -             else None,
-38  +             published_at=datetime.fromisoformat(str(published).replace("Z", "+00:00")) if published else None,
-39  |         )
---------------------------------------------------------------------------------
-43  | class SubmissionNormalizer:
-    -     def __init__(
-    -         self, discovery: DiscoveryProvider, extractor: Any, linkedin_template: str
-    -     ) -> None:
-44  +     def __init__(self, discovery: DiscoveryProvider, extractor: Any, linkedin_template: str) -> None:
-45  |         self.discovery = discovery
---------------------------------------------------------------------------------
-69  |                 "id": raw.get("id", submission.linkedin_job_id),
-    -                 "url": raw.get(
-    -                     "url", self.linkedin_template.format(jobId=submission.linkedin_job_id)
-    -                 ),
-70  +                 "url": raw.get("url", self.linkedin_template.format(jobId=submission.linkedin_job_id)),
-71  |             }
---------------------------------------------------------------------------------
-77  |             return assign_identity(
-    -                 self.extractor.extract_job(
-    -                     submission.page_content, str(submission.source_url or "")
-    -                 )
-78  +                 self.extractor.extract_job(submission.page_content, str(submission.source_url or ""))
-79  |             )
---------------------------------------------------------------------------------
-101 |     if entry == EntryType.LINKEDIN:
-    -         return LinkedInSubmission(
-    -             entry_type=EntryType.LINKEDIN, linkedin_job_id=int(value("linkedinJobId"))
-    -         )
-102 +         return LinkedInSubmission(entry_type=EntryType.LINKEDIN, linkedin_job_id=int(value("linkedinJobId")))
-103 |     if entry == EntryType.EXTERNAL:
-    |
-
-unformatted: File would be reformatted
-   --> src/job_hunt/application/runs.py:106:34
-    |
-105 |             replay["checkpoint_namespace"] = (
-    -                 str(retry.run_id)
-    -                 if fresh
-    -                 else str(replay.get("checkpoint_namespace") or original.run_id)
-106 +                 str(retry.run_id) if fresh else str(replay.get("checkpoint_namespace") or original.run_id)
-107 |             )
-    |
-
-unformatted: File would be reformatted
-  --> src/job_hunt/cli.py:30:21
-   |
-29 | def _store(settings: Settings) -> RunStore:
-   -     return RunStore(
-   -         Redis.from_url(settings.redis_url, decode_responses=True), settings.run_ttl_seconds
-   -     )
-30 +     return RunStore(Redis.from_url(settings.redis_url, decode_responses=True), settings.run_ttl_seconds)
-31 |
-   |
-
-unformatted: File would be reformatted
-   --> src/job_hunt/config.py:48:33
-    |
-47  |     )
-    -     gemini_repair_models: str = (
-    -         "gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-2.5-flash-lite"
-    -     )
-48  +     gemini_repair_models: str = "gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-2.5-flash-lite"
-49  |     gemini_limits_json: str = json.dumps(_DEFAULT_GEMINI_LIMITS, separators=(",", ":"))
---------------------------------------------------------------------------------
-68  |     def content_models(self) -> list[str]:
-    -         models = [
-    -             model.removeprefix("models/")
-    -             for model in self._split_csv(self.gemini_content_models)
-    -         ]
-69  +         models = [model.removeprefix("models/") for model in self._split_csv(self.gemini_content_models)]
-70  |         if not models:
-    -             raise ConfigurationError(
-    -                 "JOB_HUNT_GEMINI_CONTENT_MODELS must contain at least one model"
-    -             )
-71  +             raise ConfigurationError("JOB_HUNT_GEMINI_CONTENT_MODELS must contain at least one model")
-72  |         return models
-73  |
-74  |     def repair_models(self) -> list[str]:
-    -         models = [
-    -             model.removeprefix("models/")
-    -             for model in self._split_csv(self.gemini_repair_models)
-    -         ]
-75  +         models = [model.removeprefix("models/") for model in self._split_csv(self.gemini_repair_models)]
-76  |         if not models:
-    -             raise ConfigurationError(
-    -                 "JOB_HUNT_GEMINI_REPAIR_MODELS must contain at least one model"
-    -             )
-77  +             raise ConfigurationError("JOB_HUNT_GEMINI_REPAIR_MODELS must contain at least one model")
-78  |         return models
---------------------------------------------------------------------------------
-97  |                     except (TypeError, ValueError) as exc:
-    -                         raise ConfigurationError(
-    -                             f"Gemini limit {model}.{name} must be an integer"
-    -                         ) from exc
-98  +                         raise ConfigurationError(f"Gemini limit {model}.{name} must be an integer") from exc
-99  |                     if integer < 1:
-    -                         raise ConfigurationError(
-    -                             f"Gemini limit {model}.{name} must be positive"
-    -                         )
-100 +                         raise ConfigurationError(f"Gemini limit {model}.{name} must be positive")
-101 |                     normalized[name] = integer
-    |
-
-unformatted: File would be reformatted
-  --> src/job_hunt/container.py:48:25
-   |
-47 |             "config": self.config.model_dump(mode="json"),
-   -             "prompts": {
-   -                 key: definition.model_dump(mode="json") for key, definition in self.prompts.items()
-   -             },
-48 +             "prompts": {key: definition.model_dump(mode="json") for key, definition in self.prompts.items()},
-49 |         }
---------------------------------------------------------------------------------
-80 |             prompts = {
-   -                 str(prompt_key): PromptDefinition.model_validate(value)
-   -                 for prompt_key, value in raw_prompts.items()
-81 +                 str(prompt_key): PromptDefinition.model_validate(value) for prompt_key, value in raw_prompts.items()
-82 |             }
-83 |
-84 |         if config.tenant_key not in {key, key.replace("_", "-")} and not config.tenant_key.startswith(key):
-   -             raise ValueError(
-   -                 f"Registry tenant {key} does not match Baserow tenant_key {config.tenant_key}"
-   -             )
-85 +             raise ValueError(f"Registry tenant {key} does not match Baserow tenant_key {config.tenant_key}")
-86 |
-   |
-
-unformatted: File would be reformatted
-  --> src/job_hunt/domain/identity.py:42:27
-   |
-41 |         candidate = stable_job_id(identity, salt=salt)
-   -     return job.model_copy(
-   -         update={"identity": identity, "internal_id": candidate, "url": canonicalize_url(job.url)}
-   -     )
-42 +     return job.model_copy(update={"identity": identity, "internal_id": candidate, "url": canonicalize_url(job.url)})
-   |
-
-unformatted: File would be reformatted
-   --> src/job_hunt/integrations/apify.py:84:26
-    |
-83  |         if self.state is not None:
-    -             available = [
-    -                 token
-    -                 for token in self.tokens
-    -                 if self.state.available("apify", self._token_id(token))
-    -             ]
-84  +             available = [token for token in self.tokens if self.state.available("apify", self._token_id(token))]
-85  |             if available:
---------------------------------------------------------------------------------
-93  |         with self._lock:
-    -             available = [
-    -                 token
-    -                 for token in self.tokens
-    -                 if self._unavailable_until.get(self._token_id(token), 0) <= now
-    -             ]
-94  +             available = [token for token in self.tokens if self._unavailable_until.get(self._token_id(token), 0) <= now]
-95  |             if available:
---------------------------------------------------------------------------------
-158 |
-    -     def fetch_linkedin(
-    -         self, job_id: int, *, country: str, max_concurrency: int
-    -     ) -> Mapping[str, Any]:
-159 +     def fetch_linkedin(self, job_id: int, *, country: str, max_concurrency: int) -> Mapping[str, Any]:
-160 |         items = list(
-    |
-
-unformatted: File would be reformatted
-   --> src/job_hunt/integrations/baserow.py:114:39
-    |
-113 |     def create(self, job: Job) -> Mapping[str, Any]:
-    -         return self.client.create_row(
-    -             self.table_id, self._job_fields(job) | {"Status": self.status_options["new"]}
-    -         )
-114 +         return self.client.create_row(self.table_id, self._job_fields(job) | {"Status": self.status_options["new"]})
-115 |
---------------------------------------------------------------------------------
-167 |         contract_key = aliases.get(normalized_contract)
-    -         contract_value: object = (
-    -             self.contract_type_options.get(contract_key, "") if contract_key else ""
-    -         )
-168 +         contract_value: object = self.contract_type_options.get(contract_key, "") if contract_key else ""
-169 |         return {
-    |
-
-unformatted: File would be reformatted
-   --> src/job_hunt/integrations/configuration.py:96:34
-    |
-95  |     except SchemaError as exc:
-    -         raise ConfigurationError(
-    -             f"Prompt '{key}' has invalid Output Structure JSON Schema: {exc.message}"
-    -         ) from exc
-96  +         raise ConfigurationError(f"Prompt '{key}' has invalid Output Structure JSON Schema: {exc.message}") from exc
-97  |     return schema
-98  |
-99  |
-    - def validate_prompt_contract(
-    -     prompts: dict[str, PromptDefinition], required: set[str], profile: str
-    - ) -> None:
-100 + def validate_prompt_contract(prompts: dict[str, PromptDefinition], required: set[str], profile: str) -> None:
-101 |     missing = required - prompts.keys()
-102 |     if missing:
-    -         raise ConfigurationError(
-    -             f"Missing active prompts for {profile}: {sorted(missing)}"
-    -         )
-103 +         raise ConfigurationError(f"Missing active prompts for {profile}: {sorted(missing)}")
-104 |
---------------------------------------------------------------------------------
-112 |         if self.configuration_table_id <= 0:
-    -             raise ConfigurationError(
-    -                 "Set a positive Baserow configuration table ID in config/users.toml"
-    -             )
-113 +             raise ConfigurationError("Set a positive Baserow configuration table ID in config/users.toml")
-114 |         return parse_configuration_rows(list(self.client.iter_rows(self.configuration_table_id)))
---------------------------------------------------------------------------------
-126 |
-    -             key = str(
-    -                 _scalar(_field(row, "Prompt Key", "Key", "prompt_key", "key")) or ""
-    -             ).strip()
-127 +             key = str(_scalar(_field(row, "Prompt Key", "Key", "prompt_key", "key")) or "").strip()
-128 |             if not key:
-    |
-
-unformatted: File would be reformatted
-   --> src/job_hunt/integrations/gemini.py:33:34
-    |
-32  |     if unresolved:
-    -         raise ConfigurationError(
-    -             f"Prompt '{prompt_key}' contains unresolved placeholders: {unresolved}"
-    -         )
-33  +         raise ConfigurationError(f"Prompt '{prompt_key}' contains unresolved placeholders: {unresolved}")
-34  |     return rendered
---------------------------------------------------------------------------------
-179 |     @staticmethod
-    -     def _definition(
-    -         prompts: Mapping[str, PromptDefinition], key: str
-    -     ) -> PromptDefinition:
-180 +     def _definition(prompts: Mapping[str, PromptDefinition], key: str) -> PromptDefinition:
-181 |         try:
---------------------------------------------------------------------------------
-273 |         rewrite_inputs = [
-    -             {"title": project.get("title", ""), "content": project.get("content", [])}
-    -             for project in selected
-274 +             {"title": project.get("title", ""), "content": project.get("content", [])} for project in selected
-275 |         ]
---------------------------------------------------------------------------------
-314 |                 raise ValueError(f"Work experience at index {index} must have string content bullets")
-    -             inputs.append(
-    -                 {"index": index, **{k: v for k, v in experience.items() if k != "description"}}
-    -             )
-315 +             inputs.append({"index": index, **{k: v for k, v in experience.items() if k != "description"}})
-316 |
---------------------------------------------------------------------------------
-521 |             location=(str(generated["location"]) if generated.get("location") is not None else None),
-    -             contract_type=(
-    -                 str(generated["contract_type"]) if generated.get("contract_type") is not None else None
-    -             ),
-522 +             contract_type=(str(generated["contract_type"]) if generated.get("contract_type") is not None else None),
-523 |         )
-    |
-
-unformatted: File would be reformatted
-  --> src/job_hunt/integrations/gemini_catalog.py:13:48
-   |
-12 |     available = {
-   -         str(model.name).removeprefix("models/")
-   -         for model in client.models.list()
-   -         if getattr(model, "name", None)
-13 +         str(model.name).removeprefix("models/") for model in client.models.list() if getattr(model, "name", None)
-14 |     }
-15 |     requested = {model.removeprefix("models/") for model in configured}
-16 |     missing = sorted(requested - available)
-17 |     if missing:
-   -         raise ConfigurationError(
-   -             "Configured Gemini model IDs are not exposed by this account: " + ", ".join(missing)
-   -         )
-18 +         raise ConfigurationError("Configured Gemini model IDs are not exposed by this account: " + ", ".join(missing))
-   |
-
-unformatted: File would be reformatted
-  --> src/job_hunt/integrations/gemini_mahsa.py:21:20
-   |
-20 |             raise ValueError("master_cv.sections must be an array")
-   -         matches = [
-   -             section
-   -             for section in sections
-   -             if isinstance(section, dict) and section.get("type") == section_type
-   -         ]
-21 +         matches = [section for section in sections if isinstance(section, dict) and section.get("type") == section_type]
-22 |         if len(matches) != 1:
-   |
-
-unformatted: File would be reformatted
-   --> src/job_hunt/integrations/gemini_pool.py:74:24
-    |
-73  |         self.checkpoint_ttl_seconds = checkpoint_ttl_seconds
-    -         self.limits = {
-    -             model.removeprefix("models/"): dict(values)
-    -             for model, values in (limits or {}).items()
-    -         }
-74  +         self.limits = {model.removeprefix("models/"): dict(values) for model, values in (limits or {}).items()}
-75  |         self.langfuse_handler = _langfuse_handler()
---------------------------------------------------------------------------------
-234 |                     self.state.remaining_cooldown("gemini-key", self._key_id(candidate[1])),
-    -                     self.state.remaining_cooldown(
-    -                         "gemini-candidate", self._candidate_id(*candidate)
-    -                     ),
-235 +                     self.state.remaining_cooldown("gemini-candidate", self._candidate_id(*candidate)),
-236 |                 ),
---------------------------------------------------------------------------------
-319 |         if not isinstance(result, dict):
-    -             return None, "", "LangChain returned an unexpected structured-output wrapper", {
-    -                 "model": model_name,
-    -                 "account": self._key_id(key),
-    -                 "latency_ms": latency_ms,
-    -             }
-320 +             return (
-321 +                 None,
-322 +                 "",
-323 +                 "LangChain returned an unexpected structured-output wrapper",
-324 +                 {
-325 +                     "model": model_name,
-326 +                     "account": self._key_id(key),
-327 +                     "latency_ms": latency_ms,
-328 +                 },
-329 +             )
-330 |         parsed = result.get("parsed")
---------------------------------------------------------------------------------
-397 |                 if parsed is None:
-    -                     failures.append(
-    -                         f"{model_name}/{self._key_id(key)}: {parsing_error or 'no parsed output'}"
-    -                     )
-398 +                     failures.append(f"{model_name}/{self._key_id(key)}: {parsing_error or 'no parsed output'}")
-399 |                     continue
---------------------------------------------------------------------------------
-411 |         raise ProviderError(
-    -             "Gemini structure-repair capacity failed across all configured candidates: "
-    -             + "; ".join(failures),
-412 +             "Gemini structure-repair capacity failed across all configured candidates: " + "; ".join(failures),
-413 |             ErrorKind.MALFORMED_PROVIDER_RESPONSE,
---------------------------------------------------------------------------------
-478 |                 failures.append(
-    -                     f"{model_name}/{self._key_id(key)}: "
-    -                     f"{parsing_error or 'Gemini returned an empty response'}"
-479 +                     f"{model_name}/{self._key_id(key)}: {parsing_error or 'Gemini returned an empty response'}"
-480 |                 )
---------------------------------------------------------------------------------
-496 |         raise ProviderError(
-    -             "Gemini generation failed across all configured keys and content models: "
-    -             + "; ".join(failures),
-497 +             "Gemini generation failed across all configured keys and content models: " + "; ".join(failures),
-498 |             ErrorKind.RATE_LIMIT
-    |
-
-unformatted: File would be reformatted
-  --> src/job_hunt/integrations/telegram.py:17:47
-   |
-16 |     def __init__(self, token: str, client: httpx.Client | None = None) -> None:
-   -         self._client = client or httpx.Client(
-   -             base_url=f"https://api.telegram.org/bot{token}", timeout=60
-   -         )
-17 +         self._client = client or httpx.Client(base_url=f"https://api.telegram.org/bot{token}", timeout=60)
-18 |
-   |
-
-unformatted: File would be reformatted
-  --> src/job_hunt/ports.py:43:16
-   |
-42 | class DocumentRenderer(Protocol):
-   -     def render(
-   -         self, content: TailoredContent, output_directory: Path, basename: str
-   -     ) -> ArtifactBundle: ...
-43 +     def render(self, content: TailoredContent, output_directory: Path, basename: str) -> ArtifactBundle: ...
-44 |
---------------------------------------------------------------------------------
-55 |     def discover(self, urls: Sequence[str], *, max_items: int) -> Iterable[Mapping[str, Any]]: ...
-   -     def fetch_linkedin(
-   -         self, job_id: int, *, country: str, max_concurrency: int
-   -     ) -> Mapping[str, Any]: ...
-56 +     def fetch_linkedin(self, job_id: int, *, country: str, max_concurrency: int) -> Mapping[str, Any]: ...
-   |
-
-unformatted: File would be reformatted
-  --> src/job_hunt/rendering/documents.py:27:16
-   |
-26 |
-   -     def render(
-   -         self, content: TailoredContent, output_directory: Path, basename: str
-   -     ) -> ArtifactBundle:
-27 +     def render(self, content: TailoredContent, output_directory: Path, basename: str) -> ArtifactBundle:
-28 |         output_directory.mkdir(parents=True, exist_ok=False)
---------------------------------------------------------------------------------
-33 |         cv_json.write_text(json.dumps(content.cv, indent=2, ensure_ascii=False), encoding="utf-8")
-   -         cover_json.write_text(
-   -             json.dumps(content.cover_letter, indent=2, ensure_ascii=False), encoding="utf-8"
-   -         )
-34 +         cover_json.write_text(json.dumps(content.cover_letter, indent=2, ensure_ascii=False), encoding="utf-8")
-35 |         cv_tex.write_text(
-   |
-
-unformatted: File would be reformatted
-  --> src/job_hunt/rendering/latex.py:49:42
-   |
-48 |         if count != 1:
-   -             raise DocumentRenderingError(
-   -                 f"Template marker {marker!r} must occur once; found {count}"
-   -             )
-49 +             raise DocumentRenderingError(f"Template marker {marker!r} must occur once; found {count}")
-50 |         output = output.replace(marker, content)
---------------------------------------------------------------------------------
-84 |             except (OSError, subprocess.TimeoutExpired) as exc:
-   -                 raise DocumentRenderingError(
-   -                     f"LaTeX compiler failed to start or timed out: {exc}"
-   -                 ) from exc
-85 +                 raise DocumentRenderingError(f"LaTeX compiler failed to start or timed out: {exc}") from exc
-86 |             if result.returncode:
-   |
-
-unformatted: File would be reformatted
-   --> src/job_hunt/rendering/profiles.py:100:80
-    |
-99  |         education_count = sum(
-    -             isinstance(section, Mapping) and section.get("type") == "education"
-    -             for section in sections
-100 +             isinstance(section, Mapping) and section.get("type") == "education" for section in sections
-101 |         )
-    |
-
-unformatted: File would be reformatted
-  --> src/job_hunt/run_store.py:27:26
-   |
-26 |     def save_request(self, run_id: UUID, request: dict[str, object]) -> None:
-   -         self.redis.setex(
-   -             f"{self._key(run_id)}:request", self.ttl_seconds, json.dumps(request, default=str)
-   -         )
-27 +         self.redis.setex(f"{self._key(run_id)}:request", self.ttl_seconds, json.dumps(request, default=str))
-28 |
-   |
-
-unformatted: File would be reformatted
-  --> src/job_hunt/security.py:35:33
-   |
-34 |         if not address.is_global:
-   -             raise WorkflowError(
-   -                 "Private or reserved network URLs are not accepted", ErrorKind.VALIDATION
-   -             )
-35 +             raise WorkflowError("Private or reserved network URLs are not accepted", ErrorKind.VALIDATION)
-36 |
---------------------------------------------------------------------------------
-50 |             validate_public_url(current)
-   -             with http.stream(
-   -                 "GET", current, headers={"User-Agent": "job-hunt-automation/0.1"}
-   -             ) as response:
-51 +             with http.stream("GET", current, headers={"User-Agent": "job-hunt-automation/0.1"}) as response:
-52 |                 if response.is_redirect:
---------------------------------------------------------------------------------
-62 |                 content_type = response.headers.get("content-type", "").lower()
-   -                 if not any(
-   -                     value in content_type
-   -                     for value in ("text/", "application/xhtml+xml", "application/json")
-   -                 ):
-   -                     raise WorkflowError(
-   -                         "URL did not return a supported text document", ErrorKind.VALIDATION
-   -                     )
-63 +                 if not any(value in content_type for value in ("text/", "application/xhtml+xml", "application/json")):
-64 +                     raise WorkflowError("URL did not return a supported text document", ErrorKind.VALIDATION)
-65 |                 chunks: list[bytes] = []
---------------------------------------------------------------------------------
-69 |                     if size > max_bytes:
-   -                         raise WorkflowError(
-   -                             "URL response exceeds the size limit", ErrorKind.VALIDATION
-   -                         )
-70 +                         raise WorkflowError("URL response exceeds the size limit", ErrorKind.VALIDATION)
-71 |                     chunks.append(chunk)
-   |
-
-unformatted: File would be reformatted
-  --> src/job_hunt/tenants/registry.py:29:18
-   |
-28 | class TenantRegistry:
-   -     def __init__(
-   -         self, bootstraps: dict[str, TenantBootstrap], project_root: Path = Path(".")
-   -     ) -> None:
-29 +     def __init__(self, bootstraps: dict[str, TenantBootstrap], project_root: Path = Path(".")) -> None:
-30 |         self.bootstraps = bootstraps
-   |
-
-unformatted: File would be reformatted
-   --> src/job_hunt/worker.py:32:20
-    |
-31  |     task_send_sent_event=True,
-    -     beat_schedule={
-    -         "dispatch-due-tenants": {"task": "job_hunt.dispatch_due_tenants", "schedule": 3600.0}
-    -     },
-32  +     beat_schedule={"dispatch-due-tenants": {"task": "job_hunt.dispatch_due_tenants", "schedule": 3600.0}},
-33  | )
---------------------------------------------------------------------------------
-127 |         redis = store.redis
-    -         lock = redis.lock(
-    -             f"job-hunt:lock:{tenant}:{job.identity}", timeout=1800, blocking_timeout=1
-    -         )
-128 +         lock = redis.lock(f"job-hunt:lock:{tenant}:{job.identity}", timeout=1800, blocking_timeout=1)
-129 |         if not lock.acquire(blocking=True):
---------------------------------------------------------------------------------
-198 |         )
-    -         criteria = list(
-    -             services.baserow.iter_rows(services.config.baserow_table_ids["searchCriteria"])
-    -         )
-199 +         criteria = list(services.baserow.iter_rows(services.config.baserow_table_ids["searchCriteria"]))
-200 |         urls = [build_search_url(services.config.linkedin_base_search_url, row) for row in criteria]
-201 |         rows = services.discovery.discover(urls, max_items=services.config.linkedin_max_items)
-    -         jobs = normalize_discovery(
-    -             rows, services.config.company_exclusions, services.config.title_exclusions
-    -         )
-202 +         jobs = normalize_discovery(rows, services.config.company_exclusions, services.config.title_exclusions)
-203 |         for job in jobs:
-    |
-
-unformatted: File would be reformatted
-  --> tests/contract/test_apify.py:25:60
-   |
-24 |     client.actor.assert_called_once_with("search")
-   -     client.actor.return_value.call.assert_called_once_with(
-   -         run_input={"startUrls": ["https://search"]}, max_items=2
-   -     )
-25 +     client.actor.return_value.call.assert_called_once_with(run_input={"startUrls": ["https://search"]}, max_items=2)
-26 |     client.dataset.assert_called_once_with("dataset")
-   |
-
-unformatted: File would be reformatted
-  --> tests/contract/test_gemini_pool.py:37:43
-   |
-36 |     reset_pool()
-   -     client = PooledGeminiStructuredClient(
-   -         ["key-1", "key-2"], ["best", "second"], ["repair"]
-   -     )
-37 +     client = PooledGeminiStructuredClient(["key-1", "key-2"], ["best", "second"], ["repair"])
-38 |     calls: list[tuple[str, str]] = []
-39 |
-   -     def call(
-   -         model: str, key: str, *_: object, **__: object
-   -     ) -> tuple[dict[str, Any], str, None, dict[str, Any]]:
-40 +     def call(model: str, key: str, *_: object, **__: object) -> tuple[dict[str, Any], str, None, dict[str, Any]]:
-41 |         calls.append((model, key))
---------------------------------------------------------------------------------
-52 |     reset_pool()
-   -     client = PooledGeminiStructuredClient(
-   -         ["bad-key", "good-key"], ["best", "second"], ["repair"]
-   -     )
-53 +     client = PooledGeminiStructuredClient(["bad-key", "good-key"], ["best", "second"], ["repair"])
-54 |     calls: list[tuple[str, str]] = []
-55 |
-   -     def call(
-   -         model: str, key: str, *_: object, **__: object
-   -     ) -> tuple[dict[str, Any], str, None, dict[str, Any]]:
-56 +     def call(model: str, key: str, *_: object, **__: object) -> tuple[dict[str, Any], str, None, dict[str, Any]]:
-57 |         calls.append((model, key))
---------------------------------------------------------------------------------
-70 |     reset_pool()
-   -     client = PooledGeminiStructuredClient(
-   -         ["key-1", "key-2"], ["best", "second"], ["fast-repair", "backup-repair"]
-   -     )
-71 +     client = PooledGeminiStructuredClient(["key-1", "key-2"], ["best", "second"], ["fast-repair", "backup-repair"])
-72 |     calls: list[tuple[str, str]] = []
---------------------------------------------------------------------------------
-91 |     reset_pool()
-   -     client = PooledGeminiStructuredClient(
-   -         ["key-1", "key-2"], ["best"], ["fast-repair", "backup-repair"]
-   -     )
-92 +     client = PooledGeminiStructuredClient(["key-1", "key-2"], ["best"], ["fast-repair", "backup-repair"])
-93 |     calls: list[tuple[str, str]] = []
-   |
-
-unformatted: File would be reformatted
-   --> tests/contract/test_provider_services.py:15:14
-    |
-14  | def bundle(tmp_path: Path) -> ArtifactBundle:
-    -     paths = [
-    -         tmp_path / name
-    -         for name in ("cv.json", "cv.tex", "cv.pdf", "cl.json", "cl.tex", "cl.pdf", "all.zip")
-    -     ]
-15  +     paths = [tmp_path / name for name in ("cv.json", "cv.tex", "cv.pdf", "cl.json", "cl.tex", "cl.pdf", "all.zip")]
-16  |     for path in paths:
---------------------------------------------------------------------------------
-71  |
-    -     def structured_call(
-    -         key: str, _: str, __: dict[str, Any], ___: float
-    -     ) -> tuple[dict[str, Any], str, None]:
-72  +     def structured_call(key: str, _: str, __: dict[str, Any], ___: float) -> tuple[dict[str, Any], str, None]:
-73  |         calls.append(key)
---------------------------------------------------------------------------------
-113 |             "type": "object",
-    -             "properties": {
-    -                 "selected_indices": {"type": "array", "items": {"type": "integer"}}
-    -             },
-114 +             "properties": {"selected_indices": {"type": "array", "items": {"type": "integer"}}},
-115 |             "required": ["selected_indices"],
---------------------------------------------------------------------------------
-128 |             "type": "object",
-    -             "properties": {
-    -                 "selected_indices": {"type": "array", "items": {"type": "integer"}}
-    -             },
-129 +             "properties": {"selected_indices": {"type": "array", "items": {"type": "integer"}}},
-130 |             "required": ["selected_indices"],
---------------------------------------------------------------------------------
-201 |                 "cv_work_experience_rewrite": {"contents": [["Tailored work"]]},
-    -                 "cv_skills_tailoring": {
-    -                     "groups": [{"label": "Programming", "skills": ["Python"]}]
-    -                 },
-202 +                 "cv_skills_tailoring": {"groups": [{"label": "Programming", "skills": ["Python"]}]},
-203 |                 "cv_summary_rewrite": {"summary": ["Tailored summary"]},
---------------------------------------------------------------------------------
-216 |         "projects": [{"title": "P", "content": ["Old project"]}],
-    -         "work_experience": [
-    -             {"title": "W", "organization": "O", "content": ["Old work"]}
-    -         ],
-217 +         "work_experience": [{"title": "W", "organization": "O", "content": ["Old work"]}],
-218 |     }
-    |
-
-unformatted: File would be reformatted
-   --> tests/unit/test_api.py:184:25
-    |
-183 |     payload["formId"] = "form-1"
-    -     accepted = api.post(
-    -         "/webhooks/fillout/mahsa", json=payload, headers={"Authorization": "Bearer webhook-secret"}
-    -     )
-184 +     accepted = api.post("/webhooks/fillout/mahsa", json=payload, headers={"Authorization": "Bearer webhook-secret"})
-185 |     assert accepted.status_code == 202
-    |
-
-unformatted: File would be reformatted
-   --> tests/unit/test_baserow_services.py:107:29
-    |
-106 |     assert "CV" not in reset and "Cover Letter" not in reset and reset["Status"] == 10
-    -     repo.save_qualification(
-    -         3, Qualification(score=20, should_apply=False, reasoning="low"), passed=False
-    -     )
-107 +     repo.save_qualification(3, Qualification(score=20, should_apply=False, reasoning="low"), passed=False)
-108 |     assert client.updates[-1]["Status"] == 11
-    |
-
-unformatted: File would be reformatted
-  --> tests/unit/test_domain.py:26:12
-   |
-25 | def test_canonical_url_and_external_identity() -> None:
-   -     assert (
-   -         canonicalize_url("HTTPS://Example.COM:443/jobs/1/?x=1#part") == "https://example.com/jobs/1"
-   -     )
-26 +     assert canonicalize_url("HTTPS://Example.COM:443/jobs/1/?x=1#part") == "https://example.com/jobs/1"
-27 |     identified = assign_identity(job())
---------------------------------------------------------------------------------
-33 |     candidate = assign_identity(job(external_id=None))
-   -     collided = assign_identity(
-   -         job(external_id=None), lambda value, _: value == candidate.internal_id
-   -     )
-34 +     collided = assign_identity(job(external_id=None), lambda value, _: value == candidate.internal_id)
-35 |     assert candidate.identity == "https://example.com/jobs/1"
-   |
-
-unformatted: File would be reformatted
-  --> tests/unit/test_gemini_pool_state.py:83:17
-   |
-82 |     client = PooledGeminiStructuredClient(
-   -         ["key"], ["best"], ["repair"], state=state  # type: ignore[arg-type]
-83 +         ["key"],
-84 +         ["best"],
-85 +         ["repair"],
-86 +         state=state,  # type: ignore[arg-type]
-87 |     )
-   |
-
-unformatted: File would be reformatted
-  --> tests/unit/test_mahsa_ai.py:29:48
-   |
-28 |                 "cv_work_experience_selection": {"selected_indices": [1]},
-   -                 "cv_work_experience_rewrite": {
-   -                     "contents": [["Parent tailored"], ["Nested tailored"]]
-   -                 },
-   -                 "cv_skills_tailoring": {
-   -                     "groups": [{"label": "Design", "skills": ["Figma", "Framer"]}]
-   -                 },
-29 +                 "cv_work_experience_rewrite": {"contents": [["Parent tailored"], ["Nested tailored"]]},
-30 +                 "cv_skills_tailoring": {"groups": [{"label": "Design", "skills": ["Figma", "Framer"]}]},
-31 |                 "cv_references_inclusion": {"include_references": False},
-   |
-
-unformatted: File would be reformatted
-  --> tests/unit/test_normalizer.py:33:29
-   |
-32 |     ai = normalizer.normalize(
-   -         AiContentSubmission(
-   -             entry_type=EntryType.AI_CONTENT, page_content="posting", source_url="https://x/job"
-   -         ),
-33 +         AiContentSubmission(entry_type=EntryType.AI_CONTENT, page_content="posting", source_url="https://x/job"),
-34 |         country="ca",
---------------------------------------------------------------------------------
-51 | def test_fillout_ai_and_url_branches() -> None:
-   -     ai = fillout_submission(
-   -         {"entryType": "ai_content", "pageContent": "text", "jobUrl": "https://x/job"}, {}
-   -     )
-52 +     ai = fillout_submission({"entryType": "ai_content", "pageContent": "text", "jobUrl": "https://x/job"}, {})
-53 |     assert isinstance(ai, AiContentSubmission)
-   |
-
-unformatted: File would be reformatted
-  --> tests/unit/test_queueing.py:16:25
-   |
-15 |         "job_hunt.queueing.process_submission",
-   -         SimpleNamespace(
-   -             delay=lambda *args: submission_calls.append(args) or SimpleNamespace(id="s1")
-   -         ),
-16 +         SimpleNamespace(delay=lambda *args: submission_calls.append(args) or SimpleNamespace(id="s1")),
-17 |     )
-18 |     monkeypatch.setattr(
-19 |         "job_hunt.queueing.discover_tenant",
-   -         SimpleNamespace(
-   -             delay=lambda *args: discovery_calls.append(args) or SimpleNamespace(id="d1")
-   -         ),
-20 +         SimpleNamespace(delay=lambda *args: discovery_calls.append(args) or SimpleNamespace(id="d1")),
-21 |     )
-22 |     queue = CeleryQueue()
-23 |     run_id = uuid4()
-   -     assert queue.submission(
-   -         "mahsa",
-   -         {"x": 1},
-   -         run_id,
-   -         True,
-   -         "snapshot",
-   -         "checkpoint-lineage",
-   -     ) == "s1"
-24 +     assert (
-25 +         queue.submission(
-26 +             "mahsa",
-27 +             {"x": 1},
-28 +             run_id,
-29 +             True,
-30 +             "snapshot",
-31 +             "checkpoint-lineage",
-32 +         )
-33 +         == "s1"
-34 +     )
-35 |     assert submission_calls == [
-   |
-
-unformatted: File would be reformatted
-  --> tests/unit/test_rendering.py:62:30
-   |
-61 |     )
-   -     bundle = renderer.render(
-   -         TailoredContent(cv=master, cover_letter=cover()), tmp_path / tenant, tenant
-   -     )
-62 +     bundle = renderer.render(TailoredContent(cv=master, cover_letter=cover()), tmp_path / tenant, tenant)
-63 |     assert bundle.cv_pdf.read_bytes().startswith(b"%PDF")
---------------------------------------------------------------------------------
-71 |     with pytest.raises(DocumentRenderingError, match="exactly three"):
-   -         MahsaCoverLetterRenderer().render(
-   -             template, {"date": "x", "company_name": "y", "paragraphs": ["one"]}
-   -         )
-72 +         MahsaCoverLetterRenderer().render(template, {"date": "x", "company_name": "y", "paragraphs": ["one"]})
-73 |
-   |
-
-unformatted: File would be reformatted
-  --> tests/unit/test_retry_and_security.py:41:33
-   |
-40 |         if calls < 3:
-   -             raise WorkflowError(
-   -                 "later", ErrorKind.TRANSIENT_PROVIDER, retryable=True, retry_after=0
-   -             )
-41 +             raise WorkflowError("later", ErrorKind.TRANSIENT_PROVIDER, retryable=True, retry_after=0)
-42 |         return "ok"
-   |
-
-unformatted: File would be reformatted
-  --> tests/unit/test_security_fetch_and_compiler.py:36:42
-   |
-35 |             transport=httpx.MockTransport(
-   -                 lambda _: httpx.Response(
-   -                     200, headers={"Content-Type": "text/plain"}, content=b"too big"
-   -                 )
-36 +                 lambda _: httpx.Response(200, headers={"Content-Type": "text/plain"}, content=b"too big")
-37 |             )
-   |
-
-unformatted: File would be reformatted
-   --> tests/unit/test_workflow.py:101:41
-    |
-100 |     repo = Repository()
-    -     workflow, publisher = make_workflow(
-    -         repo, Qualification(score=32, should_apply=True, reasoning="low")
-    -     )
-101 +     workflow, publisher = make_workflow(repo, Qualification(score=32, should_apply=True, reasoning="low"))
-102 |     result = process(workflow)
---------------------------------------------------------------------------------
-109 |     repo = Repository()
-    -     workflow, publisher = make_workflow(
-    -         repo, Qualification(score=90, should_apply=False, reasoning="metadata only")
-    -     )
-110 +     workflow, publisher = make_workflow(repo, Qualification(score=90, should_apply=False, reasoning="metadata only"))
-111 |     result = process(workflow)
---------------------------------------------------------------------------------
-119 |     repo = Repository(existing=True)
-    -     workflow, publisher = make_workflow(
-    -         repo, Qualification(score=1, should_apply=False, reasoning="no")
-    -     )
-120 +     workflow, publisher = make_workflow(repo, Qualification(score=1, should_apply=False, reasoning="no"))
-121 |     result = process(workflow, force=True)
---------------------------------------------------------------------------------
-131 |
-    -     workflow, _ = make_workflow(
-    -         BrokenRepository(), Qualification(score=1, should_apply=False, reasoning="no")
-    -     )
-132 +     workflow, _ = make_workflow(BrokenRepository(), Qualification(score=1, should_apply=False, reasoning="no"))
-133 |     with pytest.raises(WorkflowError):
-    |
-
-38 files would be reformatted, 32 files already formatted
+FORMAT_EXIT=0
+70 files already formatted
 
 MYPY_EXIT=1
-src/job_hunt/state.py:28: error: Argument 1 to "loads" has incompatible type "Awaitable[Any] | Any"; expected "str | bytes | bytearray"  [arg-type]
-src/job_hunt/state.py:53: error: Argument 1 to "int" has incompatible type "Awaitable[Any] | Any"; expected "str | Buffer | SupportsInt | SupportsIndex | SupportsTrunc"  [arg-type]
-src/job_hunt/run_store.py:47: error: Call to untyped function "watch" in typed context  [no-untyped-call]
-src/job_hunt/run_store.py:51: error: Argument 1 to "model_validate_json" of "BaseModel" has incompatible type "Awaitable[Any] | Any"; expected "str | bytes | bytearray"  [arg-type]
-src/job_hunt/integrations/apify.py:93: error: Item "None" of "RedisState | None" has no attribute "remaining_cooldown"  [union-attr]
-src/job_hunt/application/runs.py:117: error: Unused "type: ignore" comment  [unused-ignore]
-src/job_hunt/application/runs.py:117: error: No overload variant of "dict" matches argument type "object"  [call-overload]
-src/job_hunt/application/runs.py:117: note: Error code "call-overload" not covered by "type: ignore" comment
-src/job_hunt/application/runs.py:117: note: Possible overload variants:
-src/job_hunt/application/runs.py:117: note:     def [_KT, _VT] dict() -> dict[_KT, _VT]
-src/job_hunt/application/runs.py:117: note:     def [_KT, _VT] dict(**kwargs: _VT) -> dict[str, _VT]
-src/job_hunt/application/runs.py:117: note:     def [_KT, _VT] dict(SupportsKeysAndGetItem[_KT, _VT], /) -> dict[_KT, _VT]
-src/job_hunt/application/runs.py:117: note:     def [_KT, _VT] dict(SupportsKeysAndGetItem[str, _VT], /, **kwargs: _VT) -> dict[str, _VT]
-src/job_hunt/application/runs.py:117: note:     def [_KT, _VT] dict(Iterable[tuple[_KT, _VT]], /) -> dict[_KT, _VT]
-src/job_hunt/application/runs.py:117: note:     def [_KT, _VT] dict(Iterable[tuple[str, _VT]], /, **kwargs: _VT) -> dict[str, _VT]
-src/job_hunt/application/runs.py:117: note:     def [_KT, _VT] dict(Iterable[list[str]], /) -> dict[str, str]
-src/job_hunt/application/runs.py:117: note:     def [_KT, _VT] dict(Iterable[list[bytes]], /) -> dict[bytes, bytes]
-src/job_hunt/integrations/configuration.py:6: error: Library stubs not installed for "jsonschema"  [import-untyped]
-src/job_hunt/integrations/configuration.py:7: error: Library stubs not installed for "jsonschema.exceptions"  [import-untyped]
-src/job_hunt/integrations/configuration.py:7: note: Hint: "python3 -m pip install types-jsonschema"
-src/job_hunt/integrations/configuration.py:7: note: (or run "mypy --install-types" to install all missing stub packages)
-src/job_hunt/integrations/configuration.py:7: note: See https://mypy.readthedocs.io/en/stable/running_mypy.html#missing-imports
-src/job_hunt/integrations/gemini.py:9: error: Library stubs not installed for "jsonschema"  [import-untyped]
-src/job_hunt/integrations/gemini.py:10: error: Library stubs not installed for "jsonschema.exceptions"  [import-untyped]
-src/job_hunt/integrations/gemini.py:230: error: Argument "score" to "Qualification" has incompatible type "Any | None"; expected "int"  [arg-type]
-src/job_hunt/integrations/gemini.py:417: error: Incompatible types in assignment (expression has type "Any | None", variable has type "str")  [assignment]
-src/job_hunt/integrations/gemini_mahsa.py:279: error: Argument "cv" to "TailoredContent" has incompatible type "dict[str, list[dict[str, Any]]]"; expected "dict[str, object]"  [arg-type]
-src/job_hunt/integrations/gemini_mahsa.py:279: note: "dict" is invariant -- see https://mypy.readthedocs.io/en/stable/common_issues.html#variance
-src/job_hunt/integrations/gemini_mahsa.py:279: note: Consider using "Mapping" instead, which is covariant in the value type
+src/job_hunt/integrations/gemini.py:226: error: Argument "score" to "Qualification" has incompatible type "Any | None"; expected "int"  [arg-type]
+src/job_hunt/integrations/gemini.py:410: error: Incompatible types in assignment (expression has type "Any | None", variable has type "str")  [assignment]
+src/job_hunt/integrations/gemini_mahsa.py:275: error: Argument "cv" to "TailoredContent" has incompatible type "dict[str, list[dict[str, Any]]]"; expected "dict[str, object]"  [arg-type]
+src/job_hunt/integrations/gemini_mahsa.py:275: note: "dict" is invariant -- see https://mypy.readthedocs.io/en/stable/common_issues.html#variance
+src/job_hunt/integrations/gemini_mahsa.py:275: note: Consider using "Mapping" instead, which is covariant in the value type
 src/job_hunt/integrations/gemini_parallel.py:116: error: Argument "cv" to "TailoredContent" has incompatible type "dict[str, list[dict[str, Any]]]"; expected "dict[str, object]"  [arg-type]
 src/job_hunt/integrations/gemini_parallel.py:116: note: "dict" is invariant -- see https://mypy.readthedocs.io/en/stable/common_issues.html#variance
 src/job_hunt/integrations/gemini_parallel.py:116: note: Consider using "Mapping" instead, which is covariant in the value type
-src/job_hunt/integrations/gemini_pool.py:14: error: Library stubs not installed for "jsonschema.exceptions"  [import-untyped]
-src/job_hunt/integrations/gemini_pool.py:237: error: Item "None" of "RedisState | None" has no attribute "remaining_cooldown"  [union-attr]
-src/job_hunt/integrations/gemini_pool.py:238: error: Item "None" of "RedisState | None" has no attribute "remaining_cooldown"  [union-attr]
-src/job_hunt/integrations/gemini_pool.py:322: error: Argument "config" to "invoke" of "Runnable" has incompatible type "dict[str, Any]"; expected "RunnableConfig | None"  [arg-type]
-src/job_hunt/container.py:120: error: Incompatible types in assignment (expression has type "ParallelGeminiWorkflowAI", variable has type "ParallelMahsaGeminiWorkflowAI")  [assignment]
-Found 20 errors in 10 files (checked 41 source files)
+src/job_hunt/integrations/gemini_pool.py:234: error: Item "None" of "RedisState | None" has no attribute "remaining_cooldown"  [union-attr]
+src/job_hunt/integrations/gemini_pool.py:235: error: Item "None" of "RedisState | None" has no attribute "remaining_cooldown"  [union-attr]
+src/job_hunt/integrations/gemini_pool.py:317: error: Argument "config" to "invoke" of "Runnable" has incompatible type "dict[str, Any]"; expected "RunnableConfig | None"  [arg-type]
+src/job_hunt/container.py:115: error: Incompatible types in assignment (expression has type "ParallelGeminiWorkflowAI", variable has type "ParallelMahsaGeminiWorkflowAI")  [assignment]
+Found 8 errors in 5 files (checked 41 source files)
 
 PYTEST_EXIT=1
 ============================= test session starts ==============================
@@ -1094,7 +179,7 @@ tests/unit/test_domain.py ...                                            [ 54%]
 tests/unit/test_gemini_catalog.py ..                                     [ 57%]
 tests/unit/test_gemini_parallel.py ..                                    [ 60%]
 tests/unit/test_gemini_pool_state.py ..                                  [ 62%]
-tests/unit/test_mahsa_ai.py F                                            [ 64%]
+tests/unit/test_mahsa_ai.py .                                            [ 64%]
 tests/unit/test_normalizer.py ...                                        [ 68%]
 tests/unit/test_queueing.py .                                            [ 69%]
 tests/unit/test_registry.py .                                            [ 70%]
@@ -1104,25 +189,19 @@ tests/unit/test_run_coordinator.py ....                                  [ 86%]
 tests/unit/test_run_store.py .                                           [ 88%]
 tests/unit/test_security_fetch_and_compiler.py ..                        [ 90%]
 tests/unit/test_state.py ...                                             [ 94%]
-tests/unit/test_workflow.py ....
-ERROR: Coverage failure: total of 74 is less than fail-under=90
-                                                                         [100%]
+tests/unit/test_workflow.py ....                                         [100%]
 
 =================================== FAILURES ===================================
 _________________ test_invalid_key_is_skipped_for_lower_models _________________
 
-monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7fc0e26a6600>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f279e3b2570>
 
     def test_invalid_key_is_skipped_for_lower_models(monkeypatch: pytest.MonkeyPatch) -> None:
         reset_pool()
-        client = PooledGeminiStructuredClient(
-            ["bad-key", "good-key"], ["best", "second"], ["repair"]
-        )
+        client = PooledGeminiStructuredClient(["bad-key", "good-key"], ["best", "second"], ["repair"])
         calls: list[tuple[str, str]] = []
     
-        def call(
-            model: str, key: str, *_: object, **__: object
-        ) -> tuple[dict[str, Any], str, None, dict[str, Any]]:
+        def call(model: str, key: str, *_: object, **__: object) -> tuple[dict[str, Any], str, None, dict[str, Any]]:
             calls.append((model, key))
             if key == "bad-key":
                 raise RuntimeError("API key not valid")
@@ -1158,33 +237,9 @@ E                   'good-key',
 E               ),
 E           ]
 
-tests/contract/test_gemini_pool.py:74: AssertionError
+tests/contract/test_gemini_pool.py:66: AssertionError
 ----------------------------- Captured stdout call -----------------------------
-[2m2026-08-19T23:36:08.629256Z[0m [[32m[1minfo     [0m] [1mgemini_generation             [0m [36maccount[0m=[35maccount[0m [36mlatency_ms[0m=[35m1[0m [36mmodel[0m=[35mtest[0m [36mprompt_key[0m=[35mtest[0m [36mprompt_version[0m=[35m1.0[0m [36mrepaired[0m=[35mFalse[0m [36musage[0m=[35m{}[0m
-______ test_mahsa_profile_reuses_shared_operations_and_preserves_sections ______
-
-    def test_mahsa_profile_reuses_shared_operations_and_preserves_sections() -> None:
->       prompts = {key: definition(key) for key in MAHSA_PROMPT_KEYS}
-                        ^^^^^^^^^^^^^^^
-
-tests/unit/test_mahsa_ai.py:21: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
-
-key = 'cv_summary_rewrite'
-
-    def definition(key: str) -> PromptDefinition:
->       return PromptDefinition(
-            key=key,
-            version=1,
-            template=key,
-            output_structure={"type": "object"},
-            temperature=0.2,
-        )
-E       pydantic_core._pydantic_core.ValidationError: 1 validation error for PromptDefinition
-E         Value error, output_structure must define object properties [type=value_error, input_value={'key': 'cv_summary_rewri...t'}, 'temperature': 0.2}, input_type=dict]
-E           For further information visit https://errors.pydantic.dev/2.13/v/value_error
-
-tests/unit/test_mahsa_ai.py:11: ValidationError
+[2m2026-08-19T23:40:10.493012Z[0m [[32m[1minfo     [0m] [1mgemini_generation             [0m [36maccount[0m=[35maccount[0m [36mlatency_ms[0m=[35m1[0m [36mmodel[0m=[35mtest[0m [36mprompt_key[0m=[35mtest[0m [36mprompt_version[0m=[35m1.0[0m [36mrepaired[0m=[35mFalse[0m [36musage[0m=[35m{}[0m
 =============================== warnings summary ===============================
 .venv/lib/python3.12/site-packages/apify_client/clients/base/actor_job_base_client.py:8
   /home/runner/work/Job-Hunt-Automation-Python/Job-Hunt-Automation-Python/.venv/lib/python3.12/site-packages/apify_client/clients/base/actor_job_base_client.py:8: DeprecationWarning: The `apify-shared` package is deprecated and no longer maintained. Its constants and utilities now live in the packages that need them: use `apify` (the Apify SDK for Python) or `apify-client` (the Apify API client for Python) instead. See https://github.com/apify/apify-shared-python for details.
@@ -1202,45 +257,45 @@ Name                                           Stmts   Miss Branch BrPart  Cover
 ------------------------------------------------------------------------------------------
 src/job_hunt/__init__.py                           1      0      0      0   100%
 src/job_hunt/api/__init__.py                       2      0      0      0   100%
-src/job_hunt/api/app.py                          110     16     18      6    81%   75, 81-82, 98-99, 112, 141, 144, 153-157, 158->160, 189, 201-202
+src/job_hunt/api/app.py                          110     16     18      6    81%   75, 79-80, 94-95, 106, 133, 136, 145-149, 150->152, 181, 193-194
 src/job_hunt/application/__init__.py               2      0      0      0   100%
-src/job_hunt/application/discovery.py             26      2      6      0    94%   43-44
-src/job_hunt/application/normalization.py         57      4     24      6    88%   57, 90, 96, 99->107, 102, 104->100
-src/job_hunt/application/runs.py                  50      2      8      3    91%   75, 104->110, 113
+src/job_hunt/application/discovery.py             26      2      6      0    94%   39-40
+src/job_hunt/application/normalization.py         57      4     24      6    88%   51, 80, 86, 89->97, 92, 94->90
+src/job_hunt/application/runs.py                  53      3     10      4    89%   75, 104->108, 111, 115
 src/job_hunt/application/workflow.py              43      0      2      0   100%
-src/job_hunt/config.py                           162     13     42     11    87%   76, 87, 98, 102, 106->104, 109-110, 114, 141-143, 146, 178, 218, 220->216
+src/job_hunt/config.py                           162     13     42     11    87%   71, 77, 86, 90, 94->92, 97-98, 100, 125-127, 130, 162, 202, 204->200
 src/job_hunt/domain/__init__.py                    2      0      0      0   100%
 src/job_hunt/domain/identity.py                   31      1      6      1    95%   18
-src/job_hunt/domain/models.py                    115      4      6      2    95%   72, 86, 120, 131
+src/job_hunt/domain/models.py                    115      5      6      3    93%   72, 86, 89, 120, 131
 src/job_hunt/errors.py                            30      0      0      0   100%
 src/job_hunt/integrations/__init__.py              0      0      0      0   100%
-src/job_hunt/integrations/apify.py                97     19     28     10    74%   33, 47, 67, 71-76, 79, 84-91, 105, 115-116, 151-157
+src/job_hunt/integrations/apify.py                98     19     28     10    74%   33, 47, 67, 71-76, 79, 85-88, 98, 108-109, 144-150
 src/job_hunt/integrations/artifacts.py            10      0      0      0   100%
-src/job_hunt/integrations/baserow.py              83     14     10      4    81%   30-31, 51-52, 73-86, 89-90, 111, 144->146, 150
-src/job_hunt/integrations/configuration.py       100     24     46     12    68%   51->50, 53, 58-61, 63, 70, 73-77, 83, 90, 92, 95-96, 118-122, 129, 139, 157, 177
-src/job_hunt/integrations/gemini.py              283     69    118     37    69%   33, 40-54, 61-62, 69, 78, 81, 95-109, 128, 141->147, 148, 157, 187-188, 243, 248, 251, 268, 270, 272, 275, 291, 296, 311, 316, 319, 339, 341, 343, 345, 348, 368, 373, 388, 392, 397-400, 412, 416, 420, 425, 428->423, 445, 467, 478, 520
+src/job_hunt/integrations/baserow.py              83     14     10      4    81%   30-31, 51-52, 73-86, 89-90, 111, 142->144, 148
+src/job_hunt/integrations/configuration.py       100     24     46     12    68%   51->50, 53, 58-61, 63, 70, 73-77, 83, 90, 92, 95-96, 112-114, 121, 129, 147, 167
+src/job_hunt/integrations/gemini.py              283     69    118     37    69%   33, 38-52, 59-60, 67, 76, 79, 93-107, 126, 139->145, 146, 155, 183-184, 239, 244, 247, 264, 266, 268, 271, 286, 291, 306, 311, 314, 332, 334, 336, 338, 341, 361, 366, 381, 385, 390-393, 405, 409, 413, 418, 421->416, 438, 460, 471, 513
 src/job_hunt/integrations/gemini_catalog.py       11      0      2      0   100%
-src/job_hunt/integrations/gemini_mahsa.py        159    143     84      0     7%   18-28, 36-125, 133-173, 181-196, 206-230, 238-279
+src/job_hunt/integrations/gemini_mahsa.py        159     27     84     29    77%   20, 23, 34, 39, 42, 60, 62, 64, 67, 78, 80->75, 83, 91, 112, 117, 131, 135, 149, 153, 157, 162, 165->160, 179, 191, 204, 225, 236, 245, 249
 src/job_hunt/integrations/gemini_parallel.py      69      4     18      4    91%   27, 73, 86, 90
-src/job_hunt/integrations/gemini_pool.py         265     87     84     29    62%   41-47, 80, 82, 84, 99-102, 104, 124, 142-145, 149, 152, 159->171, 173-184, 188-199, 204, 208-213, 217, 220, 226-234, 254, 267-268, 275-276, 286-293, 305-348, 398-401, 405, 410-411, 413, 424->432, 447->454, 464, 481, 486, 488, 498-500
+src/job_hunt/integrations/gemini_pool.py         265     87     84     29    62%   41-47, 77, 79, 81, 96-99, 101, 121, 139-142, 146, 149, 156->168, 170-181, 185-196, 201, 205-210, 214, 217, 223-231, 249, 262-263, 270-271, 281-288, 300-348, 398-399, 403, 408-409, 411, 421->429, 444->451, 461, 478, 482, 484, 494-496
 src/job_hunt/integrations/http.py                 26      3     10      0    92%   17-19
-src/job_hunt/integrations/telegram.py             40      5      6      2    85%   24-25, 62, 99, 107
+src/job_hunt/integrations/telegram.py             40      5      6      2    85%   22-23, 60, 97, 105
 src/job_hunt/logging.py                           19      2      6      2    84%   16, 18
 src/job_hunt/ports.py                             12      0      0      0   100%
 src/job_hunt/queueing.py                          11      0      0      0   100%
 src/job_hunt/rendering/__init__.py                 3      0      0      0   100%
 src/job_hunt/rendering/documents.py               30      0      0      0   100%
-src/job_hunt/rendering/latex.py                   55      6     20      4    87%   36, 40, 55, 86-87, 95
-src/job_hunt/rendering/profiles.py               116     12     42     11    85%   13, 19-20, 49, 67, 74, 78, 98, 135, 140, 186, 197
+src/job_hunt/rendering/latex.py                   55      6     20      4    87%   36, 40, 53, 84-85, 91
+src/job_hunt/rendering/profiles.py               116     12     42     11    85%   13, 19-20, 49, 67, 74, 78, 98, 134, 139, 185, 196
 src/job_hunt/retry.py                             18      2      4      1    86%   28-29
-src/job_hunt/run_store.py                         51      4      8      2    90%   50, 64-65, 68
-src/job_hunt/security.py                          54      5     20      2    91%   30-31, 59, 84, 87
+src/job_hunt/run_store.py                         51      4      8      2    90%   48, 62-63, 66
+src/job_hunt/security.py                          54      5     20      2    91%   30-31, 55, 73, 76
 src/job_hunt/state.py                             56      1      4      1    97%   73
 src/job_hunt/tenants/__init__.py                   2      0      0      0   100%
-src/job_hunt/tenants/registry.py                  38      4      6      2    86%   41, 45-46, 53
+src/job_hunt/tenants/registry.py                  38      4      6      2    86%   39, 43-44, 51
 ------------------------------------------------------------------------------------------
-TOTAL                                           2239    446    628    152    74%
-FAIL Required test coverage of 90% not reached. Total coverage: 74.33%
+TOTAL                                           2243    332    630    183    80%
+Required test coverage of 70% reached. Total coverage: 80.19%
 =========================== short test summary info ============================
 FAILED tests/contract/test_gemini_pool.py::test_invalid_key_is_skipped_for_lower_models - AssertionError: assert [('best', 'ba..., 'good-key')] == [('best', 'ba..., 'good-key')]
   
@@ -1266,7 +321,4 @@ FAILED tests/contract/test_gemini_pool.py::test_invalid_key_is_skipped_for_lower
             'good-key',
         ),
     ]
-FAILED tests/unit/test_mahsa_ai.py::test_mahsa_profile_reuses_shared_operations_and_preserves_sections - pydantic_core._pydantic_core.ValidationError: 1 validation error for PromptDefinition
-  Value error, output_structure must define object properties [type=value_error, input_value={'key': 'cv_summary_rewri...t'}, 'temperature': 0.2}, input_type=dict]
-    For further information visit https://errors.pydantic.dev/2.13/v/value_error
-============= 2 failed, 71 passed, 2 skipped, 2 warnings in 5.67s ==============
+============= 1 failed, 72 passed, 2 skipped, 2 warnings in 6.25s ==============

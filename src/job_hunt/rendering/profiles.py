@@ -97,8 +97,7 @@ class MahsaCvRenderer(CvRenderer):
         if not isinstance(sections, list):
             raise DocumentRenderingError("Mahsa CV requires a sections list")
         education_count = sum(
-            isinstance(section, Mapping) and section.get("type") == "education"
-            for section in sections
+            isinstance(section, Mapping) and section.get("type") == "education" for section in sections
         )
         if education_count != 1:
             raise DocumentRenderingError("Mahsa CV requires exactly one education section")

@@ -13,26 +13,25 @@ def test_celery_queue_dispatches_submission_and_discovery(monkeypatch: pytest.Mo
     discovery_calls: list[tuple[object, ...]] = []
     monkeypatch.setattr(
         "job_hunt.queueing.process_submission",
-        SimpleNamespace(
-            delay=lambda *args: submission_calls.append(args) or SimpleNamespace(id="s1")
-        ),
+        SimpleNamespace(delay=lambda *args: submission_calls.append(args) or SimpleNamespace(id="s1")),
     )
     monkeypatch.setattr(
         "job_hunt.queueing.discover_tenant",
-        SimpleNamespace(
-            delay=lambda *args: discovery_calls.append(args) or SimpleNamespace(id="d1")
-        ),
+        SimpleNamespace(delay=lambda *args: discovery_calls.append(args) or SimpleNamespace(id="d1")),
     )
     queue = CeleryQueue()
     run_id = uuid4()
-    assert queue.submission(
-        "mahsa",
-        {"x": 1},
-        run_id,
-        True,
-        "snapshot",
-        "checkpoint-lineage",
-    ) == "s1"
+    assert (
+        queue.submission(
+            "mahsa",
+            {"x": 1},
+            run_id,
+            True,
+            "snapshot",
+            "checkpoint-lineage",
+        )
+        == "s1"
+    )
     assert submission_calls == [
         (
             "mahsa",

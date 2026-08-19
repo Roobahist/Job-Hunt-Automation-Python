@@ -29,9 +29,7 @@ celery_app.conf.update(
     result_expires=settings.run_ttl_seconds,
     worker_send_task_events=True,
     task_send_sent_event=True,
-    beat_schedule={
-        "dispatch-due-tenants": {"task": "job_hunt.dispatch_due_tenants", "schedule": 3600.0}
-    },
+    beat_schedule={"dispatch-due-tenants": {"task": "job_hunt.dispatch_due_tenants", "schedule": 3600.0}},
 )
 
 
@@ -127,9 +125,7 @@ def process_submission(
             max_concurrency=services.config.apify_max_concurrency,
         )
         redis = store.redis
-        lock = redis.lock(
-            f"job-hunt:lock:{tenant}:{job.identity}", timeout=1800, blocking_timeout=1
-        )
+        lock = redis.lock(f"job-hunt:lock:{tenant}:{job.identity}", timeout=1800, blocking_timeout=1)
         if not lock.acquire(blocking=True):
             store.update(identifier, state=RunState.SKIPPED, stage="duplicate")
             return {"state": "skipped", "reason": "duplicate in progress"}
@@ -200,14 +196,10 @@ def discover_tenant(tenant: str, run_id: str) -> dict[str, int]:
             services.snapshot(),
             ttl_seconds=settings.discovery_snapshot_ttl_seconds,
         )
-        criteria = list(
-            services.baserow.iter_rows(services.config.baserow_table_ids["searchCriteria"])
-        )
+        criteria = list(services.baserow.iter_rows(services.config.baserow_table_ids["searchCriteria"]))
         urls = [build_search_url(services.config.linkedin_base_search_url, row) for row in criteria]
         rows = services.discovery.discover(urls, max_items=services.config.linkedin_max_items)
-        jobs = normalize_discovery(
-            rows, services.config.company_exclusions, services.config.title_exclusions
-        )
+        jobs = normalize_discovery(rows, services.config.company_exclusions, services.config.title_exclusions)
         for job in jobs:
             child = RunStatus(tenant=tenant, kind="scheduled-job")
             checkpoint_namespace = str(child.run_id)

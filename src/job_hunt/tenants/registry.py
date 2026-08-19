@@ -26,9 +26,7 @@ class TenantContext:
 
 
 class TenantRegistry:
-    def __init__(
-        self, bootstraps: dict[str, TenantBootstrap], project_root: Path = Path(".")
-    ) -> None:
+    def __init__(self, bootstraps: dict[str, TenantBootstrap], project_root: Path = Path(".")) -> None:
         self.bootstraps = bootstraps
         self.project_root = project_root
 

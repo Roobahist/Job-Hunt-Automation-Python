@@ -27,9 +27,7 @@ def _settings() -> Settings:
 
 
 def _store(settings: Settings) -> RunStore:
-    return RunStore(
-        Redis.from_url(settings.redis_url, decode_responses=True), settings.run_ttl_seconds
-    )
+    return RunStore(Redis.from_url(settings.redis_url, decode_responses=True), settings.run_ttl_seconds)
 
 
 def _coordinator(settings: Settings) -> RunCoordinator:

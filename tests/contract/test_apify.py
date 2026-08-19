@@ -22,9 +22,7 @@ def test_apify_waits_for_actor_and_iterates_dataset(monkeypatch: pytest.MonkeyPa
     provider = ApifyProvider(["token"], "search", "single")
     assert list(provider.discover(["https://search"], max_items=2)) == [{"id": 1}, {"id": 2}]
     client.actor.assert_called_once_with("search")
-    client.actor.return_value.call.assert_called_once_with(
-        run_input={"startUrls": ["https://search"]}, max_items=2
-    )
+    client.actor.return_value.call.assert_called_once_with(run_input={"startUrls": ["https://search"]}, max_items=2)
     client.dataset.assert_called_once_with("dataset")
 
 

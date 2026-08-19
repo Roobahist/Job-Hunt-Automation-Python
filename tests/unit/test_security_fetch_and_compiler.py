@@ -33,9 +33,7 @@ def test_public_fetch_redirect_text_and_limits(monkeypatch: pytest.MonkeyPatch) 
     with (
         httpx.Client(
             transport=httpx.MockTransport(
-                lambda _: httpx.Response(
-                    200, headers={"Content-Type": "text/plain"}, content=b"too big"
-                )
+                lambda _: httpx.Response(200, headers={"Content-Type": "text/plain"}, content=b"too big")
             )
         ) as client,
         pytest.raises(WorkflowError, match="size limit"),

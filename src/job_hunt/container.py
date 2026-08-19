@@ -45,9 +45,7 @@ class TenantServices:
     def snapshot(self) -> dict[str, Any]:
         return {
             "config": self.config.model_dump(mode="json"),
-            "prompts": {
-                key: definition.model_dump(mode="json") for key, definition in self.prompts.items()
-            },
+            "prompts": {key: definition.model_dump(mode="json") for key, definition in self.prompts.items()},
         }
 
 
@@ -80,14 +78,11 @@ class Container:
             if not isinstance(raw_prompts, dict):
                 raise ValueError("Discovery snapshot has no prompt definitions")
             prompts = {
-                str(prompt_key): PromptDefinition.model_validate(value)
-                for prompt_key, value in raw_prompts.items()
+                str(prompt_key): PromptDefinition.model_validate(value) for prompt_key, value in raw_prompts.items()
             }
 
         if config.tenant_key not in {key, key.replace("_", "-")} and not config.tenant_key.startswith(key):
-            raise ValueError(
-                f"Registry tenant {key} does not match Baserow tenant_key {config.tenant_key}"
-            )
+            raise ValueError(f"Registry tenant {key} does not match Baserow tenant_key {config.tenant_key}")
 
         discovery = ApifyProvider(
             self.settings.shared_apify_tokens(),

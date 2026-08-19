@@ -98,9 +98,7 @@ def process(workflow: ApplicationWorkflow, *, force: bool = False) -> object:
 
 def test_below_threshold_stops_expensive_side_effects() -> None:
     repo = Repository()
-    workflow, publisher = make_workflow(
-        repo, Qualification(score=32, should_apply=True, reasoning="low")
-    )
+    workflow, publisher = make_workflow(repo, Qualification(score=32, should_apply=True, reasoning="low"))
     result = process(workflow)
     assert not result.passed  # type: ignore[attr-defined]
     assert publisher.calls == 0
@@ -109,9 +107,7 @@ def test_below_threshold_stops_expensive_side_effects() -> None:
 
 def test_should_apply_does_not_block_documents_above_threshold() -> None:
     repo = Repository()
-    workflow, publisher = make_workflow(
-        repo, Qualification(score=90, should_apply=False, reasoning="metadata only")
-    )
+    workflow, publisher = make_workflow(repo, Qualification(score=90, should_apply=False, reasoning="metadata only"))
     result = process(workflow)
     assert result.passed  # type: ignore[attr-defined]
     assert publisher.calls == 1
@@ -121,9 +117,7 @@ def test_should_apply_does_not_block_documents_above_threshold() -> None:
 
 def test_force_processes_and_existing_job_resets_first() -> None:
     repo = Repository(existing=True)
-    workflow, publisher = make_workflow(
-        repo, Qualification(score=1, should_apply=False, reasoning="no")
-    )
+    workflow, publisher = make_workflow(repo, Qualification(score=1, should_apply=False, reasoning="no"))
     result = process(workflow, force=True)
     assert result.passed  # type: ignore[attr-defined]
     assert ("reset", 7) in repo.calls
@@ -135,8 +129,6 @@ def test_permanent_error_is_not_retried() -> None:
         def find(self, job: Job) -> None:
             raise WorkflowError("bad", ErrorKind.VALIDATION)
 
-    workflow, _ = make_workflow(
-        BrokenRepository(), Qualification(score=1, should_apply=False, reasoning="no")
-    )
+    workflow, _ = make_workflow(BrokenRepository(), Qualification(score=1, should_apply=False, reasoning="no"))
     with pytest.raises(WorkflowError):
         process(workflow)

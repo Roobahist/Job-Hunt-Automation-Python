@@ -80,7 +80,10 @@ def test_local_rpm_budget_opens_candidate_cooldown() -> None:
 def test_checkpoint_hit_skips_provider_call(monkeypatch: pytest.MonkeyPatch) -> None:
     state = State()
     client = PooledGeminiStructuredClient(
-        ["key"], ["best"], ["repair"], state=state  # type: ignore[arg-type]
+        ["key"],
+        ["best"],
+        ["repair"],
+        state=state,  # type: ignore[arg-type]
     )
     prompt = "rendered prompt"
     digest = client._checkpoint_digest(prompt, definition())

@@ -71,10 +71,7 @@ class PooledGeminiStructuredClient(GeminiStructuredClient):
         self.quota_cooldown_seconds = quota_cooldown_seconds
         self.state = state
         self.checkpoint_ttl_seconds = checkpoint_ttl_seconds
-        self.limits = {
-            model.removeprefix("models/"): dict(values)
-            for model, values in (limits or {}).items()
-        }
+        self.limits = {model.removeprefix("models/"): dict(values) for model, values in (limits or {}).items()}
         self.langfuse_handler = _langfuse_handler()
         if not self.keys:
             raise ValueError("At least one Gemini API key is required")
@@ -235,9 +232,7 @@ class PooledGeminiStructuredClient(GeminiStructuredClient):
                 ordered,
                 key=lambda candidate: max(
                     self.state.remaining_cooldown("gemini-key", self._key_id(candidate[1])),
-                    self.state.remaining_cooldown(
-                        "gemini-candidate", self._candidate_id(*candidate)
-                    ),
+                    self.state.remaining_cooldown("gemini-candidate", self._candidate_id(*candidate)),
                 ),
             )[:1]
 
@@ -322,11 +317,16 @@ class PooledGeminiStructuredClient(GeminiStructuredClient):
         result = runnable.invoke(prompt, config=config)
         latency_ms = int((time.perf_counter() - started) * 1000)
         if not isinstance(result, dict):
-            return None, "", "LangChain returned an unexpected structured-output wrapper", {
-                "model": model_name,
-                "account": self._key_id(key),
-                "latency_ms": latency_ms,
-            }
+            return (
+                None,
+                "",
+                "LangChain returned an unexpected structured-output wrapper",
+                {
+                    "model": model_name,
+                    "account": self._key_id(key),
+                    "latency_ms": latency_ms,
+                },
+            )
         parsed = result.get("parsed")
         raw = result.get("raw")
         raw_text = _message_text(raw)
@@ -395,9 +395,7 @@ class PooledGeminiStructuredClient(GeminiStructuredClient):
                     operation=f"{operation}:repair",
                 )
                 if parsed is None:
-                    failures.append(
-                        f"{model_name}/{self._key_id(key)}: {parsing_error or 'no parsed output'}"
-                    )
+                    failures.append(f"{model_name}/{self._key_id(key)}: {parsing_error or 'no parsed output'}")
                     continue
                 metadata["repaired"] = True
                 return _validate_json_schema(parsed, schema), metadata
@@ -411,8 +409,7 @@ class PooledGeminiStructuredClient(GeminiStructuredClient):
                     self._disable_key(key)
                 continue
         raise ProviderError(
-            "Gemini structure-repair capacity failed across all configured candidates: "
-            + "; ".join(failures),
+            "Gemini structure-repair capacity failed across all configured candidates: " + "; ".join(failures),
             ErrorKind.MALFORMED_PROVIDER_RESPONSE,
             provider="gemini",
         )
@@ -479,8 +476,7 @@ class PooledGeminiStructuredClient(GeminiStructuredClient):
                     return final
 
                 failures.append(
-                    f"{model_name}/{self._key_id(key)}: "
-                    f"{parsing_error or 'Gemini returned an empty response'}"
+                    f"{model_name}/{self._key_id(key)}: {parsing_error or 'Gemini returned an empty response'}"
                 )
             except ConfigurationError:
                 raise
@@ -498,8 +494,7 @@ class PooledGeminiStructuredClient(GeminiStructuredClient):
                 continue
 
         raise ProviderError(
-            "Gemini generation failed across all configured keys and content models: "
-            + "; ".join(failures),
+            "Gemini generation failed across all configured keys and content models: " + "; ".join(failures),
             ErrorKind.RATE_LIMIT
             if attempted > 0 and quota_failures == attempted
             else ErrorKind.MALFORMED_PROVIDER_RESPONSE,

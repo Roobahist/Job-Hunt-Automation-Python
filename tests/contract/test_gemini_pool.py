@@ -34,14 +34,10 @@ def response(value: dict[str, Any]) -> tuple[dict[str, Any], str, None, dict[str
 
 def test_content_exhausts_all_keys_before_next_model(monkeypatch: pytest.MonkeyPatch) -> None:
     reset_pool()
-    client = PooledGeminiStructuredClient(
-        ["key-1", "key-2"], ["best", "second"], ["repair"]
-    )
+    client = PooledGeminiStructuredClient(["key-1", "key-2"], ["best", "second"], ["repair"])
     calls: list[tuple[str, str]] = []
 
-    def call(
-        model: str, key: str, *_: object, **__: object
-    ) -> tuple[dict[str, Any], str, None, dict[str, Any]]:
+    def call(model: str, key: str, *_: object, **__: object) -> tuple[dict[str, Any], str, None, dict[str, Any]]:
         calls.append((model, key))
         if model == "best":
             raise RuntimeError("RESOURCE_EXHAUSTED: quota exceeded")
@@ -54,14 +50,10 @@ def test_content_exhausts_all_keys_before_next_model(monkeypatch: pytest.MonkeyP
 
 def test_invalid_key_is_skipped_for_lower_models(monkeypatch: pytest.MonkeyPatch) -> None:
     reset_pool()
-    client = PooledGeminiStructuredClient(
-        ["bad-key", "good-key"], ["best", "second"], ["repair"]
-    )
+    client = PooledGeminiStructuredClient(["bad-key", "good-key"], ["best", "second"], ["repair"])
     calls: list[tuple[str, str]] = []
 
-    def call(
-        model: str, key: str, *_: object, **__: object
-    ) -> tuple[dict[str, Any], str, None, dict[str, Any]]:
+    def call(model: str, key: str, *_: object, **__: object) -> tuple[dict[str, Any], str, None, dict[str, Any]]:
         calls.append((model, key))
         if key == "bad-key":
             raise RuntimeError("API key not valid")
@@ -76,9 +68,7 @@ def test_invalid_key_is_skipped_for_lower_models(monkeypatch: pytest.MonkeyPatch
 
 def test_invalid_content_output_uses_repair_tier(monkeypatch: pytest.MonkeyPatch) -> None:
     reset_pool()
-    client = PooledGeminiStructuredClient(
-        ["key-1", "key-2"], ["best", "second"], ["fast-repair", "backup-repair"]
-    )
+    client = PooledGeminiStructuredClient(["key-1", "key-2"], ["best", "second"], ["fast-repair", "backup-repair"])
     calls: list[tuple[str, str]] = []
 
     def call(
@@ -99,9 +89,7 @@ def test_invalid_content_output_uses_repair_tier(monkeypatch: pytest.MonkeyPatch
 
 def test_repair_rotates_keys_before_weaker_repair_model(monkeypatch: pytest.MonkeyPatch) -> None:
     reset_pool()
-    client = PooledGeminiStructuredClient(
-        ["key-1", "key-2"], ["best"], ["fast-repair", "backup-repair"]
-    )
+    client = PooledGeminiStructuredClient(["key-1", "key-2"], ["best"], ["fast-repair", "backup-repair"])
     calls: list[tuple[str, str]] = []
 
     def call(

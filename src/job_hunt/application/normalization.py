@@ -23,9 +23,7 @@ def job_from_provider(data: Mapping[str, Any], *, source: str = "linkedin") -> J
     url = data.get("url") or data.get("link") or data.get("jobUrl")
     company = data.get("companyName") or data.get("company") or data.get("company_name")
     title = data.get("title") or data.get("jobTitle") or data.get("job_title")
-    description = (
-        data.get("description") or data.get("jobDescription") or data.get("job_description")
-    )
+    description = data.get("description") or data.get("jobDescription") or data.get("job_description")
     published = data.get("publishedAt") or data.get("published_at")
     return assign_identity(
         Job(
@@ -37,17 +35,13 @@ def job_from_provider(data: Mapping[str, Any], *, source: str = "linkedin") -> J
             description=str(description or ""),
             location=str(data.get("location") or "") or None,
             contract_type=str(data.get("contractType") or data.get("contract_type") or "") or None,
-            published_at=datetime.fromisoformat(str(published).replace("Z", "+00:00"))
-            if published
-            else None,
+            published_at=datetime.fromisoformat(str(published).replace("Z", "+00:00")) if published else None,
         )
     )
 
 
 class SubmissionNormalizer:
-    def __init__(
-        self, discovery: DiscoveryProvider, extractor: Any, linkedin_template: str
-    ) -> None:
+    def __init__(self, discovery: DiscoveryProvider, extractor: Any, linkedin_template: str) -> None:
         self.discovery = discovery
         self.extractor = extractor
         self.linkedin_template = linkedin_template
@@ -73,9 +67,7 @@ class SubmissionNormalizer:
             )
             enriched = dict(raw) | {
                 "id": raw.get("id", submission.linkedin_job_id),
-                "url": raw.get(
-                    "url", self.linkedin_template.format(jobId=submission.linkedin_job_id)
-                ),
+                "url": raw.get("url", self.linkedin_template.format(jobId=submission.linkedin_job_id)),
             }
             return job_from_provider(enriched)
         if isinstance(submission, UrlSubmission):
@@ -83,9 +75,7 @@ class SubmissionNormalizer:
             return assign_identity(self.extractor.extract_job(content, str(submission.job_url)))
         if isinstance(submission, AiContentSubmission):
             return assign_identity(
-                self.extractor.extract_job(
-                    submission.page_content, str(submission.source_url or "")
-                )
+                self.extractor.extract_job(submission.page_content, str(submission.source_url or ""))
             )
         raise TypeError(f"Unsupported submission: {submission.entry_type}")
 
@@ -109,9 +99,7 @@ def fillout_submission(payload: Mapping[str, Any], field_ids: Mapping[str, str])
 
     entry = str(value("entryType") or "").strip().lower().replace(" ", "_")
     if entry == EntryType.LINKEDIN:
-        return LinkedInSubmission(
-            entry_type=EntryType.LINKEDIN, linkedin_job_id=int(value("linkedinJobId"))
-        )
+        return LinkedInSubmission(entry_type=EntryType.LINKEDIN, linkedin_job_id=int(value("linkedinJobId")))
     if entry == EntryType.EXTERNAL:
         return ExternalSubmission(
             entry_type=EntryType.EXTERNAL,
