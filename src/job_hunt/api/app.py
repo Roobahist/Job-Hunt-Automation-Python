@@ -151,7 +151,7 @@ def create_app(
                 services.repository.set_status(int(raw_row_id), status_key)
                 response_text = "Status updated"
             elif data.startswith("retry:"):
-                coordinator.retry(UUID(data.split(":", 1)[1]))
+                coordinator.retry(UUID(data.split(":", 1)[1]), fresh=True)
                 response_text = "Regeneration queued"
         except (KeyError, ValueError):
             response_text = "Action could not be applied"
