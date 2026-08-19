@@ -16,6 +16,7 @@ class Queue(Protocol):
         run_id: UUID,
         force: bool,
         snapshot_id: str | None = None,
+        checkpoint_namespace: str | None = None,
     ) -> str: ...
 
     def discovery(self, tenant: str, run_id: UUID) -> str: ...
@@ -39,15 +40,15 @@ class RunCoordinator:
         run_id: UUID,
         force: bool,
         snapshot_id: str | None,
+        checkpoint_namespace: str,
     ) -> str:
-        if snapshot_id is None:
-            return self.queue.submission(tenant, payload, run_id, force)
         return self.queue.submission(
             tenant,
             payload,
             run_id,
             force,
             snapshot_id=snapshot_id,
+            checkpoint_namespace=checkpoint_namespace,
         )
 
     def enqueue_submission(
@@ -61,12 +62,14 @@ class RunCoordinator:
     ) -> EnqueueResponse:
         self.tenant_exists(tenant)
         run = RunStatus(tenant=tenant, kind=kind)
+        checkpoint_namespace = str(run.run_id)
         self.store.save(run)
         request: dict[str, object] = {
             "tenant": tenant,
             "payload": payload,
             "kind": kind,
             "force": force,
+            "checkpoint_namespace": checkpoint_namespace,
         }
         if snapshot_id:
             request["snapshot_id"] = snapshot_id
@@ -77,6 +80,7 @@ class RunCoordinator:
             run.run_id,
             force,
             snapshot_id,
+            checkpoint_namespace,
         )
         self.store.update(run.run_id, task_id=task_id)
         return EnqueueResponse(run_id=run.run_id)
@@ -90,23 +94,31 @@ class RunCoordinator:
         self.store.update(run.run_id, task_id=task_id)
         return EnqueueResponse(run_id=run.run_id)
 
-    def retry(self, run_id: UUID) -> RetryResponse:
+    def retry(self, run_id: UUID, *, fresh: bool = False) -> RetryResponse:
         original = self.store.get(run_id)
         request = self.store.get_request(run_id)
         if not original or not request:
             raise KeyError(str(run_id))
         retry = RunStatus(tenant=original.tenant, kind=original.kind, original_run_id=run_id)
+        replay = dict(request)
+        if replay["kind"] != "discovery":
+            replay["checkpoint_namespace"] = (
+                str(retry.run_id)
+                if fresh
+                else str(replay.get("checkpoint_namespace") or original.run_id)
+            )
         self.store.save(retry)
-        self.store.save_request(retry.run_id, request)
-        if request["kind"] == "discovery":
+        self.store.save_request(retry.run_id, replay)
+        if replay["kind"] == "discovery":
             task_id = self.queue.discovery(original.tenant, retry.run_id)
         else:
             task_id = self._queue_submission(
                 original.tenant,
-                dict(request["payload"]),  # type: ignore[arg-type]
+                dict(replay["payload"]),  # type: ignore[arg-type]
                 retry.run_id,
-                bool(request.get("force", False)),
-                str(request["snapshot_id"]) if request.get("snapshot_id") else None,
+                bool(replay.get("force", False)),
+                str(replay["snapshot_id"]) if replay.get("snapshot_id") else None,
+                str(replay["checkpoint_namespace"]),
             )
         self.store.update(retry.run_id, task_id=task_id)
         return RetryResponse(original_run_id=run_id, run_id=retry.run_id)
