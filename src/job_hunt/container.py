@@ -95,6 +95,7 @@ class Container:
             quota_cooldown_seconds=self.settings.provider_quota_cooldown_seconds,
             state=self.state,
             checkpoint_ttl_seconds=self.settings.llm_checkpoint_ttl_seconds,
+            limits=self.settings.gemini_limits(),
         )
 
         if bootstrap.renderer == "mahsa":
