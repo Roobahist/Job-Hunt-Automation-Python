@@ -148,7 +148,7 @@ def create_app(
         try:
             if data.startswith("status:"):
                 _, status_key, raw_row_id = data.split(":", 2)
-                services.workflow.repository.set_status(int(raw_row_id), status_key)  # type: ignore[attr-defined]
+                services.repository.set_status(int(raw_row_id), status_key)
                 response_text = "Status updated"
             elif data.startswith("retry:"):
                 coordinator.retry(UUID(data.split(":", 1)[1]))
