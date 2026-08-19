@@ -46,9 +46,7 @@ class DocumentRenderer(Protocol):
 
 
 class ArtifactPublisher(Protocol):
-    def publish(
-        self, artifacts: ArtifactBundle, folder: str, tags: Sequence[str]
-    ) -> Mapping[str, Any]: ...
+    def publish(self, artifacts: ArtifactBundle) -> Mapping[str, Any]: ...
 
 
 class Notifier(Protocol):
