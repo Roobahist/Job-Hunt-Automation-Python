@@ -24,12 +24,49 @@ class Settings(BaseSettings):
     operator_token: str = ""
     run_ttl_seconds: int = 604800
 
+    # Provider capacity is shared by every tenant. Comma-separated environment values keep
+    # secrets outside source control while allowing any number of free-tier accounts.
+    apify_tokens: str = ""
+    gemini_api_keys: str = ""
+    gemini_content_models: str = (
+        "gemini-3.6-flash,gemini-3.5-flash,gemini-3-flash-preview,gemini-2.5-flash"
+    )
+    gemini_repair_models: str = (
+        "gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-2.5-flash-lite"
+    )
+    provider_quota_cooldown_seconds: int = Field(default=3600, ge=60)
+
+    @staticmethod
+    def _split_csv(value: str) -> list[str]:
+        return [item.strip() for item in value.split(",") if item.strip()]
+
+    def shared_apify_tokens(self) -> list[str]:
+        tokens = self._split_csv(self.apify_tokens)
+        if not tokens:
+            raise ConfigurationError("JOB_HUNT_APIFY_TOKENS must contain at least one token")
+        return tokens
+
+    def shared_gemini_keys(self) -> list[str]:
+        keys = self._split_csv(self.gemini_api_keys)
+        if not keys:
+            raise ConfigurationError("JOB_HUNT_GEMINI_API_KEYS must contain at least one API key")
+        return keys
+
+    def content_models(self) -> list[str]:
+        models = [model.removeprefix("models/") for model in self._split_csv(self.gemini_content_models)]
+        if not models:
+            raise ConfigurationError("JOB_HUNT_GEMINI_CONTENT_MODELS must contain at least one model")
+        return models
+
+    def repair_models(self) -> list[str]:
+        models = [model.removeprefix("models/") for model in self._split_csv(self.gemini_repair_models)]
+        if not models:
+            raise ConfigurationError("JOB_HUNT_GEMINI_REPAIR_MODELS must contain at least one model")
+        return models
+
 
 class SecretAliases(BaseModel):
     baserow: str
-    apify: str
-    gemini: str
-    gemini_backup: str
     cloudinary: str
     telegram: str
     fillout: str
@@ -74,7 +111,9 @@ class TenantRuntimeConfig(BaseModel):
     telegram_chat_id: str
     cloudinary_folder_prefix: str = "job-applications"
     cloudinary_tags: list[str] = Field(default_factory=list)
-    gemini_model: str
+    # Retained only so existing Baserow configuration rows remain valid. Model selection is
+    # now application-wide through JOB_HUNT_GEMINI_CONTENT_MODELS/REPAIR_MODELS.
+    gemini_model: str | None = None
     project_selection_count: int | None = None
     work_experience_selection_count: int = Field(default=3, ge=1)
 
@@ -93,9 +132,6 @@ def load_registry(path: Path) -> dict[str, TenantBootstrap]:
     for key, value in raw.items():
         aliases = SecretAliases(
             baserow=value["baserow_token_env"],
-            apify=value["apify_token_env"],
-            gemini=value["gemini_key_env"],
-            gemini_backup=value["gemini_backup_key_env"],
             cloudinary=value["cloudinary_url_env"],
             telegram=value["telegram_token_env"],
             fillout=value["fillout_secret_env"],
