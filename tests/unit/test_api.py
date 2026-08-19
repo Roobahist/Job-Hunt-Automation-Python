@@ -104,7 +104,7 @@ class FakeContainer:
             context=SimpleNamespace(bootstrap=FakeBootstrap()),
             config=SimpleNamespace(fillout_form_id="form-1", fillout_field_ids={}),
             notifier=self.notifier,
-            workflow=SimpleNamespace(repository=self.repository),
+            repository=self.repository,
         )
 
 
