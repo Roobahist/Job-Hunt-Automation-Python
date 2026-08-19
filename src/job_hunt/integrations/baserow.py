@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
+from pathlib import Path
 from typing import Any, cast
 
 import httpx
@@ -68,6 +69,22 @@ class BaserowClient:
         response = self._request("POST", "/api/user-files/upload-via-url/", json={"url": url})
         return cast(dict[str, Any], response.json())
 
+    def upload_file(self, path: Path) -> dict[str, Any]:
+        try:
+            with path.open("rb") as handle:
+                response = self._request(
+                    "POST",
+                    "/api/user-files/upload-file/",
+                    files={"file": (path.name, handle, "application/octet-stream")},
+                )
+        except OSError as exc:
+            raise ProviderError(
+                f"Could not read artifact for Baserow upload: {path}",
+                ErrorKind.VALIDATION,
+                provider="baserow",
+            ) from exc
+        return cast(dict[str, Any], response.json())
+
     def list_fields(self, table_id: int) -> list[dict[str, Any]]:
         response = self._request("GET", f"/api/database/fields/table/{table_id}/")
         return cast(list[dict[str, Any]], response.json())
@@ -99,13 +116,12 @@ class BaserowJobRepository:
         )
 
     def reset(self, row_id: int, job: Job) -> Mapping[str, Any]:
+        # Preserve the last working CV and cover letter until a replacement is fully generated.
         return self.client.update_row(
             self.table_id,
             row_id,
             self._job_fields(job)
             | {
-                "CV": [],
-                "Cover Letter": [],
                 "Score": None,
                 "Apply": False,
                 "Status": self.status_options["new"],
@@ -125,7 +141,10 @@ class BaserowJobRepository:
         )
 
     def save_artifacts(self, row_id: int, uploaded_files: Mapping[str, Any]) -> None:
-        self.client.update_row(self.table_id, row_id, uploaded_files)
+        values = dict(uploaded_files)
+        if "toApply" in self.status_options:
+            values["Status"] = self.status_options["toApply"]
+        self.client.update_row(self.table_id, row_id, values)
 
     def _job_fields(self, job: Job) -> dict[str, Any]:
         normalized_contract = "".join(
