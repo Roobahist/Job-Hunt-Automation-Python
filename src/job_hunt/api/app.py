@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Annotated, Any, Protocol
+from typing import Annotated
 from uuid import UUID
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
@@ -10,31 +10,15 @@ from fastapi.responses import JSONResponse
 from redis import Redis
 
 from job_hunt.application.normalization import fillout_submission
+from job_hunt.application.runs import Queue, RunCoordinator
 from job_hunt.config import Settings
 from job_hunt.container import Container
 from job_hunt.domain.models import EnqueueResponse, JobSubmission, RetryResponse, RunStatus
 from job_hunt.errors import ConfigurationError, WorkflowError
 from job_hunt.logging import configure_logging
+from job_hunt.queueing import CeleryQueue
 from job_hunt.run_store import RunStore
 from job_hunt.security import verify_bearer
-from job_hunt.worker import discover_tenant, process_submission
-
-
-class Queue(Protocol):
-    def submission(
-        self, tenant: str, payload: dict[str, Any], run_id: UUID, force: bool
-    ) -> str: ...
-    def discovery(self, tenant: str, run_id: UUID) -> str: ...
-
-
-class CeleryQueue:
-    def submission(self, tenant: str, payload: dict[str, Any], run_id: UUID, force: bool) -> str:
-        task = process_submission.delay(tenant, payload, str(run_id), force)
-        return str(task.id)
-
-    def discovery(self, tenant: str, run_id: UUID) -> str:
-        task = discover_tenant.delay(tenant, str(run_id))
-        return str(task.id)
 
 
 def create_app(
@@ -51,7 +35,8 @@ def create_app(
     )
     task_queue = queue or CeleryQueue()
     container = container_factory or (lambda: Container(configured))
-    app = FastAPI(title="Job Hunt Automation", version="0.1.0")
+    coordinator = RunCoordinator(run_store, task_queue, lambda tenant: container().registry.get(tenant))
+    app = FastAPI(title="Job Hunt Automation", version="0.2.0")
 
     @app.exception_handler(RequestValidationError)
     async def validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:
@@ -101,17 +86,6 @@ def create_app(
         if not verify_bearer(authorization, configured.operator_token):
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid operator bearer token")
 
-    def enqueue(tenant: str, payload: dict[str, Any], kind: str, *, force: bool) -> EnqueueResponse:
-        container().registry.get(tenant)
-        run = RunStatus(tenant=tenant, kind=kind)
-        run_store.save(run)
-        run_store.save_request(
-            run.run_id, {"tenant": tenant, "payload": payload, "kind": kind, "force": force}
-        )
-        task_id = task_queue.submission(tenant, payload, run.run_id, force)
-        run_store.update(run.run_id, task_id=task_id)
-        return EnqueueResponse(run_id=run.run_id)
-
     @app.get("/health/live")
     def liveness() -> dict[str, str]:
         return {"status": "ok"}
@@ -129,7 +103,7 @@ def create_app(
     @app.post("/webhooks/fillout/{tenant}", response_model=EnqueueResponse, status_code=202)
     def fillout_webhook(
         tenant: str,
-        payload: dict[str, Any],
+        payload: dict[str, object],
         authorization: Annotated[str | None, Header()] = None,
     ) -> EnqueueResponse:
         services = container().tenant(tenant)
@@ -145,7 +119,7 @@ def create_app(
                 status.HTTP_400_BAD_REQUEST, "Fillout form ID does not match tenant"
             )
         submission = fillout_submission(payload, services.config.fillout_field_ids)
-        return enqueue(
+        return coordinator.enqueue_submission(
             tenant,
             submission.model_dump(mode="json"),
             "fillout",
@@ -159,8 +133,12 @@ def create_app(
         dependencies=[Depends(operator)],
     )
     def submit_job(tenant: str, submission: JobSubmission, force: bool = False) -> EnqueueResponse:
-        payload = submission.model_dump(mode="json")
-        return enqueue(tenant, payload, "manual", force=force)
+        return coordinator.enqueue_submission(
+            tenant,
+            submission.model_dump(mode="json"),
+            "manual",
+            force=force,
+        )
 
     @app.post(
         "/v1/tenants/{tenant}/discoveries",
@@ -169,13 +147,7 @@ def create_app(
         dependencies=[Depends(operator)],
     )
     def submit_discovery(tenant: str) -> EnqueueResponse:
-        container().registry.get(tenant)
-        run = RunStatus(tenant=tenant, kind="discovery")
-        run_store.save(run)
-        run_store.save_request(run.run_id, {"tenant": tenant, "kind": "discovery"})
-        task_id = task_queue.discovery(tenant, run.run_id)
-        run_store.update(run.run_id, task_id=task_id)
-        return EnqueueResponse(run_id=run.run_id)
+        return coordinator.enqueue_discovery(tenant)
 
     @app.get("/v1/runs/{run_id}", response_model=RunStatus, dependencies=[Depends(operator)])
     def get_run(run_id: UUID) -> RunStatus:
@@ -191,23 +163,9 @@ def create_app(
         dependencies=[Depends(operator)],
     )
     def retry_run(run_id: UUID) -> RetryResponse:
-        original = run_store.get(run_id)
-        request_data = run_store.get_request(run_id)
-        if not original or not request_data:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "Run or replay data not found")
-        retry = RunStatus(tenant=original.tenant, kind=original.kind, original_run_id=run_id)
-        run_store.save(retry)
-        run_store.save_request(retry.run_id, request_data)
-        if request_data["kind"] == "discovery":
-            task_id = task_queue.discovery(original.tenant, retry.run_id)
-        else:
-            task_id = task_queue.submission(
-                original.tenant,
-                request_data["payload"],  # type: ignore[arg-type]
-                retry.run_id,
-                bool(request_data.get("force", False)),
-            )
-        run_store.update(retry.run_id, task_id=task_id)
-        return RetryResponse(original_run_id=run_id, run_id=retry.run_id)
+        try:
+            return coordinator.retry(run_id)
+        except KeyError as exc:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Run or replay data not found") from exc
 
     return app
