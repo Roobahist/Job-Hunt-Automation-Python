@@ -19,8 +19,10 @@ from job_hunt.integrations.configuration import (
     BaserowConfigurationRepository,
     validate_prompt_contract,
 )
-from job_hunt.integrations.gemini import GeminiWorkflowAI
-from job_hunt.integrations.gemini_mahsa import MahsaGeminiWorkflowAI
+from job_hunt.integrations.gemini_parallel import (
+    ParallelGeminiWorkflowAI,
+    ParallelMahsaGeminiWorkflowAI,
+)
 from job_hunt.integrations.gemini_pool import PooledGeminiStructuredClient
 from job_hunt.integrations.telegram import TelegramNotifier
 from job_hunt.state import RedisState
@@ -100,19 +102,21 @@ class Container:
 
         if bootstrap.renderer == "mahsa":
             validate_prompt_contract(prompts, MAHSA_PROMPT_KEYS, "mahsa")
-            ai = MahsaGeminiWorkflowAI(
+            ai = ParallelMahsaGeminiWorkflowAI(
                 structured_client,
                 prompts,
                 project_selection_count=config.project_selection_count,
                 work_experience_selection_count=config.work_experience_selection_count,
+                parallelism=self.settings.llm_parallelism,
             )
         else:
             validate_prompt_contract(prompts, MOJTABA_PROMPT_KEYS, "mojtaba")
-            ai = GeminiWorkflowAI(
+            ai = ParallelGeminiWorkflowAI(
                 structured_client,
                 prompts,
                 project_selection_count=config.project_selection_count,
                 work_experience_selection_count=config.work_experience_selection_count,
+                parallelism=self.settings.llm_parallelism,
             )
 
         repository = BaserowJobRepository(
