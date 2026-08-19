@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from job_hunt.domain.models import ArtifactBundle, Job, PromptDefinition, Qualification
+from job_hunt.domain.models import ArtifactBundle, Job, PromptDefinition
 from job_hunt.errors import ProviderError
 from job_hunt.integrations.artifacts import CloudinaryBaserowPublisher
 from job_hunt.integrations.cloudinary import CloudinaryPublisher
@@ -36,7 +36,7 @@ def definition(key: str, schema: dict[str, Any]) -> PromptDefinition:
     return PromptDefinition(
         key=key,
         version=1,
-        template=f"{key} [[job_description]]",
+        template=key,
         output_structure=schema,
         temperature=0.3,
     )
@@ -146,7 +146,9 @@ def test_gemini_workflow_ai_runs_separate_prompt_operations() -> None:
         },
         "cv_project_selection": {
             "type": "object",
-            "properties": {"selected_indices": {"type": "array", "items": {"type": "integer"}}},
+            "properties": {
+                "selected_indices": {"type": "array", "items": {"type": "integer"}}
+            },
             "required": ["selected_indices"],
         },
         "cv_project_rewrite": {
@@ -161,7 +163,9 @@ def test_gemini_workflow_ai_runs_separate_prompt_operations() -> None:
         },
         "cv_work_experience_selection": {
             "type": "object",
-            "properties": {"selected_indices": {"type": "array", "items": {"type": "integer"}}},
+            "properties": {
+                "selected_indices": {"type": "array", "items": {"type": "integer"}}
+            },
             "required": ["selected_indices"],
         },
         "cv_work_experience_rewrite": {
