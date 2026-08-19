@@ -181,9 +181,7 @@ def test_discovery_and_fillout_auth_form_validation() -> None:
         == 400
     )
     payload["formId"] = "form-1"
-    accepted = api.post(
-        "/webhooks/fillout/mahsa", json=payload, headers={"Authorization": "Bearer webhook-secret"}
-    )
+    accepted = api.post("/webhooks/fillout/mahsa", json=payload, headers={"Authorization": "Bearer webhook-secret"})
     assert accepted.status_code == 202
     assert queue.calls[-1][4] is False
 

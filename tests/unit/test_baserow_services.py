@@ -104,9 +104,7 @@ def test_repository_create_find_reset_and_updates() -> None:
     assert repo.find(job)["id"] == 3  # type: ignore[index]
     reset = repo.reset(3, job)
     assert "CV" not in reset and "Cover Letter" not in reset and reset["Status"] == 10
-    repo.save_qualification(
-        3, Qualification(score=20, should_apply=False, reasoning="low"), passed=False
-    )
+    repo.save_qualification(3, Qualification(score=20, should_apply=False, reasoning="low"), passed=False)
     assert client.updates[-1]["Status"] == 11
     repo.save_artifacts(3, {"CV": [{"name": "x"}]})
     assert client.updates[-1]["CV"][0]["name"] == "x"

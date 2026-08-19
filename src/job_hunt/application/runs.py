@@ -103,18 +103,19 @@ class RunCoordinator:
         replay = dict(request)
         if replay["kind"] != "discovery":
             replay["checkpoint_namespace"] = (
-                str(retry.run_id)
-                if fresh
-                else str(replay.get("checkpoint_namespace") or original.run_id)
+                str(retry.run_id) if fresh else str(replay.get("checkpoint_namespace") or original.run_id)
             )
         self.store.save(retry)
         self.store.save_request(retry.run_id, replay)
         if replay["kind"] == "discovery":
             task_id = self.queue.discovery(original.tenant, retry.run_id)
         else:
+            payload = replay.get("payload")
+            if not isinstance(payload, dict):
+                raise ValueError("Stored run replay payload must be an object")
             task_id = self._queue_submission(
                 original.tenant,
-                dict(replay["payload"]),  # type: ignore[arg-type]
+                dict(payload),
                 retry.run_id,
                 bool(replay.get("force", False)),
                 str(replay["snapshot_id"]) if replay.get("snapshot_id") else None,

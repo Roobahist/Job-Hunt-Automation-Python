@@ -23,9 +23,7 @@ def job(**updates: object) -> Job:
 
 
 def test_canonical_url_and_external_identity() -> None:
-    assert (
-        canonicalize_url("HTTPS://Example.COM:443/jobs/1/?x=1#part") == "https://example.com/jobs/1"
-    )
+    assert canonicalize_url("HTTPS://Example.COM:443/jobs/1/?x=1#part") == "https://example.com/jobs/1"
     identified = assign_identity(job())
     assert identified.identity == "linkedin:123"
     assert 0 < identified.internal_id <= MAX_SAFE_INTEGER
@@ -33,9 +31,7 @@ def test_canonical_url_and_external_identity() -> None:
 
 def test_url_fallback_and_collision_rehash() -> None:
     candidate = assign_identity(job(external_id=None))
-    collided = assign_identity(
-        job(external_id=None), lambda value, _: value == candidate.internal_id
-    )
+    collided = assign_identity(job(external_id=None), lambda value, _: value == candidate.internal_id)
     assert candidate.identity == "https://example.com/jobs/1"
     assert collided.internal_id != candidate.internal_id
     assert stable_job_id("x") == stable_job_id("x")

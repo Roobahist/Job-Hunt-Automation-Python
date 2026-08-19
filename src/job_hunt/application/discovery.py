@@ -18,11 +18,7 @@ def build_search_url(base_url: str, criteria: Mapping[str, Any]) -> str:
         "f_TPR": criteria.get("Date Filter") or criteria.get("dateFilter"),
         "f_JT": criteria.get("Job Type") or criteria.get("jobType"),
     }
-    return (
-        base_url.rstrip("?")
-        + "?"
-        + urlencode({key: value for key, value in params.items() if value})
-    )
+    return base_url.rstrip("?") + "?" + urlencode({key: value for key, value in params.items() if value})
 
 
 def excluded(job: Job, company_terms: Sequence[str], title_terms: Sequence[str]) -> bool:

@@ -30,9 +30,7 @@ def test_normalizer_linkedin_ai_and_url(monkeypatch: object) -> None:
     assert linkedin.external_id == "5"
     assert linkedin.url == "https://linkedin/5"
     ai = normalizer.normalize(
-        AiContentSubmission(
-            entry_type=EntryType.AI_CONTENT, page_content="posting", source_url="https://x/job"
-        ),
+        AiContentSubmission(entry_type=EntryType.AI_CONTENT, page_content="posting", source_url="https://x/job"),
         country="ca",
         max_concurrency=1,
     )
@@ -51,9 +49,7 @@ def test_url_normalizer_fetches_public_text(monkeypatch: object) -> None:
 
 
 def test_fillout_ai_and_url_branches() -> None:
-    ai = fillout_submission(
-        {"entryType": "ai_content", "pageContent": "text", "jobUrl": "https://x/job"}, {}
-    )
+    ai = fillout_submission({"entryType": "ai_content", "pageContent": "text", "jobUrl": "https://x/job"}, {})
     assert isinstance(ai, AiContentSubmission)
     url = fillout_submission({"entryType": "url", "jobUrl": "https://x/job"}, {})
     assert isinstance(url, UrlSubmission)

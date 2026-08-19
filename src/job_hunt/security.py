@@ -32,9 +32,7 @@ def validate_public_url(
     for record in records:
         address = ipaddress.ip_address(record[4][0])
         if not address.is_global:
-            raise WorkflowError(
-                "Private or reserved network URLs are not accepted", ErrorKind.VALIDATION
-            )
+            raise WorkflowError("Private or reserved network URLs are not accepted", ErrorKind.VALIDATION)
 
 
 def fetch_public_text(
@@ -50,9 +48,7 @@ def fetch_public_text(
     try:
         for _ in range(max_redirects + 1):
             validate_public_url(current)
-            with http.stream(
-                "GET", current, headers={"User-Agent": "job-hunt-automation/0.1"}
-            ) as response:
+            with http.stream("GET", current, headers={"User-Agent": "job-hunt-automation/0.1"}) as response:
                 if response.is_redirect:
                     location = response.headers.get("location")
                     if not location:
@@ -64,21 +60,14 @@ def fetch_public_text(
                     continue
                 response.raise_for_status()
                 content_type = response.headers.get("content-type", "").lower()
-                if not any(
-                    value in content_type
-                    for value in ("text/", "application/xhtml+xml", "application/json")
-                ):
-                    raise WorkflowError(
-                        "URL did not return a supported text document", ErrorKind.VALIDATION
-                    )
+                if not any(value in content_type for value in ("text/", "application/xhtml+xml", "application/json")):
+                    raise WorkflowError("URL did not return a supported text document", ErrorKind.VALIDATION)
                 chunks: list[bytes] = []
                 size = 0
                 for chunk in response.iter_bytes():
                     size += len(chunk)
                     if size > max_bytes:
-                        raise WorkflowError(
-                            "URL response exceeds the size limit", ErrorKind.VALIDATION
-                        )
+                        raise WorkflowError("URL response exceeds the size limit", ErrorKind.VALIDATION)
                     chunks.append(chunk)
                 return b"".join(chunks).decode(response.encoding or "utf-8", errors="replace")
         raise WorkflowError("URL exceeded the redirect limit", ErrorKind.VALIDATION)

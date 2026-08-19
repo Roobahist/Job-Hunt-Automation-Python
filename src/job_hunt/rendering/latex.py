@@ -46,9 +46,7 @@ def inject_once(template: str, replacements: Mapping[str, str]) -> str:
     for marker, content in replacements.items():
         count = output.count(marker)
         if count != 1:
-            raise DocumentRenderingError(
-                f"Template marker {marker!r} must occur once; found {count}"
-            )
+            raise DocumentRenderingError(f"Template marker {marker!r} must occur once; found {count}")
         output = output.replace(marker, content)
     unresolved = re.findall(r"%%__[A-Z0-9_]+__%%", output)
     if unresolved:
@@ -84,9 +82,7 @@ class PdfLatexCompiler:
                     check=False,
                 )
             except (OSError, subprocess.TimeoutExpired) as exc:
-                raise DocumentRenderingError(
-                    f"LaTeX compiler failed to start or timed out: {exc}"
-                ) from exc
+                raise DocumentRenderingError(f"LaTeX compiler failed to start or timed out: {exc}") from exc
             if result.returncode:
                 output = (result.stdout + "\n" + result.stderr)[-4000:]
                 raise DocumentRenderingError(f"LaTeX compilation failed:\n{output}")

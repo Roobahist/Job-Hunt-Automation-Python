@@ -38,9 +38,7 @@ def test_retry_transient_only_retries_retryable_errors() -> None:
         nonlocal calls
         calls += 1
         if calls < 3:
-            raise WorkflowError(
-                "later", ErrorKind.TRANSIENT_PROVIDER, retryable=True, retry_after=0
-            )
+            raise WorkflowError("later", ErrorKind.TRANSIENT_PROVIDER, retryable=True, retry_after=0)
         return "ok"
 
     assert retry_transient(operation, attempts=3, sleep=sleeps.append) == "ok"

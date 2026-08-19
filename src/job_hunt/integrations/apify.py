@@ -80,26 +80,19 @@ class ApifyProvider:
         return self.quota_cooldown_seconds
 
     def _available_tokens(self) -> list[str]:
-        if self.state is not None:
-            available = [
-                token
-                for token in self.tokens
-                if self.state.available("apify", self._token_id(token))
-            ]
+        state = self.state
+        if state is not None:
+            available = [token for token in self.tokens if state.available("apify", self._token_id(token))]
             if available:
                 return available
             return sorted(
                 self.tokens,
-                key=lambda token: self.state.remaining_cooldown("apify", self._token_id(token)),
+                key=lambda token: state.remaining_cooldown("apify", self._token_id(token)),
             )[:1]
 
         now = time.monotonic()
         with self._lock:
-            available = [
-                token
-                for token in self.tokens
-                if self._unavailable_until.get(self._token_id(token), 0) <= now
-            ]
+            available = [token for token in self.tokens if self._unavailable_until.get(self._token_id(token), 0) <= now]
             if available:
                 return available
             return [
@@ -164,9 +157,7 @@ class ApifyProvider:
     def discover(self, urls: Sequence[str], *, max_items: int) -> Iterable[Mapping[str, Any]]:
         return self._run(self.search_actor_id, {"startUrls": list(urls)}, max_items=max_items)
 
-    def fetch_linkedin(
-        self, job_id: int, *, country: str, max_concurrency: int
-    ) -> Mapping[str, Any]:
+    def fetch_linkedin(self, job_id: int, *, country: str, max_concurrency: int) -> Mapping[str, Any]:
         items = list(
             self._run(
                 self.single_actor_id,

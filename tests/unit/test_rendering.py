@@ -59,9 +59,7 @@ def test_real_tenant_templates_and_master_cv_render(
         root / "templates/cover_letter_template.tex",
         FakeCompiler(),
     )
-    bundle = renderer.render(
-        TailoredContent(cv=master, cover_letter=cover()), tmp_path / tenant, tenant
-    )
+    bundle = renderer.render(TailoredContent(cv=master, cover_letter=cover()), tmp_path / tenant, tenant)
     assert bundle.cv_pdf.read_bytes().startswith(b"%PDF")
     assert bundle.cover_letter_pdf.exists() and bundle.archive.exists()
     assert "%%__" not in bundle.cv_tex.read_text()
@@ -71,9 +69,7 @@ def test_real_tenant_templates_and_master_cv_render(
 def test_cover_letter_requires_exactly_three_paragraphs() -> None:
     template = " ".join(MahsaCoverLetterRenderer.markers.values())
     with pytest.raises(DocumentRenderingError, match="exactly three"):
-        MahsaCoverLetterRenderer().render(
-            template, {"date": "x", "company_name": "y", "paragraphs": ["one"]}
-        )
+        MahsaCoverLetterRenderer().render(template, {"date": "x", "company_name": "y", "paragraphs": ["one"]})
 
 
 def test_mahsa_requires_one_education_marker() -> None:

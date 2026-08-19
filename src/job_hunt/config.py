@@ -45,9 +45,7 @@ class Settings(BaseSettings):
         "gemini-3.6-flash,gemini-3.5-flash,gemini-3-flash-preview,gemini-2.5-flash,"
         "gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-2.5-flash-lite"
     )
-    gemini_repair_models: str = (
-        "gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-2.5-flash-lite"
-    )
+    gemini_repair_models: str = "gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-2.5-flash-lite"
     gemini_limits_json: str = json.dumps(_DEFAULT_GEMINI_LIMITS, separators=(",", ":"))
     provider_quota_cooldown_seconds: int = Field(default=3600, ge=60)
 
@@ -68,25 +66,15 @@ class Settings(BaseSettings):
         return keys
 
     def content_models(self) -> list[str]:
-        models = [
-            model.removeprefix("models/")
-            for model in self._split_csv(self.gemini_content_models)
-        ]
+        models = [model.removeprefix("models/") for model in self._split_csv(self.gemini_content_models)]
         if not models:
-            raise ConfigurationError(
-                "JOB_HUNT_GEMINI_CONTENT_MODELS must contain at least one model"
-            )
+            raise ConfigurationError("JOB_HUNT_GEMINI_CONTENT_MODELS must contain at least one model")
         return models
 
     def repair_models(self) -> list[str]:
-        models = [
-            model.removeprefix("models/")
-            for model in self._split_csv(self.gemini_repair_models)
-        ]
+        models = [model.removeprefix("models/") for model in self._split_csv(self.gemini_repair_models)]
         if not models:
-            raise ConfigurationError(
-                "JOB_HUNT_GEMINI_REPAIR_MODELS must contain at least one model"
-            )
+            raise ConfigurationError("JOB_HUNT_GEMINI_REPAIR_MODELS must contain at least one model")
         return models
 
     def gemini_limits(self) -> dict[str, dict[str, int]]:
@@ -107,13 +95,9 @@ class Settings(BaseSettings):
                     try:
                         integer = int(value)
                     except (TypeError, ValueError) as exc:
-                        raise ConfigurationError(
-                            f"Gemini limit {model}.{name} must be an integer"
-                        ) from exc
+                        raise ConfigurationError(f"Gemini limit {model}.{name} must be an integer") from exc
                     if integer < 1:
-                        raise ConfigurationError(
-                            f"Gemini limit {model}.{name} must be positive"
-                        )
+                        raise ConfigurationError(f"Gemini limit {model}.{name} must be positive")
                     normalized[name] = integer
             result[model.removeprefix("models/")] = normalized
         return result

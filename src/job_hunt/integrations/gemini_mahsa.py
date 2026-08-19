@@ -18,11 +18,7 @@ class MahsaGeminiWorkflowAI(GeminiWorkflowAI):
         sections = source.get("sections")
         if not isinstance(sections, list):
             raise ValueError("master_cv.sections must be an array")
-        matches = [
-            section
-            for section in sections
-            if isinstance(section, dict) and section.get("type") == section_type
-        ]
+        matches = [section for section in sections if isinstance(section, dict) and section.get("type") == section_type]
         if len(matches) != 1:
             raise ValueError(f"master_cv must contain exactly one {section_type} section")
         return matches[0]

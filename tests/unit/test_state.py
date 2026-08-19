@@ -66,6 +66,21 @@ def test_json_snapshots_checkpoints_and_cooldowns() -> None:
     assert state.remaining_cooldown("gemini", "candidate") == 17
 
 
+def test_scoped_checkpoints_are_isolated_by_run_lineage() -> None:
+    redis = FakeRedis()
+    state = RedisState(redis)  # type: ignore[arg-type]
+    first = state.checkpoints("run-a")
+    second = state.checkpoints("run-b")
+
+    first.set_checkpoint("same-digest", {"value": "first"}, ttl_seconds=30)
+    assert first.get_checkpoint("same-digest") == {"value": "first"}
+    assert second.get_checkpoint("same-digest") is None
+
+    second.set_checkpoint("same-digest", {"value": "second"}, ttl_seconds=30)
+    assert first.get_checkpoint("same-digest") == {"value": "first"}
+    assert second.get_checkpoint("same-digest") == {"value": "second"}
+
+
 def test_increment_window_is_shared_and_incremental() -> None:
     redis = FakeRedis()
     state = RedisState(redis)  # type: ignore[arg-type]

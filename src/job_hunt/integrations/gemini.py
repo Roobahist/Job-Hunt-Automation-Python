@@ -30,9 +30,7 @@ def _render(template: str, values: Mapping[str, object], prompt_key: str) -> str
         rendered = rendered.replace(f"[[{key}]]", _compact(value))
     unresolved = sorted(set(_PLACEHOLDER.findall(rendered)))
     if unresolved:
-        raise ConfigurationError(
-            f"Prompt '{prompt_key}' contains unresolved placeholders: {unresolved}"
-        )
+        raise ConfigurationError(f"Prompt '{prompt_key}' contains unresolved placeholders: {unresolved}")
     return rendered
 
 
@@ -179,9 +177,7 @@ class GeminiWorkflowAI:
         self.work_experience_selection_count = work_experience_selection_count
 
     @staticmethod
-    def _definition(
-        prompts: Mapping[str, PromptDefinition], key: str
-    ) -> PromptDefinition:
+    def _definition(prompts: Mapping[str, PromptDefinition], key: str) -> PromptDefinition:
         try:
             return prompts[key]
         except KeyError as exc:
@@ -221,7 +217,11 @@ class GeminiWorkflowAI:
         }
         generated = self._run(definition, values)
         score = generated.get("score", generated.get("qualification_score"))
+        if not isinstance(score, int) or isinstance(score, bool):
+            raise ValueError("qualification_scoring must return an integer score")
         should_apply = generated.get("should_apply", generated.get("apply", False))
+        if not isinstance(should_apply, bool):
+            raise ValueError("qualification_scoring must return should_apply as a boolean")
         reasoning = generated.get(
             "reasoning",
             generated.get("qualification_reasoning", generated.get("reason", "Qualification scored")),
@@ -275,8 +275,7 @@ class GeminiWorkflowAI:
                 raise ValueError(f"Invalid project index: {index}")
         selected = [projects[index] for index in indices]
         rewrite_inputs = [
-            {"title": project.get("title", ""), "content": project.get("content", [])}
-            for project in selected
+            {"title": project.get("title", ""), "content": project.get("content", [])} for project in selected
         ]
         rewritten = self._run(
             self._definition(prompts, "cv_project_rewrite"),
@@ -317,9 +316,7 @@ class GeminiWorkflowAI:
             content = experience.get("content")
             if not isinstance(content, list) or any(not isinstance(x, str) for x in content):
                 raise ValueError(f"Work experience at index {index} must have string content bullets")
-            inputs.append(
-                {"index": index, **{k: v for k, v in experience.items() if k != "description"}}
-            )
+            inputs.append({"index": index, **{k: v for k, v in experience.items() if k != "description"}})
 
         selection = self._run(
             self._definition(prompts, "cv_work_experience_selection"),
@@ -414,9 +411,9 @@ class GeminiWorkflowAI:
         for group in groups:
             if not isinstance(group, dict):
                 raise ValueError("Every returned skill group must be an object")
-            label = group.get("label")
+            returned_label = group.get("label")
             returned = group.get("skills")
-            if not isinstance(label, str) or not label.strip() or not isinstance(returned, list):
+            if not isinstance(returned_label, str) or not returned_label.strip() or not isinstance(returned, list):
                 raise ValueError("Every skill group requires label and skills")
             deduped: list[str] = []
             seen: set[str] = set()
@@ -428,7 +425,7 @@ class GeminiWorkflowAI:
                 if folded not in seen:
                     deduped.append(cleaned)
                     seen.add(folded)
-            tailored.append({"label": label.strip(), "value": ", ".join(deduped)})
+            tailored.append({"label": returned_label.strip(), "value": ", ".join(deduped)})
         return tailored
 
     def _summary_pipeline(
@@ -526,8 +523,6 @@ class GeminiWorkflowAI:
             title=str(title),
             description=str(description),
             location=(str(generated["location"]) if generated.get("location") is not None else None),
-            contract_type=(
-                str(generated["contract_type"]) if generated.get("contract_type") is not None else None
-            ),
+            contract_type=(str(generated["contract_type"]) if generated.get("contract_type") is not None else None),
         )
         return assign_identity(job)

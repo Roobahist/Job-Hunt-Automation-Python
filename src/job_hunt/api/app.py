@@ -72,16 +72,12 @@ def create_app(
 
     @app.exception_handler(ConfigurationError)
     async def configuration_error(_: Request, exc: ConfigurationError) -> JSONResponse:
-        return JSONResponse(
-            status_code=503, content={"error": "configuration_error", "message": str(exc)}
-        )
+        return JSONResponse(status_code=503, content={"error": "configuration_error", "message": str(exc)})
 
     @app.exception_handler(WorkflowError)
     async def workflow_error(_: Request, exc: WorkflowError) -> JSONResponse:
         code = 400 if exc.kind.value == "validation" else 502
-        return JSONResponse(
-            status_code=code, content={"error": exc.kind.value, "message": str(exc)}
-        )
+        return JSONResponse(status_code=code, content={"error": exc.kind.value, "message": str(exc)})
 
     def operator(authorization: Annotated[str | None, Header()] = None) -> None:
         if not verify_bearer(authorization, configured.operator_token):
@@ -96,9 +92,7 @@ def create_app(
         try:
             run_store.redis.ping()
         except Exception as exc:
-            raise HTTPException(
-                status.HTTP_503_SERVICE_UNAVAILABLE, "Redis is unavailable"
-            ) from exc
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Redis is unavailable") from exc
         return {"status": "ready"}
 
     @app.post("/webhooks/fillout/{tenant}", response_model=EnqueueResponse, status_code=202)
@@ -111,14 +105,10 @@ def create_app(
         if not verify_bearer(authorization, services.context.bootstrap.secret("fillout")):
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid Fillout bearer token")
         submission_root = payload.get("submission", {})
-        nested_form_id = (
-            submission_root.get("formId") if isinstance(submission_root, dict) else None
-        )
+        nested_form_id = submission_root.get("formId") if isinstance(submission_root, dict) else None
         form_id = payload.get("formId") or payload.get("form_id") or nested_form_id
         if form_id != services.config.fillout_form_id:
-            raise HTTPException(
-                status.HTTP_400_BAD_REQUEST, "Fillout form ID does not match tenant"
-            )
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Fillout form ID does not match tenant")
         submission = fillout_submission(payload, services.config.fillout_field_ids)
         return coordinator.enqueue_submission(
             tenant,
@@ -135,8 +125,10 @@ def create_app(
     ) -> dict[str, bool]:
         services = container().tenant(tenant)
         expected = services.context.bootstrap.secret("telegram_webhook", required=False)
-        if not expected or not x_telegram_bot_api_secret_token or not hmac.compare_digest(
-            expected, x_telegram_bot_api_secret_token
+        if (
+            not expected
+            or not x_telegram_bot_api_secret_token
+            or not hmac.compare_digest(expected, x_telegram_bot_api_secret_token)
         ):
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid Telegram webhook secret")
         callback = payload.get("callback_query")

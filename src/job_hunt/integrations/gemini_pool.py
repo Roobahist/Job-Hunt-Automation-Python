@@ -71,10 +71,7 @@ class PooledGeminiStructuredClient(GeminiStructuredClient):
         self.quota_cooldown_seconds = quota_cooldown_seconds
         self.state = state
         self.checkpoint_ttl_seconds = checkpoint_ttl_seconds
-        self.limits = {
-            model.removeprefix("models/"): dict(values)
-            for model, values in (limits or {}).items()
-        }
+        self.limits = {model.removeprefix("models/"): dict(values) for model, values in (limits or {}).items()}
         self.langfuse_handler = _langfuse_handler()
         if not self.keys:
             raise ValueError("At least one Gemini API key is required")
@@ -222,22 +219,21 @@ class PooledGeminiStructuredClient(GeminiStructuredClient):
 
     def _available(self, models: Sequence[str]) -> list[tuple[str, str]]:
         ordered = [(model, key) for model in models for key in self.keys]
-        if self.state is not None:
+        state = self.state
+        if state is not None:
             available = [
                 candidate
                 for candidate in ordered
-                if self.state.available("gemini-key", self._key_id(candidate[1]))
-                and self.state.available("gemini-candidate", self._candidate_id(*candidate))
+                if state.available("gemini-key", self._key_id(candidate[1]))
+                and state.available("gemini-candidate", self._candidate_id(*candidate))
             ]
             if available:
                 return available
             return sorted(
                 ordered,
                 key=lambda candidate: max(
-                    self.state.remaining_cooldown("gemini-key", self._key_id(candidate[1])),
-                    self.state.remaining_cooldown(
-                        "gemini-candidate", self._candidate_id(*candidate)
-                    ),
+                    state.remaining_cooldown("gemini-key", self._key_id(candidate[1])),
+                    state.remaining_cooldown("gemini-candidate", self._candidate_id(*candidate)),
                 ),
             )[:1]
 
@@ -319,14 +315,19 @@ class PooledGeminiStructuredClient(GeminiStructuredClient):
         if self.langfuse_handler is not None:
             config["callbacks"] = [self.langfuse_handler]
         started = time.perf_counter()
-        result = runnable.invoke(prompt, config=config)
+        result = runnable.invoke(prompt, config=config)  # type: ignore[arg-type]
         latency_ms = int((time.perf_counter() - started) * 1000)
         if not isinstance(result, dict):
-            return None, "", "LangChain returned an unexpected structured-output wrapper", {
-                "model": model_name,
-                "account": self._key_id(key),
-                "latency_ms": latency_ms,
-            }
+            return (
+                None,
+                "",
+                "LangChain returned an unexpected structured-output wrapper",
+                {
+                    "model": model_name,
+                    "account": self._key_id(key),
+                    "latency_ms": latency_ms,
+                },
+            )
         parsed = result.get("parsed")
         raw = result.get("raw")
         raw_text = _message_text(raw)
@@ -384,7 +385,10 @@ class PooledGeminiStructuredClient(GeminiStructuredClient):
             f"ORIGINAL OUTPUT:\n{raw_output}"
         )
         failures: list[str] = []
+        invalid_keys: set[str] = set()
         for model_name, key in self._available(self.repair_models):
+            if self._key_id(key) in invalid_keys:
+                continue
             try:
                 parsed, _, parsing_error, metadata = self._pooled_structured_call(
                     model_name,
@@ -395,9 +399,7 @@ class PooledGeminiStructuredClient(GeminiStructuredClient):
                     operation=f"{operation}:repair",
                 )
                 if parsed is None:
-                    failures.append(
-                        f"{model_name}/{self._key_id(key)}: {parsing_error or 'no parsed output'}"
-                    )
+                    failures.append(f"{model_name}/{self._key_id(key)}: {parsing_error or 'no parsed output'}")
                     continue
                 metadata["repaired"] = True
                 return _validate_json_schema(parsed, schema), metadata
@@ -411,8 +413,7 @@ class PooledGeminiStructuredClient(GeminiStructuredClient):
                     self._disable_key(key)
                 continue
         raise ProviderError(
-            "Gemini structure-repair capacity failed across all configured candidates: "
-            + "; ".join(failures),
+            "Gemini structure-repair capacity failed across all configured candidates: " + "; ".join(failures),
             ErrorKind.MALFORMED_PROVIDER_RESPONSE,
             provider="gemini",
         )
@@ -432,7 +433,10 @@ class PooledGeminiStructuredClient(GeminiStructuredClient):
         failures: list[str] = []
         quota_failures = 0
         attempted = 0
+        invalid_keys: set[str] = set()
         for model_name, key in self._available(self.content_models):
+            if self._key_id(key) in invalid_keys:
+                continue
             attempted += 1
             try:
                 parsed, raw_output, parsing_error, metadata = self._pooled_structured_call(
@@ -479,8 +483,7 @@ class PooledGeminiStructuredClient(GeminiStructuredClient):
                     return final
 
                 failures.append(
-                    f"{model_name}/{self._key_id(key)}: "
-                    f"{parsing_error or 'Gemini returned an empty response'}"
+                    f"{model_name}/{self._key_id(key)}: {parsing_error or 'Gemini returned an empty response'}"
                 )
             except ConfigurationError:
                 raise
@@ -493,13 +496,13 @@ class PooledGeminiStructuredClient(GeminiStructuredClient):
                     self._cooldown(model_name, key, self._quota_cooldown(exc))
                     continue
                 if self._is_auth_error(exc):
+                    invalid_keys.add(self._key_id(key))
                     self._disable_key(key)
                     continue
                 continue
 
         raise ProviderError(
-            "Gemini generation failed across all configured keys and content models: "
-            + "; ".join(failures),
+            "Gemini generation failed across all configured keys and content models: " + "; ".join(failures),
             ErrorKind.RATE_LIMIT
             if attempted > 0 and quota_failures == attempted
             else ErrorKind.MALFORMED_PROVIDER_RESPONSE,

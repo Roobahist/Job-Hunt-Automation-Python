@@ -111,9 +111,7 @@ class BaserowJobRepository:
         return self.client.find_equal(self.table_id, "Link", job.url)
 
     def create(self, job: Job) -> Mapping[str, Any]:
-        return self.client.create_row(
-            self.table_id, self._job_fields(job) | {"Status": self.status_options["new"]}
-        )
+        return self.client.create_row(self.table_id, self._job_fields(job) | {"Status": self.status_options["new"]})
 
     def reset(self, row_id: int, job: Job) -> Mapping[str, Any]:
         return self.client.update_row(
@@ -167,9 +165,7 @@ class BaserowJobRepository:
             "volunteer": "volunteer",
         }
         contract_key = aliases.get(normalized_contract)
-        contract_value: object = (
-            self.contract_type_options.get(contract_key, "") if contract_key else ""
-        )
+        contract_value: object = self.contract_type_options.get(contract_key, "") if contract_key else ""
         return {
             "Job ID": job.internal_id,
             "Company Name": job.company_name,

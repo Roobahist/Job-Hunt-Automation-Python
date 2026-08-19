@@ -39,6 +39,4 @@ def assign_identity(job: Job, collision: Callable[[int, str], bool] | None = Non
     while collision and collision(candidate, identity):
         salt += 1
         candidate = stable_job_id(identity, salt=salt)
-    return job.model_copy(
-        update={"identity": identity, "internal_id": candidate, "url": canonicalize_url(job.url)}
-    )
+    return job.model_copy(update={"identity": identity, "internal_id": candidate, "url": canonicalize_url(job.url)})

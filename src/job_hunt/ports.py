@@ -40,9 +40,7 @@ class Tailor(Protocol):
 
 
 class DocumentRenderer(Protocol):
-    def render(
-        self, content: TailoredContent, output_directory: Path, basename: str
-    ) -> ArtifactBundle: ...
+    def render(self, content: TailoredContent, output_directory: Path, basename: str) -> ArtifactBundle: ...
 
 
 class ArtifactPublisher(Protocol):
@@ -55,6 +53,4 @@ class Notifier(Protocol):
 
 class DiscoveryProvider(Protocol):
     def discover(self, urls: Sequence[str], *, max_items: int) -> Iterable[Mapping[str, Any]]: ...
-    def fetch_linkedin(
-        self, job_id: int, *, country: str, max_concurrency: int
-    ) -> Mapping[str, Any]: ...
+    def fetch_linkedin(self, job_id: int, *, country: str, max_concurrency: int) -> Mapping[str, Any]: ...
