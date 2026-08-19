@@ -13,7 +13,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from job_hunt.errors import ConfigurationError
 
-
 _DEFAULT_GEMINI_LIMITS = {
     "gemini-3.6-flash": {"rpm": 5, "tpm": 250000, "rpd": 20},
     "gemini-3.5-flash": {"rpm": 5, "tpm": 250000, "rpd": 20},
