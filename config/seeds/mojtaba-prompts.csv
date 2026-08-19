@@ -1,0 +1,10 @@
+Key,Prompt,Enabled,Description
+qualification,"Score the job against the master CV from 0 to 100. Set should_apply only when the candidate satisfies the essential requirements. Explain the decision concisely.",true,Shared typed qualification result
+cv_summary,"Rewrite the summary for the target role using only evidence present in the master CV.",true,Mojtaba fixed summary
+cv_skills,"Prioritize relevant skill rows and retain only supported skills.",true,Mojtaba skills
+cv_project_selection,"Select the configured number of projects most relevant to the role.",true,Mojtaba project selection
+cv_project_rewrite,"Tailor selected project content without inventing facts or technologies.",true,Mojtaba project rewrite
+cv_experience_selection,"Select the configured number of work-experience entries most relevant to the role.",true,Mojtaba experience selection
+cv_experience_rewrite,"Tailor selected experience bullets without inventing achievements, employers, dates, or technologies.",true,Mojtaba experience rewrite
+cover_letter,"Return exactly three evidence-based paragraphs plus date and company_name using the tenant cover-letter schema.",true,Mojtaba cover letter
+

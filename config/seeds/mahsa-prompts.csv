@@ -1,0 +1,9 @@
+Key,Prompt,Enabled,Description
+qualification,"Score the job against the master CV from 0 to 100. Set should_apply only when the candidate satisfies the essential requirements. Explain the decision concisely.",true,Shared typed qualification result
+cv_about_me,"Rewrite ABOUT ME for the target role using only evidence present in the master CV.",true,Mahsa dynamic-section summary
+cv_experience_selection,"Select the most relevant experience entries while preserving their source structure and factual content.",true,Mahsa experience selection
+cv_experience_rewrite,"Tailor selected experience bullets to the job without inventing achievements, employers, dates, or technologies.",true,Mahsa experience rewrite
+cv_skills,"Prioritize relevant skill label rows and retain only supported skills.",true,Mahsa skill rows
+cv_references_inclusion,"Include references only when the application context explicitly benefits from them; otherwise omit the references section.",true,Mahsa reference decision
+cover_letter,"Return exactly three evidence-based paragraphs plus date and company_name using the tenant cover-letter schema.",true,Mahsa cover letter
+

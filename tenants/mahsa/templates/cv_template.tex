@@ -1,0 +1,434 @@
+%-------------------------
+% Reusable resume template in LaTeX
+% Visual identity based on Mahsa Azar's CV
+%-------------------------
+
+\documentclass[10pt]{article}
+
+% =========================================================
+% AUTOMATIC PAGE SIZE
+% =========================================================
+
+% The content area is 180 mm wide. A 15 mm border on every side makes
+% the final PDF 210 mm wide (A4 width), while its height is calculated
+% automatically from the content. The top and bottom margins therefore
+% always match the left and right margins.
+\usepackage[active,tightpage]{preview}
+\setlength{\PreviewBorder}{15mm}
+
+% =========================================================
+% PACKAGES
+% =========================================================
+
+\usepackage{latexsym}
+\usepackage{titlesec}
+\usepackage[usenames,dvipsnames]{color}
+\usepackage[HTML]{xcolor}
+\usepackage{enumitem}
+\usepackage{etoolbox}
+\usepackage[
+  colorlinks=true,
+  urlcolor=linkblue,
+  linkcolor=linkblue,
+  citecolor=linkblue
+]{hyperref}
+\usepackage{fancyhdr}
+\usepackage[english]{babel}
+\usepackage{tabularx}
+\usepackage{fontawesome5}
+\usepackage[scale=0.90,lf]{FiraMono}
+\usepackage{tgheros}
+\usepackage[T1]{fontenc}
+
+% For searchable PDF text when compiling with pdfLaTeX, uncomment if available.
+% \input{glyphtounicode}
+% \pdfgentounicode=1
+
+% =========================================================
+% COLORS AND TYPE
+% =========================================================
+
+\definecolor{light-grey}{gray}{0.83}
+\definecolor{dark-grey}{gray}{0.5}
+\definecolor{text-grey}{gray}{0.08}
+\definecolor{linkblue}{HTML}{2563EB}
+
+\DeclareRobustCommand{\ebseries}{\fontseries{eb}\selectfont}
+\DeclareTextFontCommand{\texteb}{\ebseries}
+
+\renewcommand*\familydefault{\sfdefault}
+% =========================================================
+% PAGE LAYOUT
+% =========================================================
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyfoot{}
+\renewcommand{\headrulewidth}{0pt}
+\renewcommand{\footrulewidth}{0pt}
+\setlength{\headheight}{0pt}
+\setlength{\headsep}{0pt}
+\setlength{\textwidth}{180mm}
+
+\urlstyle{same}
+\raggedbottom
+\raggedright
+\setlength{\tabcolsep}{0in}
+
+% =========================================================
+% CUSTOMIZABLE SPACING
+% Defaults reproduce the original CV.
+% =========================================================
+
+\newlength{\CVSectionBeforeSpace}
+\newlength{\CVSectionAfterSpace}
+\newlength{\CVHeaderNameGap}
+\newlength{\CVHeaderAfterSpace}
+\newlength{\CVEntryBeforeSpace}
+\newlength{\CVEntryAfterSpace}
+\newlength{\CVNestedIndent}
+\newlength{\CVNestedHeadingAfterSpace}
+\newlength{\CVNestedListLeftMargin}
+\newlength{\CVSkillGap}
+\newlength{\CVSkillRowSpace}
+\newlength{\CVReferencesBeforeSpace}
+
+\setlength{\CVSectionBeforeSpace}{2pt}
+\setlength{\CVSectionAfterSpace}{-4pt}
+\setlength{\CVHeaderNameGap}{8pt}
+\setlength{\CVHeaderAfterSpace}{-3pt}
+\setlength{\CVEntryBeforeSpace}{6pt}
+\setlength{\CVEntryAfterSpace}{-14pt}
+\setlength{\CVNestedIndent}{0.18in}
+\setlength{\CVNestedHeadingAfterSpace}{1pt}
+\setlength{\CVNestedListLeftMargin}{0.50in}
+\setlength{\CVSkillGap}{12pt}
+\setlength{\CVSkillRowSpace}{2pt}
+\setlength{\CVReferencesBeforeSpace}{5pt}
+
+% =========================================================
+% SECTION STYLE
+% =========================================================
+
+\titleformat{\section}
+  {\bfseries\vspace{\CVSectionBeforeSpace}\raggedright\large}
+  {}
+  {0em}
+  {}
+  [\color{light-grey}{\titlerule[2pt]}\vspace{\CVSectionAfterSpace}]
+
+\newcommand{\CVSection}[1]{\section{#1}}
+
+% =========================================================
+% LINKS
+% =========================================================
+
+% Arguments: URL, Font Awesome icon name, visible text.
+% Leave the icon name empty to show only the text.
+\newcommand{\CVLink}[3]{%
+  \href{#1}{%
+    \ifblank{#2}{}{\faIcon{#2}\ }%
+    #3%
+  }%
+}
+
+% Arguments: URL, Font Awesome icon name.
+% If the icon name is empty, the standard link glyph is used.
+\newcommand{\CVIconLink}[2]{%
+  \ifblank{#1}
+    {}
+    {%
+      \href{#1}{%
+        \color{linkblue}%
+        \ifblank{#2}{\faIcon{link}}{\faIcon{#2}}%
+      }%
+    }%
+}
+
+\newcommand{\CVEntrySeparator}{\hspace{4pt}$|$\hspace{4pt}}
+
+% =========================================================
+% HEADER
+% =========================================================
+
+% Arguments: name, contact items.
+\newcommand{\CVHeader}[2]{%
+  \begin{center}
+    \textbf{\Huge #1}\\[\CVHeaderNameGap]
+    \small #2
+    \\[\CVHeaderAfterSpace]
+  \end{center}
+}
+
+\newcommand{\CVHeaderItem}[3]{%
+  \CVLink{#1}{#2}{\texttt{#3}}%
+}
+
+\newcommand{\CVHeaderSeparator}{\hspace{4pt}$|$\hspace{4pt}}
+
+% =========================================================
+% SIMPLE TEXT AND LABEL ROWS
+% =========================================================
+
+\newcommand{\CVText}[1]{%
+  \ifblank{#1}
+    {}
+    {%
+      \begin{itemize}[leftmargin=0in,label={}]
+        \footnotesize\item #1
+      \end{itemize}%
+    }%
+}
+
+\newcommand{\CVLabelRows}[1]{%
+  \ifblank{#1}
+    {}
+    {%
+      \footnotesize
+      \begin{tabularx}{\textwidth}{%
+        @{}
+        >{\bfseries}l
+        @{\hspace{\CVSkillGap}}
+        X
+        @{}
+      }
+        #1%
+      \end{tabularx}%
+      \par
+    }%
+}
+
+% Arguments: label, value.
+\newcommand{\CVLabelRow}[2]{%
+  \ifblank{#1#2}
+    {}
+    {%
+      #1: & #2 \\[\CVSkillRowSpace]%
+    }%
+}
+
+% =========================================================
+% UNIVERSAL ENTRIES
+% Used by experience, education, and any similarly styled section.
+% =========================================================
+
+\newcommand{\CVEntries}[1]{%
+  \ifblank{#1}
+    {}
+    {%
+      \begin{itemize}[leftmargin=0in,label={}]
+        #1%
+      \end{itemize}%
+    }%
+}
+
+% Arguments:
+% 1: Main title
+% 2: Date
+% 3: Secondary left text (optional)
+% 4: Right-side metadata shown before the date (optional)
+% 5: URL (optional)
+% 6: Font Awesome icon name (optional; defaults to link)
+% 7: Main content, usually \CVBulletList{...} (optional)
+% 8: Nested content, usually \CVNestedGroup{...}{...} (optional)
+%
+% Experience and education use this same parent function. They simply
+% populate different subsets of its arguments.
+\newcommand{\CVEntry}[8]{%
+  \ifblank{#1#2#3#4#5#7#8}
+    {}
+    {%
+      \vspace{\CVEntryBeforeSpace}\item
+      \begin{tabular*}{\textwidth}[t]{l@{\extracolsep{\fill}}r}
+        \textbf{#1}%
+        \ifblank{#5}{}{\CVEntrySeparator\CVIconLink{#5}{#6}}%
+        & {\color{dark-grey}\fontseries{m}\selectfont\footnotesize
+            \ifblank{#4}{}{#4}%
+            \ifblank{#2}{}{\ifblank{#4}{}{\CVEntrySeparator}#2}}\vspace{1pt}\\
+        \textit{#3} & \\
+      \end{tabular*}\vspace{\CVEntryAfterSpace}%
+      #7%
+      #8%
+    }%
+}
+
+% =========================================================
+% ENTRY CONTENT
+% =========================================================
+
+\newcommand{\CVBullet}[1]{%
+  \item\footnotesize{#1\vspace{0pt}}%
+}
+
+\newcommand{\CVBulletList}[1]{%
+  \ifblank{#1}
+    {}
+    {%
+      \begin{itemize}
+        #1%
+      \end{itemize}\vspace{0pt}%
+    }%
+}
+
+% Arguments: group label, nested entries.
+\newcommand{\CVNestedGroup}[2]{%
+  \ifblank{#2}
+    {}
+    {%
+      \vspace{2pt}
+      \item[]
+        \hspace*{\CVNestedIndent}{\small\textbf{#1}}
+      \vspace{-2pt}
+      #2%
+    }%
+}
+
+% Arguments:
+% 1: Nested project/title
+% 2: Date
+% 3: Right-side metadata shown before the date (optional)
+% 4: URL (optional)
+% 5: Font Awesome icon name (optional; defaults to link)
+% 6: Content, usually \CVNestedBulletList{...} (optional)
+\newcommand{\CVNestedEntry}[6]{%
+  \vspace{0pt}\item
+  \hspace*{\CVNestedIndent}%
+  \begin{tabular*}{\dimexpr\textwidth-\CVNestedIndent\relax}[t]{l@{\extracolsep{\fill}}r}
+    {\small\textbf{---\ \ #1}%
+      \ifblank{#4}{}{\CVEntrySeparator\CVIconLink{#4}{#5}}}%
+    & {\color{dark-grey}\fontseries{m}\selectfont\footnotesize
+        \ifblank{#3}{}{#3}%
+        \ifblank{#2}{}{\ifblank{#3}{}{\CVEntrySeparator}#2}}\\
+  \end{tabular*}\vspace{\CVNestedHeadingAfterSpace}%
+  #6%
+}
+
+\newcommand{\CVNestedBulletList}[1]{%
+  \ifblank{#1}
+    {}
+    {%
+      \begin{itemize}[
+        leftmargin=\CVNestedListLeftMargin,
+        topsep=2pt,
+        itemsep=1pt,
+        parsep=0pt,
+        partopsep=0pt
+      ]
+        #1%
+      \end{itemize}\vspace{-1pt}%
+    }%
+}
+
+% Non-bulleted content used when a JSON content item sets bullet=false.
+\newcommand{\CVEntryText}[1]{%
+  \ifblank{#1}
+    {}
+    {%
+      \par
+      \hspace*{0.18in}%
+      \begin{minipage}{\dimexpr\linewidth-0.18in\relax}
+        \footnotesize #1
+      \end{minipage}%
+      \par
+    }%
+}
+
+\newcommand{\CVNestedText}[1]{%
+  \ifblank{#1}
+    {}
+    {%
+      \par
+      \hspace*{\CVNestedListLeftMargin}%
+      \begin{minipage}{\dimexpr\linewidth-\CVNestedListLeftMargin\relax}
+        \footnotesize #1
+      \end{minipage}%
+      \par
+    }%
+}
+
+% =========================================================
+% REFERENCES
+% Reference rows use their own full-width layout: identity and relationship
+% stay on the left while the phone number or email is flush right.
+% =========================================================
+
+\newcommand{\CVReferences}[1]{%
+  \ifblank{#1}
+    {}
+    {%
+      \vspace{\CVReferencesBeforeSpace}%
+      \begin{itemize}[leftmargin=0in,label={}]
+        #1%
+      \end{itemize}%
+    }%
+}
+
+% Arguments: name, position or relationship, phone number or email.
+\newcommand{\CVReference}[3]{%
+  \ifblank{#1#2#3}
+    {}
+    {%
+      \item
+      \begin{tabular*}{\textwidth}{@{}l@{\extracolsep{\fill}}r@{}}
+        \small
+        \textbf{#1}%
+        \ifblank{#2}{}{\CVEntrySeparator #2}%
+        & \small\texttt{#3}\\
+      \end{tabular*}%
+    }%
+}
+
+% Education is intentionally fixed in the template. The JSON section list
+% places this block with a reserved {"type": "education"} marker.
+\newcommand{\CVFixedEducation}{%
+  \CVSection{EDUCATION}
+
+  \CVEntries{
+    \CVEntry
+      {B.Sc. Computer Science | Shahid Beheshti University}
+      {Sep 2017 -- Feb 2022}
+      {}
+      {}
+      {}
+      {}
+      {%
+        \CVBulletList{
+          \CVBullet{Thesis: Cognitive modeling of decision making using deep learning | GPA: 3.73/4.00}
+        }
+      }
+      {}
+  }
+}
+
+\renewcommand\labelitemii{$\vcenter{\hbox{\tiny$\bullet$}}$}
+
+% =========================================================
+% DOCUMENT — generated content
+% =========================================================
+
+\color{text-grey}
+
+\begin{document}
+
+\begin{preview}
+\noindent
+\begin{minipage}{180mm}
+
+\CVHeader
+  {Mahsa Azar}
+  {%
+    \CVHeaderItem{https://mahsaazar.framer.website/}{}{Mahsa.Azar.me}
+    \CVHeaderSeparator
+    \CVHeaderItem{mailto:Mahsa.g.azar@gmail.com}{}{Mahsa.g.azar@gmail.com}
+    \CVHeaderSeparator
+    \CVHeaderItem{https://www.linkedin.com/in/mahsa-g-azar}{}{LinkedIn}
+    \CVHeaderSeparator
+    \CVHeaderItem{tel:+18257336755}{}{+1 825-733-6755}
+  }
+
+%%__SECTIONS__%%
+
+\end{minipage}
+\end{preview}
+
+\end{document}

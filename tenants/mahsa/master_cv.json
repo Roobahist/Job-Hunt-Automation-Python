@@ -1,0 +1,203 @@
+{
+  "sections": [
+    {
+      "type": "text",
+      "title": "ABOUT ME",
+      "content": [
+        "I start every design process by uncovering the \\textbf{question} that can move the business forward.\n\nWith 2+ years across product design, computer science, and customer-facing sales, I bring a practical understanding of how people think, decide, and build trust. I believe design should solve real problems, build confidence, and create business value. I use AI within a structured design process to explore, test, and iterate faster, reserving my attention for decisions that require human judgment, creativity, and empathy."
+      ]
+    },
+    {
+      "type": "entries",
+      "title": "EXPERIENCE",
+      "entries": [
+        {
+          "title": "Sales Associate (Educator) | KIT+ACE, Part-time | Calgary",
+          "date": "Mar 2026 -- Present",
+          "secondary_right": "",
+          "url": "",
+          "icon": "",
+          "content": [
+            "Delivered premium customer experiences by translating technical product details into accessible, personalized value, driving purchase confidence and repeat visits",
+            "Took ownership of floor operations including merchandising standards, inventory accuracy, and onboarding support, contributing to a consistently excellent in-store experience",
+            "Supported customers who preferred an in-person experience or found online filters, size guides, and product pages cumbersome by patiently walking them through tailored options",
+            "\\textbf{Ranked in the top 10 salespeople across all 15 KIT+ACE locations in Canada} in both months of employment, within weeks of joining the team"
+          ],
+          "parent": null,
+          "nested_group": ""
+        },
+        {
+          "title": "Key Holder & Sales Associate | Bikini Village (la Vie en Rose), Part-time | Calgary",
+          "date": "Nov 2023 -- Mar 2026",
+          "secondary_right": "",
+          "url": "",
+          "icon": "",
+          "content": [
+            "\\textbf{Recognized as top salesperson in annual performance assessments for two consecutive years}, consistently exceeding targets in a high-traffic retail environment",
+            "Delivered personalized, high-touch customer experiences by actively listening to needs and translating product knowledge into clear recommendations, driving repeat business and lasting loyalty",
+            "Led shift operations as key holder, managing cash handling, store opening and closing procedures, and inventory reconciliation with full accountability and accuracy",
+            "Trained and onboarded new associates in customer service techniques, product knowledge, and store standards, contributing to consistent team performance",
+            "Collaborated with team members to resolve escalated customer issues and maintain a smooth, welcoming in-store environment"
+          ],
+          "parent": null,
+          "nested_group": ""
+        },
+        {
+          "title": "Product Designer | Independent Contracts",
+          "date": "Aug 2023 -- Present",
+          "secondary_right": "",
+          "url": "",
+          "icon": "",
+          "content": [
+            "Delivered end-to-end UX/UI design for early-stage SaaS products, from discovery through developer handoff",
+            "Worked independently and within cross-functional teams across different project environments",
+            "Collaborated directly with founders, stakeholders, designers, and engineers to align user and business needs",
+            "Managed multiple concurrent projects across SaaS, AI, digital health, marketplaces, and sales technology"
+          ],
+          "parent": null,
+          "nested_group": ""
+        },
+        {
+          "title": "Pantry | Sales Intelligence CRM",
+          "date": "Jun 2026 -- Present",
+          "secondary_right": "",
+          "url": "https://mahsaazar.framer.website/",
+          "icon": "external-link-alt",
+          "content": [
+            "Designed an AI-powered CRM that turns all accessible customer and company data into pre-call insights and sales recommendations",
+            "Designed the interface with Egg components in Figma and developed it into a live website using Claude and Codex"
+          ],
+          "parent": "Product Designer | Independent Contracts",
+          "nested_group": "Selected Contract Projects:"
+        },
+        {
+          "title": "Egg | AI-Ready Design System",
+          "date": "Apr 2026 -- Present",
+          "secondary_right": "",
+          "url": "",
+          "icon": "",
+          "content": [
+            "Co-designed an AI-ready system with 34 reusable components, variants, slots, tokens, and variables",
+            "Created documentation, templates, skill.md and agent.md to guide AI-assisted implementation and standardize design-to-development handoff"
+          ],
+          "parent": "Product Designer | Independent Contracts",
+          "nested_group": "Selected Contract Projects:"
+        },
+        {
+          "title": "WiserHealth | Digital Health",
+          "date": "Feb 2026 -- May 2026",
+          "secondary_right": "",
+          "url": "",
+          "icon": "",
+          "content": [
+            "Designed a habit-building experience to help users track behaviors and understand potential impact on health outcomes, balancing usability with behavioral motivation",
+            "Partnered closely with the founder to shape product decisions via user research, surveys, and interviews, influencing product direction"
+          ],
+          "parent": "Product Designer | Independent Contracts",
+          "nested_group": "Selected Contract Projects:"
+        },
+        {
+          "title": "Flamey | B2B Sales Platform",
+          "date": "Jul 2025 -- Jul 2025",
+          "secondary_right": "",
+          "url": "",
+          "icon": "",
+          "content": [
+            "Investigated low adoption of AI-generated outreach sequences and identified trust and control issues",
+            "Redesigned the chatbot into a structured copilot and delivered the research-backed, high-fidelity flow in four days"
+          ],
+          "parent": "Product Designer | Independent Contracts",
+          "nested_group": "Selected Contract Projects:"
+        },
+        {
+          "title": "Nexaland | Home Services Marketplace",
+          "date": "Dec 2024 -- May 2025",
+          "secondary_right": "",
+          "url": "",
+          "icon": "",
+          "content": [
+            "Conducted 12 user interviews and reviewed 8 competitors, identifying 5 key trust signals and friction points and translating them into design improvements that shaped product and business decisions",
+            "Designed HelpHand's service discovery, provider selection, and booking flows, including automated estimates to reduce repetitive quoting",
+            "Collaborated across five teams, applying research insights to improve the end-to-end customer journey"
+          ],
+          "parent": "Product Designer | Independent Contracts",
+          "nested_group": "Selected Contract Projects:"
+        },
+        {
+          "title": "SimplyWise | AI Construction Technology",
+          "date": "Oct 2024 -- Dec 2024",
+          "secondary_right": "",
+          "url": "",
+          "icon": "",
+          "content": [
+            "Collaborated with cross-functional and AI teams to design, build, and launch an AI-assisted estimation prototype in three weeks, including Gantt-based timelines and cost estimates",
+            "Improved acquisition and onboarding workflows, \\textbf{achieving 2x conversion and 40% higher engagement} in V2",
+            "Used Figma, React, and Tailwind to deliver a seamless, intuitive customer-facing experience under tight timelines"
+          ],
+          "parent": "Product Designer | Independent Contracts",
+          "nested_group": "Selected Contract Projects:"
+        },
+        {
+          "title": "Data Analyst Intern | Senso (Fintech Startup) | Tehran",
+          "date": "Jun 2020 -- Oct 2020",
+          "secondary_right": "",
+          "url": "",
+          "icon": "",
+          "content": [
+            "Collected and analyzed stock prices and investment-platform metrics in a fintech environment focused on financial market data",
+            "Built automated data pipelines and web-scraping tools to aggregate structured financial data from multiple sources, and developed dashboards to surface trends and support decision-making",
+            "Worked accurately with numerical data and financial concepts in a fast-paced, detail-oriented environment"
+          ],
+          "parent": null,
+          "nested_group": ""
+        }
+      ]
+    },
+    {
+      "type": "education"
+    },
+    {
+      "type": "label_rows",
+      "title": "SKILLS",
+      "rows": [
+        {
+          "label": "Product Design & Strategy",
+          "value": "Product Discovery | UX Strategy | Experience Strategy | Systems Thinking | Information Architecture | Design Systems | Interactive Prototyping | Accessibility (WCAG) | Cross-Functional Collaboration"
+        },
+        {
+          "label": "Research & Validation",
+          "value": "User Interviews | Stakeholder Interviews | Surveys | Usability Testing | Concept Testing | Task Analysis | Competitive Analysis | Heuristic Evaluation | A/B Testing | Mixed-Methods Research | UX Metrics & KPIs"
+        },
+        {
+          "label": "Design & Collaboration Tools",
+          "value": "Figma | FigJam | Miro | Framer | Maze | Hotjar | Google Analytics (GA4)"
+        },
+        {
+          "label": "Technical Skills",
+          "value": "HTML | CSS | JavaScript | React | Tailwind | Python | AI-Assisted Front-End Development with Claude & Codex"
+        }
+      ]
+    },
+    {
+      "type": "references",
+      "title": "REFERENCES",
+      "items": [
+        {
+          "name": "Kim Pineda",
+          "description": "Manager, Bikini Village (la Vie en Rose)",
+          "contact": "+1 825-747-0728"
+        },
+        {
+          "name": "Allie Fleder",
+          "description": "Manager, SimplyWise",
+          "contact": "Allie@simplywise.com"
+        },
+        {
+          "name": "Lindsay Mort",
+          "description": "Manager, KIT+ACE",
+          "contact": "lindsay.mort@kitandace.com"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,40 @@
+services:
+  api:
+    build: .
+    env_file: .env
+    command: uvicorn job_hunt.api.app:create_app --factory --host 0.0.0.0 --port 8000
+    ports: ["8000:8000"]
+    volumes: ["artifacts:/app/runs"]
+    depends_on: {redis: {condition: service_healthy}}
+    restart: unless-stopped
+
+  worker:
+    build: .
+    env_file: .env
+    command: celery -A job_hunt.worker.celery_app worker --loglevel=INFO
+    volumes: ["artifacts:/app/runs"]
+    depends_on: {redis: {condition: service_healthy}}
+    restart: unless-stopped
+
+  beat:
+    build: .
+    env_file: .env
+    command: celery -A job_hunt.worker.celery_app beat --loglevel=INFO
+    depends_on: {redis: {condition: service_healthy}}
+    restart: unless-stopped
+
+  redis:
+    image: redis:7.4-alpine
+    command: redis-server --appendonly yes
+    volumes: ["redis-data:/data"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  artifacts:
+  redis-data:
+

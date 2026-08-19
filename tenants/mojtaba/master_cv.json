@@ -1,0 +1,426 @@
+{
+  "summary": [
+    "Computer Science graduate and recent Master of Science in Statistics graduate with experience in applied machine learning, statistical modeling, biomedical data analysis, automation, teaching, and software development.",
+    "Skilled in building end-to-end analytical workflows spanning data collection, preprocessing, model development, evaluation, reporting, and user-facing tools. Comfortable with Python, R, SQL, machine learning frameworks, APIs, automation pipelines, dashboards, and research-grade code.",
+    "Interested in data science, machine learning, AI engineering, statistical modeling, research software, analytics engineering, software development, and user-facing data products."
+  ],
+  "skills": [
+    {
+      "label": "Programming",
+      "value": "Python, R, SQL, Java, HTML, CSS, JavaScript, LaTeX, MQL, Pine Script, Maple"
+    },
+    {
+      "label": "Machine Learning",
+      "value": "PyTorch, TensorFlow, Keras, scikit-learn, Optuna, transformers, neural networks, LSTMs, attention mechanisms, pretrained vision models, ensemble learning, random forests, decision trees, support vector machines, naive Bayes"
+    },
+    {
+      "label": "Statistics",
+      "value": "Regression, generalized linear models, LASSO, Ridge regression, Elastic Net, principal component regression, statistical inference, experiment design, cross-validation, hyperparameter tuning, model diagnostics, feature selection, AIC, deviance, pseudo R-squared"
+    },
+    {
+      "label": "Data Science",
+      "value": "pandas, NumPy, tidyverse, ggplot2, Matplotlib, Plotly, data cleaning, exploratory data analysis, feature engineering, reproducible analysis, report writing"
+    },
+    {
+      "label": "Computer Vision",
+      "value": "OpenCV, MediaPipe, facial landmark extraction, video preprocessing, frame-level feature extraction, temporal aggregation, head pose estimation, blink dynamics, pretrained visual embeddings, multimodal learning"
+    },
+    {
+      "label": "Software and Web",
+      "value": "Flask, FastAPI, SQLAlchemy, React, Node.js, REST APIs, API integration, object-oriented programming, modular software design, CRUD applications, responsive frontend development, Bruno, Postman"
+    },
+    {
+      "label": "Automation",
+      "value": "n8n, Apify, web scraping, Selenium, BeautifulSoup, Telegram bots, backend workflow automation, reusable scripts, event-driven workflows"
+    },
+    {
+      "label": "Generative AI and Developer Tools",
+      "value": "OpenAI API, Google AI Studio / Gemini API, OpenRouter, Codex, Claude, Claude Code, LangChain, Omniroute, 9router"
+    },
+    {
+      "label": "Data Engineering",
+      "value": "Database design, indexing, structured and unstructured data processing, data integration, data cleaning pipelines, data lakes, reproducible data workflows"
+    },
+    {
+      "label": "DevOps and Tools",
+      "value": "Git, GitHub, Bash, Docker, Docker Compose, CI/CD, Kubernetes, Linux, virtual environments, VS Code, Jupyter, Google Colab, Overleaf, mlflow"
+    },
+    {
+      "label": "Design and Visualization",
+      "value": "Figma, Tikz, ggplot2, matplotlib, plotly, data visualization"
+    },
+    {
+      "label": "Specialized Libraries",
+      "value": "PsychoPy, Brian2, Pygame, Binance Python, MetaTrader, Telegram Python, MNE"
+    },
+    {
+      "label": "Languages",
+      "value": "Persian: Native; English: TOEFL iBT 108/120, CELPIP 11/12"
+    }
+  ],
+  "work_experience": [
+    {
+      "title": "Teaching Assistant",
+      "secondary": "",
+      "url": "",
+      "icon": "",
+      "organization": "University of Calgary",
+      "date": "Aug 2023 - May 2026",
+      "content": [
+        "Supported undergraduate and graduate courses in statistics, data science, computational modeling, linear methods, and statistical methods for data science.",
+        "Led tutorials, office hours, grading sessions, and problem-solving discussions while explaining statistical and computational concepts to students with varied technical backgrounds.",
+        "Assisted students with R, regression, hypothesis testing, probability, matrix methods, statistical modeling, and computational workflows.",
+        "Collaborated with instructors and teaching teams to maintain consistent grading standards and produce clear, rubric-aligned feedback.",
+        "Received the Graduate Assistant Teaching Excellence Award for teaching support and student engagement."
+      ]
+    },
+    {
+      "title": "Data Scientist",
+      "secondary": "",
+      "url": "",
+      "icon": "",
+      "organization": "Senso, Tehran",
+      "date": "Jun 2020 - Sep 2020",
+      "content": [
+        "Built automated web-scraping pipelines to collect financial data from multiple online sources.",
+        "Cleaned, structured, and transformed raw financial data for downstream analysis and reporting.",
+        "Developed a Telegram bot that delivered real-time market analysis and reporting to users.",
+        "Integrated backend analytics with user-facing automation workflows using Python, APIs, scraping tools, and visualization libraries.",
+        "Converted raw market signals into accessible summaries, indicators, and visual reports for end users."
+      ]
+    },
+    {
+      "title": "Data Scientist",
+      "secondary": "",
+      "url": "",
+      "icon": "",
+      "organization": "Legano, Tehran",
+      "date": "Jul 2019 - Sep 2019",
+      "content": [
+        "Contributed to a legal technology platform focused on document search, indexing, and NLP-assisted retrieval.",
+        "Crawled legal documents from verified public sources and cleaned structured and unstructured legal text.",
+        "Supported indexing workflows intended to improve searchability and identify relationships between legal statutes and cases.",
+        "Gained experience with domain-specific text processing, document metadata, and information retrieval problems."
+      ]
+    },
+    {
+      "title": "Freelance Data and Automation Developer",
+      "secondary": "",
+      "url": "",
+      "icon": "",
+      "organization": "Tehran",
+      "date": "2020 - 2022",
+      "content": [
+        "Built automation tools for data collection, financial signal processing, reporting, and rule-based trading workflows.",
+        "Developed Telegram-based workflows for forwarding TradingView signals to cryptocurrency exchange processes.",
+        "Designed and backtested algorithmic trading strategies using historical cryptocurrency and foreign-exchange data.",
+        "Built reusable scripts for collecting, transforming, analyzing, and presenting market data.",
+        "Translated informal client requirements into working technical tools using APIs, financial indicators, and event-driven workflows."
+      ]
+    }
+  ],
+  "projects": [
+    {
+      "title": "Deep Learning-Based Multimodal Fatigue Detection",
+      "secondary": "",
+      "url": "",
+      "icon": "",
+      "organization": "MSc Thesis",
+      "date": "2023 - 2026",
+      "content": [
+        "Objective: Developed a modular research pipeline for fatigue detection using facial video and EEG-derived fatigue signals.",
+        "Extracted visual indicators including blink dynamics, eye-closure patterns, facial movement, head pose, expression changes, and subtle temporal facial cues.",
+        "Generated frame-level embeddings with pretrained vision models and converted them into sequence-level representations using temporal windows, pooling, attention, LSTMs, and transformer-based models.",
+        "Compared pretrained embeddings, handcrafted visual indicators, and temporal sequence-modeling approaches.",
+        "Used EEG-derived fatigue measures for weak supervision, cross-modal validation, and interpretation of video-based predictions.",
+        "Implemented reusable preprocessing, augmentation, feature extraction, training, validation, and performance-evaluation workflows.",
+        "Evaluated classification performance, stability, generalization, signal reliability, and robustness across visual-only and multimodal modeling strategies."
+      ]
+    },
+    {
+      "title": "AI-Powered Job Application Automation Platform",
+      "secondary": "",
+      "url": "",
+      "icon": "",
+      "organization": "",
+      "date": "Summer 2026",
+      "content": [
+        "Designed and developed an end-to-end workflow for collecting, evaluating, tailoring, and tracking software and machine learning job applications.",
+        "Integrated job scraping with structured extraction and normalization to create a searchable job database.",
+        "Used LLMs to analyze job descriptions, identify required skills, estimate relevance, and generate tailored resumes and cover letters from a master CV.",
+        "Organized job metadata, document versions, and application status in Airtable while preserving a manual review step before submission.",
+        "Architecture: Built modular n8n workflows with reusable subworkflows, configurable prompts, error handling, and support for multiple data sources.",
+        "Designed the platform for future semantic matching, embeddings, additional job boards, and AI-assisted application prioritization."
+      ]
+    },
+    {
+      "title": "Grading Assistant Application",
+      "secondary": "",
+      "url": "",
+      "icon": "",
+      "organization": "",
+      "date": "2026",
+      "content": [
+        "Designed a screen-based grading assistant for typed and handwritten student submissions.",
+        "Planned screen capture, region selection, rubric management, OCR, AI-assisted evaluation, grading suggestions, feedback generation, and export-ready outputs.",
+        "\\textbf{Architecture:} Separated screen monitoring, region selection, rubric handling, AI analysis, overlay UI, settings, and export logic into reusable modules.",
+        "Designed the workflow to support multiple rubrics and grading contexts while keeping final grading decisions under human control.",
+        "Focused on usability, workflow speed, feedback consistency, and clear separation between model suggestions and instructor decisions."
+      ]
+    },
+    {
+      "title": "Drug Response Prediction from Gene Expression and Molecular Features",
+      "secondary": "",
+      "url": "",
+      "icon": "",
+      "organization": "",
+      "date": "Spring 2024",
+      "content": [
+        "Built deep learning models for patient-specific drug sensitivity prediction.",
+        "Integrated gene-expression data with molecular structure and SMILES-derived drug representations.",
+        "Preprocessed and merged multimodal biomedical datasets while validating sample, drug identifier, and feature consistency.",
+        "Developed neural architectures for predicting drug response from patient and drug features.",
+        "Tuned model parameters, explored feature selection, and analyzed model outputs for interpretable biomedical patterns."
+      ]
+    },
+    {
+      "title": "Structured Sparsity for Cancer Genomics",
+      "secondary": "",
+      "url": "",
+      "icon": "",
+      "organization": "",
+      "date": "2024",
+      "content": [
+        "Explored regularized neural networks and structured sparsity methods for identifying active biological pathways, genomic signatures, and network-level patterns associated with prognosis or treatment response.",
+        "Studied Group Lasso, Graphical Lasso, LassoNet, and Elastic Net, and investigated theoretical extensions of Lasso-regularized neural networks for multimodal data integration.",
+        "Developed concepts for sparse, interpretable representations across multiple data modalities, including biologically structured feature selection, missing modality handling, and structured information sharing between modality-specific network blocks.",
+        "Investigated the use of multi-omic datasets such as TCGA and CPTAC to improve interpretability and predictive performance in high-dimensional biomedical machine learning.",
+        "Contributed to research planning and proposal development for biologically structured and interpretable machine learning models."
+      ]
+    },
+    {
+      "title": "Single-Cell Trajectory Inference and RNA Velocity Review",
+      "secondary": "",
+      "url": "",
+      "icon": "",
+      "organization": "",
+      "date": "Fall 2023",
+      "content": [
+        "Studied trajectory inference methods for single-cell RNA sequencing, including pseudotime, RNA velocity, spliced and unspliced RNA dynamics, and cluster-level pathway alignment.",
+        "Compared Dyno, Waddington-OT, CSHMM, PAGA, and Tempora and examined limitations caused by topology assumptions.",
+        "Presented work on velocity-based methods in single-cell RNA sequencing.",
+        "Considered PCA-based gene weighting and correlation-based cell similarity as interpretable approaches for dimensionality reduction and trajectory analysis."
+      ]
+    },
+    {
+      "title": "Predicting High School Student Performance",
+      "secondary": "",
+      "url": "",
+      "icon": "",
+      "organization": "",
+      "date": "Winter 2024",
+      "content": [
+        "Compared linear regression, Ridge, Lasso, Elastic Net, principal component regression, regression trees, random forests, and neural networks.",
+        "Used stepwise regression, Lasso, cross-validation, and grid search for feature selection and hyperparameter tuning.",
+        "Evaluated homoscedasticity, normality, multicollinearity, predictive accuracy, and interpretability.",
+        "Identified stable predictors including previous grades, absences, family relationships, failures, guardian status, and employment-related variables."
+      ]
+    },
+    {
+      "title": "Clinical Data Analysis Using Generalized Linear Models",
+      "secondary": "",
+      "url": "",
+      "icon": "",
+      "organization": "",
+      "date": "Fall 2023",
+      "content": [
+        "Built interpretable heart-disease classification models using logistic regression and LASSO.",
+        "Used stepwise selection, interaction terms, quadratic transformations, logit and probit links, and cross-validation.",
+        "Compared models using AIC, deviance, likelihood-ratio tests, pseudo R-squared, and predictive performance.",
+        "Prepared statistically justified model interpretations suitable for clinical prediction reporting."
+      ]
+    },
+    {
+      "title": "Cognitive Modeling of Human Decision-Making Using Deep Learning",
+      "secondary": "",
+      "url": "",
+      "icon": "",
+      "organization": "BSc Capstone",
+      "date": "2021 - 2022",
+      "content": [
+        "Studied BayesFlow and simulation-based Bayesian parameter estimation for cognitive decision-making models.",
+        "Trained neural models to estimate parameters of a Levy-flight cognitive model.",
+        "Investigated invertible neural networks and simulation-based inference for complex stochastic models.",
+        "Connected cognitive science, Bayesian inference, deep learning, model implementation, and parameter interpretation."
+      ]
+    },
+    {
+      "title": "Spiking Neural Networks and Decision-Making Simulation",
+      "secondary": "",
+      "url": "",
+      "icon": "",
+      "organization": "",
+      "date": "Mar 2020",
+      "content": [
+        "Implemented three mathematical single-neuron models and extended them to neural populations.",
+        "Simulated decision-making dynamics and spike-timing-dependent plasticity in spiking neural networks.",
+        "Visualized neural activity, population behavior, and simulation outputs with Matplotlib."
+      ]
+    },
+    {
+      "title": "Psychological Tests Implementation",
+      "secondary": "",
+      "url": "",
+      "icon": "",
+      "organization": "",
+      "date": "Aug 2021",
+      "content": [
+        "Implemented the Iowa Gambling Test and Balloon Analogue Risk Task.",
+        "Designed task logic, trial structure, stimulus presentation, response recording, and structured behavioral data outputs.",
+        "Prepared collected data for downstream analysis in pandas."
+      ]
+    },
+    {
+      "title": "Household Income Classification",
+      "secondary": "",
+      "url": "",
+      "icon": "",
+      "organization": "",
+      "date": "Jan 2021",
+      "content": [
+        "Built models to classify households whose income was in the top 30 percent.",
+        "Compared KNN, decision trees, logistic regression, and neural networks.",
+        "Conducted exploratory analysis, visualized socioeconomic variables, and evaluated model behavior."
+      ]
+    },
+    {
+      "title": "House Price Prediction",
+      "secondary": "",
+      "url": "",
+      "icon": "",
+      "organization": "",
+      "date": "Dec 2020",
+      "content": [
+        "Built models for estimating house prices from property features.",
+        "Compared regression, KNN, decision-tree, and neural-network approaches.",
+        "Used exploratory visualizations to understand feature distributions, relationships, and model performance."
+      ]
+    },
+    {
+      "title": "Text Classification for Inappropriate Comment Detection",
+      "secondary": "",
+      "url": "",
+      "icon": "",
+      "organization": "",
+      "date": "Nov 2019",
+      "content": [
+        "Built NLP models to classify inappropriate Persian-language comments on an online shop.",
+        "Used HAZM for Persian text preprocessing and TF-IDF and CountVectorizer for feature extraction.",
+        "Compared Multinomial Naive Bayes, logistic regression, and support vector machine classifiers."
+      ]
+    },
+    {
+      "title": "Artificial Intelligence Simulator and Map Designer",
+      "secondary": "",
+      "url": "",
+      "icon": "",
+      "organization": "",
+      "date": "Nov 2020",
+      "content": [
+        "Implemented a visual simulator and map designer for testing pathfinding algorithms.",
+        "Implemented A*, breadth-first search, and depth-first search across configurable map layouts.",
+        "Ranked second in a university competition for AI simulator design."
+      ]
+    },
+    {
+      "title": "CRUD Database Web Application",
+      "secondary": "",
+      "url": "",
+      "icon": "",
+      "organization": "",
+      "date": "Nov 2020",
+      "content": [
+        "Designed a database-backed web application supporting create, read, update, and delete operations.",
+        "Used Flask for backend routing and SQLAlchemy for database access.",
+        "Separated application logic, database operations, and user-facing workflows."
+      ]
+    },
+    {
+      "title": "Financial Analytics Telegram Bot",
+      "secondary": "",
+      "url": "",
+      "icon": "",
+      "organization": "Senso",
+      "date": "2020",
+      "content": [
+        "Developed a Telegram bot that delivered real-time market insights through a user-facing chat interface.",
+        "Connected financial data collection, processing, visualization, and reporting workflows.",
+        "Produced concise text and visual outputs for trend monitoring."
+      ]
+    },
+    {
+      "title": "Trading Signal Automation Workflow",
+      "secondary": "",
+      "url": "",
+      "icon": "",
+      "organization": "",
+      "date": "2020 - 2022",
+      "content": [
+        "Built workflows for forwarding TradingView signals to cryptocurrency exchange processes.",
+        "Designed rule-based systems for processing alerts and triggering automated actions.",
+        "Backtested strategies with historical market data and considered reliability and risk controls."
+      ]
+    },
+    {
+      "title": "Legal Document Search and Indexing Pipeline",
+      "secondary": "",
+      "url": "",
+      "icon": "",
+      "organization": "Legano",
+      "date": "2019",
+      "content": [
+        "Built pipelines for collecting legal documents from verified sources.",
+        "Cleaned and structured legal text and metadata for indexing and search.",
+        "Supported retrieval workflows connecting statutes and case documents."
+      ]
+    }
+  ],
+  "awards": [
+    {
+      "title": "Graduate Assistant Teaching Excellence Award",
+      "secondary": "",
+      "url": "",
+      "icon": "",
+      "organization": "University of Calgary",
+      "date": "Fall 2025",
+      "content": []
+    },
+    {
+      "title": "Graduate Tuition Award",
+      "secondary": "",
+      "url": "",
+      "icon": "",
+      "organization": "University of Calgary",
+      "date": "2023, 2024, 2025",
+      "content": []
+    },
+    {
+      "title": "Research Accelerator Award",
+      "secondary": "",
+      "url": "",
+      "icon": "",
+      "organization": "Maud Menten Institute",
+      "date": "Jun 2024",
+      "content": []
+    },
+    {
+      "title": "Top 1 Percent in National University Entrance Exam",
+      "secondary": "",
+      "url": "",
+      "icon": "",
+      "organization": "",
+      "date": "Jul 2017",
+      "content": []
+    }
+  ]
+}
