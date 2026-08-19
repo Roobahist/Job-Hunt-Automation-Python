@@ -13,6 +13,7 @@ from job_hunt.integrations.baserow import BaserowClient, BaserowJobRepository
 from job_hunt.integrations.cloudinary import CloudinaryPublisher
 from job_hunt.integrations.configuration import BaserowConfigurationRepository
 from job_hunt.integrations.gemini import GeminiStructuredClient, GeminiWorkflowAI
+from job_hunt.integrations.gemini_legacy import LegacyGeminiWorkflowAI
 from job_hunt.integrations.telegram import TelegramNotifier
 from job_hunt.tenants.registry import TenantContext, TenantRegistry
 
@@ -55,16 +56,20 @@ class Container:
             config.apify_actor_ids["linkedinSearch"],
             config.apify_actor_ids["linkedinSingleJob"],
         )
-        ai = GeminiWorkflowAI(
-            GeminiStructuredClient(
-                bootstrap.secret("gemini"),
-                bootstrap.secret("gemini_backup", required=False),
-                config.gemini_model,
-            ),
-            prompts,
-            project_selection_count=config.project_selection_count,
-            work_experience_selection_count=config.work_experience_selection_count,
+        structured_client = GeminiStructuredClient(
+            bootstrap.secret("gemini"),
+            bootstrap.secret("gemini_backup", required=False),
+            config.gemini_model,
         )
+        if "qualification_scoring" in prompts:
+            ai = GeminiWorkflowAI(
+                structured_client,
+                prompts,
+                project_selection_count=config.project_selection_count,
+                work_experience_selection_count=config.work_experience_selection_count,
+            )
+        else:
+            ai = LegacyGeminiWorkflowAI(structured_client, prompts)
         repository = BaserowJobRepository(
             baserow,
             config.baserow_table_ids["jobs"],
