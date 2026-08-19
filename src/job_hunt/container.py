@@ -59,7 +59,12 @@ class Container:
         self.redis = Redis.from_url(self.settings.redis_url, decode_responses=True)
         self.state = RedisState(self.redis)
 
-    def tenant(self, key: str, snapshot: dict[str, Any] | None = None) -> TenantServices:
+    def tenant(
+        self,
+        key: str,
+        snapshot: dict[str, Any] | None = None,
+        checkpoint_namespace: str | None = None,
+    ) -> TenantServices:
         context = self.registry.get(key)
         bootstrap = context.bootstrap
         baserow = BaserowClient(bootstrap.secret("baserow"), bootstrap.baserow_base_url)
@@ -96,7 +101,7 @@ class Container:
             self.settings.content_models(),
             self.settings.repair_models(),
             quota_cooldown_seconds=self.settings.provider_quota_cooldown_seconds,
-            state=self.state,
+            state=self.state.checkpoints(checkpoint_namespace),
             checkpoint_ttl_seconds=self.settings.llm_checkpoint_ttl_seconds,
             limits=self.settings.gemini_limits(),
         )
