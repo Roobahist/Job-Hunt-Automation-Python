@@ -35,7 +35,6 @@ jobs:
               "class TailoredContent(BaseModel):\n    cv: dict[str, object]\n    cover_letter: dict[str, object]\n",
               "class TailoredContent(BaseModel):\n    cv: dict[str, Any]\n    cover_letter: dict[str, Any]\n",
           )
-
           replace(
               "src/job_hunt/integrations/gemini.py",
               '''        score = generated.get("score", generated.get("qualification_score"))\n        should_apply = generated.get("should_apply", generated.get("apply", False))\n''',
@@ -51,7 +50,6 @@ jobs:
               '            tailored.append({"label": label.strip(), "value": ", ".join(deduped)})\n',
               '            tailored.append({"label": returned_label.strip(), "value": ", ".join(deduped)})\n',
           )
-
           replace(
               "src/job_hunt/integrations/gemini_pool.py",
               '''        if self.state is not None:\n            available = [\n                candidate\n                for candidate in ordered\n                if self.state.available("gemini-key", self._key_id(candidate[1]))\n                and self.state.available("gemini-candidate", self._candidate_id(*candidate))\n            ]\n            if available:\n                return available\n            return sorted(\n                ordered,\n                key=lambda candidate: max(\n                    self.state.remaining_cooldown("gemini-key", self._key_id(candidate[1])),\n                    self.state.remaining_cooldown(\n                        "gemini-candidate", self._candidate_id(*candidate)\n                    ),\n                ),\n            )[:1]\n''',
@@ -64,20 +62,19 @@ jobs:
           )
           replace(
               "src/job_hunt/integrations/gemini_pool.py",
-              '''        failures: list[str] = []\n        quota_failures = 0\n        attempted = 0\n        for model_name, key in self._available(self.content_models):\n            attempted += 1\n''',
-              '''        failures: list[str] = []\n        quota_failures = 0\n        attempted = 0\n        invalid_keys: set[str] = set()\n        for model_name, key in self._available(self.content_models):\n            if self._key_id(key) in invalid_keys:\n                continue\n            attempted += 1\n''',
+              '''        failures: list[str] = []\n        for model_name, key in self._available(self.repair_models):\n''',
+              '''        failures: list[str] = []\n        invalid_keys: set[str] = set()\n        for model_name, key in self._available(self.repair_models):\n            if self._key_id(key) in invalid_keys:\n                continue\n''',
           )
           replace(
               "src/job_hunt/integrations/gemini_pool.py",
-              '''                if self._is_auth_error(exc):\n                    self._disable_key(key)\n                    continue\n''',
-              '''                if self._is_auth_error(exc):\n                    invalid_keys.add(self._key_id(key))\n                    self._disable_key(key)\n                    continue\n''',
+              '''        failures: list[str] = []\n        quota_failures = 0\n        attempted = 0\n        for model_name, key in self._available(self.content_models):\n            attempted += 1\n''',
+              '''        failures: list[str] = []\n        quota_failures = 0\n        attempted = 0\n        invalid_keys: set[str] = set()\n        for model_name, key in self._available(self.content_models):\n            if self._key_id(key) in invalid_keys:\n                continue\n            attempted += 1\n''',
           )
+          old_auth = '''                if self._is_auth_error(exc):\n                    self._disable_key(key)\n                    continue\n'''
+          new_auth = '''                if self._is_auth_error(exc):\n                    invalid_keys.add(self._key_id(key))\n                    self._disable_key(key)\n                    continue\n'''
+          replace("src/job_hunt/integrations/gemini_pool.py", old_auth, new_auth)
+          replace("src/job_hunt/integrations/gemini_pool.py", old_auth, new_auth)
 
-          replace(
-              "src/job_hunt/container.py",
-              "from job_hunt.integrations.configuration import (\n",
-              "from job_hunt.integrations.configuration import (\n",
-          )
           container = Path("src/job_hunt/container.py")
           text = container.read_text()
           if "from job_hunt.integrations.gemini import GeminiWorkflowAI\n" not in text:
@@ -86,11 +83,12 @@ jobs:
                   ")\nfrom job_hunt.integrations.gemini import GeminiWorkflowAI\nfrom job_hunt.integrations.gemini_parallel import (\n",
                   1,
               )
-          text = text.replace(
-              '        if bootstrap.renderer == "mahsa":\n',
-              '        ai: GeminiWorkflowAI\n        if bootstrap.renderer == "mahsa":\n',
-              1,
-          )
+          if "        ai: GeminiWorkflowAI\n" not in text:
+              text = text.replace(
+                  '        if bootstrap.renderer == "mahsa":\n',
+                  '        ai: GeminiWorkflowAI\n        if bootstrap.renderer == "mahsa":\n',
+                  1,
+              )
           container.write_text(text)
           PY
       - name: Run complete quality chain
