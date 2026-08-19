@@ -14,6 +14,7 @@ class CeleryQueue:
         run_id: UUID,
         force: bool,
         snapshot_id: str | None = None,
+        checkpoint_namespace: str | None = None,
     ) -> str:
         task = process_submission.delay(
             tenant,
@@ -21,6 +22,7 @@ class CeleryQueue:
             str(run_id),
             force,
             snapshot_id,
+            checkpoint_namespace,
         )
         return str(task.id)
 
