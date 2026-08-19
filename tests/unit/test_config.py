@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from job_hunt.config import decode_config_value, load_registry, parse_configuration_rows, read_seed
+from job_hunt.config import Settings, decode_config_value, load_registry, parse_configuration_rows, read_seed
 from job_hunt.errors import ConfigurationError
 
 
@@ -21,7 +21,7 @@ def minimum_rows() -> list[dict[str, object]]:
         "linkedin_base_search_url": ("text", "https://linkedin.example/search"),
         "linkedin_job_url_template": ("text", "https://linkedin.example/{jobId}"),
         "telegram_chat_id": ("text", "1"),
-        "gemini_model": ("text", "gemini-test"),
+        "gemini_model": ("text", "legacy-row-is-ignored-by-provider-pool"),
     }
     return [
         {
@@ -41,6 +41,24 @@ def test_decode_and_parse_configuration() -> None:
     config = parse_configuration_rows(minimum_rows())
     assert config.baserow_table_ids["jobs"] == 1
     assert config.qualification_threshold == 33
+
+
+def test_shared_provider_settings_are_ordered_and_required() -> None:
+    settings = Settings(
+        apify_tokens="a1, a2,a3",
+        gemini_api_keys="g1,g2",
+        gemini_content_models="models/best,second",
+        gemini_repair_models="fast,cheaper",
+    )
+    assert settings.shared_apify_tokens() == ["a1", "a2", "a3"]
+    assert settings.shared_gemini_keys() == ["g1", "g2"]
+    assert settings.content_models() == ["best", "second"]
+    assert settings.repair_models() == ["fast", "cheaper"]
+
+    with pytest.raises(ConfigurationError, match="APIFY_TOKENS"):
+        Settings(apify_tokens="").shared_apify_tokens()
+    with pytest.raises(ConfigurationError, match="GEMINI_API_KEYS"):
+        Settings(gemini_api_keys="").shared_gemini_keys()
 
 
 def test_invalid_configuration_is_actionable() -> None:
