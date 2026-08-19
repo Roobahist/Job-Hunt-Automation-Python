@@ -94,8 +94,8 @@ def test_repository_create_find_reset_and_updates() -> None:
     repo = BaserowJobRepository(
         client,
         1,
-        {"new": 10, "dropped": 11},
-        {"fullTime": 12},
+        {"new": 10, "dropped": 11, "toApply": 12, "applied": 13},
+        {"fullTime": 14},
     )  # type: ignore[arg-type]
     job = sample_job()
     created = repo.create(job)
@@ -103,13 +103,16 @@ def test_repository_create_find_reset_and_updates() -> None:
     client.rows = [{"id": 3, "Job ID": job.internal_id, "Link": job.url}]
     assert repo.find(job)["id"] == 3  # type: ignore[index]
     reset = repo.reset(3, job)
-    assert reset["CV"] == [] and reset["Status"] == 10
+    assert "CV" not in reset and "Cover Letter" not in reset and reset["Status"] == 10
     repo.save_qualification(
         3, Qualification(score=20, should_apply=False, reasoning="low"), passed=False
     )
     assert client.updates[-1]["Status"] == 11
     repo.save_artifacts(3, {"CV": [{"name": "x"}]})
     assert client.updates[-1]["CV"][0]["name"] == "x"
+    assert client.updates[-1]["Status"] == 12
+    repo.set_status(3, "applied")
+    assert client.updates[-1]["Status"] == 13
 
 
 def test_configuration_reads_live_prompt_contract_and_validates_fields() -> None:
