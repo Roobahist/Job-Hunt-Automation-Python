@@ -17,8 +17,9 @@ from job_hunt.integrations.configuration import (
     BaserowConfigurationRepository,
     validate_prompt_contract,
 )
-from job_hunt.integrations.gemini import GeminiStructuredClient, GeminiWorkflowAI
+from job_hunt.integrations.gemini import GeminiWorkflowAI
 from job_hunt.integrations.gemini_mahsa import MahsaGeminiWorkflowAI
+from job_hunt.integrations.gemini_pool import PooledGeminiStructuredClient
 from job_hunt.integrations.telegram import TelegramNotifier
 from job_hunt.tenants.registry import TenantContext, TenantRegistry
 
@@ -56,16 +57,20 @@ class Container:
             )
         config_repository.validate_job_table(config.baserow_table_ids["jobs"])
         prompts = config_repository.prompts(config.baserow_table_ids["prompts"])
+
         discovery = ApifyProvider(
-            bootstrap.secret("apify"),
+            self.settings.shared_apify_tokens(),
             config.apify_actor_ids["linkedinSearch"],
             config.apify_actor_ids["linkedinSingleJob"],
+            quota_cooldown_seconds=self.settings.provider_quota_cooldown_seconds,
         )
-        structured_client = GeminiStructuredClient(
-            bootstrap.secret("gemini"),
-            bootstrap.secret("gemini_backup", required=False),
-            config.gemini_model,
+        structured_client = PooledGeminiStructuredClient(
+            self.settings.shared_gemini_keys(),
+            self.settings.content_models(),
+            self.settings.repair_models(),
+            quota_cooldown_seconds=self.settings.provider_quota_cooldown_seconds,
         )
+
         if bootstrap.renderer == "mahsa":
             validate_prompt_contract(prompts, MAHSA_PROMPT_KEYS, "mahsa")
             ai = MahsaGeminiWorkflowAI(
@@ -82,6 +87,7 @@ class Container:
                 project_selection_count=config.project_selection_count,
                 work_experience_selection_count=config.work_experience_selection_count,
             )
+
         repository = BaserowJobRepository(
             baserow,
             config.baserow_table_ids["jobs"],
