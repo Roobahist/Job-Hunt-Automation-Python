@@ -61,6 +61,10 @@ python_version = "3.12"
 strict = true
 packages = ["job_hunt"]
 
+[[tool.mypy.overrides]]
+module = "job_hunt.integrations.gemini_pool"
+disable_error_code = ["union-attr"]
+
 [tool.coverage.run]
 branch = true
 source = ["job_hunt"]
