@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import time
 from collections.abc import Iterable, Mapping, Sequence
 from threading import Lock
@@ -9,6 +10,9 @@ from typing import Any
 from apify_client import ApifyClient
 
 from job_hunt.errors import ErrorKind, ProviderError
+from job_hunt.state import RedisState
+
+_RETRY_SECONDS = re.compile(r"(?:retry|try again)[^0-9]{0,20}(\d+(?:\.\d+)?)\s*s", re.IGNORECASE)
 
 
 class ApifyProvider:
@@ -22,6 +26,7 @@ class ApifyProvider:
         single_actor_id: str,
         *,
         quota_cooldown_seconds: int = 3600,
+        state: RedisState | None = None,
     ) -> None:
         self.tokens = [token for token in tokens if token]
         if not self.tokens:
@@ -29,6 +34,7 @@ class ApifyProvider:
         self.search_actor_id = search_actor_id
         self.single_actor_id = single_actor_id
         self.quota_cooldown_seconds = quota_cooldown_seconds
+        self.state = state
 
     @staticmethod
     def _token_id(token: str) -> str:
@@ -55,7 +61,38 @@ class ApifyProvider:
         )
         return any(marker in text for marker in markers)
 
+    def _cooldown_seconds(self, exc: Exception) -> int:
+        retry_after = getattr(exc, "retry_after", None)
+        if isinstance(retry_after, (int, float)) and retry_after > 0:
+            return max(1, int(retry_after))
+        response = getattr(exc, "response", None)
+        headers = getattr(response, "headers", None)
+        if headers:
+            raw = headers.get("retry-after")
+            try:
+                if raw is not None:
+                    return max(1, int(float(raw)))
+            except (TypeError, ValueError):
+                pass
+        match = _RETRY_SECONDS.search(str(exc))
+        if match:
+            return max(1, int(float(match.group(1))))
+        return self.quota_cooldown_seconds
+
     def _available_tokens(self) -> list[str]:
+        if self.state is not None:
+            available = [
+                token
+                for token in self.tokens
+                if self.state.available("apify", self._token_id(token))
+            ]
+            if available:
+                return available
+            return sorted(
+                self.tokens,
+                key=lambda token: self.state.remaining_cooldown("apify", self._token_id(token)),
+            )[:1]
+
         now = time.monotonic()
         with self._lock:
             available = [
@@ -65,7 +102,6 @@ class ApifyProvider:
             ]
             if available:
                 return available
-            # If every account is cooling down, retry the one whose cooldown expires first.
             return [
                 min(
                     self.tokens,
@@ -73,11 +109,13 @@ class ApifyProvider:
                 )
             ]
 
-    def _cooldown(self, token: str) -> None:
+    def _cooldown(self, token: str, seconds: int) -> None:
+        token_id = self._token_id(token)
+        if self.state is not None:
+            self.state.cooldown("apify", token_id, seconds=seconds)
+            return
         with self._lock:
-            self._unavailable_until[self._token_id(token)] = (
-                time.monotonic() + self.quota_cooldown_seconds
-            )
+            self._unavailable_until[token_id] = time.monotonic() + seconds
 
     @staticmethod
     def _run_with_client(
@@ -101,16 +139,14 @@ class ApifyProvider:
         failures: list[str] = []
         for token in self._available_tokens():
             try:
-                yield from self._run_with_client(
-                    ApifyClient(token), actor_id, run_input, max_items
-                )
+                yield from self._run_with_client(ApifyClient(token), actor_id, run_input, max_items)
                 return
             except ProviderError:
                 raise
             except Exception as exc:
                 failures.append(f"{self._token_id(token)}: {exc}")
                 if self._is_capacity_error(exc):
-                    self._cooldown(token)
+                    self._cooldown(token, self._cooldown_seconds(exc))
                     continue
                 raise ProviderError(
                     f"Apify request failed: {exc}",
