@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, cast
 
 from redis import Redis
 
@@ -25,7 +25,7 @@ class RedisState:
         raw = self.redis.get(self._key("json", key))
         if raw is None:
             return None
-        return json.loads(raw)
+        return json.loads(cast(str, raw))
 
     def set_checkpoint(self, digest: str, value: Mapping[str, Any], *, ttl_seconds: int) -> None:
         self.set_json(f"checkpoint:{digest}", dict(value), ttl_seconds=ttl_seconds)
@@ -49,8 +49,8 @@ class RedisState:
         return not bool(self.redis.exists(self._key("cooldown", scope, resource)))
 
     def remaining_cooldown(self, scope: str, resource: str) -> int:
-        ttl = self.redis.ttl(self._key("cooldown", scope, resource))
-        return max(0, int(ttl))
+        ttl = cast(int, self.redis.ttl(self._key("cooldown", scope, resource)))
+        return max(0, ttl)
 
     def increment_window(
         self,
