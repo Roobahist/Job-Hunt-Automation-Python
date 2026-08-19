@@ -32,6 +32,24 @@ class RunCoordinator:
         self.queue = queue
         self.tenant_exists = tenant_exists
 
+    def _queue_submission(
+        self,
+        tenant: str,
+        payload: dict[str, Any],
+        run_id: UUID,
+        force: bool,
+        snapshot_id: str | None,
+    ) -> str:
+        if snapshot_id is None:
+            return self.queue.submission(tenant, payload, run_id, force)
+        return self.queue.submission(
+            tenant,
+            payload,
+            run_id,
+            force,
+            snapshot_id=snapshot_id,
+        )
+
     def enqueue_submission(
         self,
         tenant: str,
@@ -53,8 +71,12 @@ class RunCoordinator:
         if snapshot_id:
             request["snapshot_id"] = snapshot_id
         self.store.save_request(run.run_id, request)
-        task_id = self.queue.submission(
-            tenant, payload, run.run_id, force, snapshot_id=snapshot_id
+        task_id = self._queue_submission(
+            tenant,
+            payload,
+            run.run_id,
+            force,
+            snapshot_id,
         )
         self.store.update(run.run_id, task_id=task_id)
         return EnqueueResponse(run_id=run.run_id)
@@ -79,12 +101,12 @@ class RunCoordinator:
         if request["kind"] == "discovery":
             task_id = self.queue.discovery(original.tenant, retry.run_id)
         else:
-            task_id = self.queue.submission(
+            task_id = self._queue_submission(
                 original.tenant,
                 dict(request["payload"]),  # type: ignore[arg-type]
                 retry.run_id,
                 bool(request.get("force", False)),
-                snapshot_id=(str(request["snapshot_id"]) if request.get("snapshot_id") else None),
+                str(request["snapshot_id"]) if request.get("snapshot_id") else None,
             )
         self.store.update(retry.run_id, task_id=task_id)
         return RetryResponse(original_run_id=run_id, run_id=retry.run_id)
