@@ -42,8 +42,19 @@ class Queue:
         run_id: UUID,
         force: bool,
         snapshot_id: str | None = None,
+        checkpoint_namespace: str | None = None,
     ) -> str:
-        self.calls.append(("submission", tenant, payload, run_id, force, snapshot_id))
+        self.calls.append(
+            (
+                "submission",
+                tenant,
+                payload,
+                run_id,
+                force,
+                snapshot_id,
+                checkpoint_namespace,
+            )
+        )
         return "submission-task"
 
     def discovery(self, tenant: str, run_id: UUID) -> str:
@@ -62,14 +73,17 @@ def test_enqueue_submission_and_discovery() -> None:
     response = runs.enqueue_submission("mahsa", {"entry_type": "url"}, "manual", force=True)
     assert tenants == ["mahsa"]
     assert store.statuses[response.run_id].task_id == "submission-task"
-    assert store.requests[response.run_id]["force"] is True
+    request = store.requests[response.run_id]
+    assert request["force"] is True
+    assert request["checkpoint_namespace"] == str(response.run_id)
+    assert queue.calls[0][-1] == str(response.run_id)
 
     discovery = runs.enqueue_discovery("mojtaba")
     assert store.statuses[discovery.run_id].task_id == "discovery-task"
     assert queue.calls[-1][0] == "discovery"
 
 
-def test_retry_preserves_discovery_snapshot() -> None:
+def test_retry_preserves_snapshot_and_checkpoint_lineage() -> None:
     runs, store, queue, _ = coordinator()
     original = RunStatus(tenant="mahsa", kind="scheduled-job")
     store.save(original)
@@ -80,11 +94,33 @@ def test_retry_preserves_discovery_snapshot() -> None:
             "payload": {"entry_type": "external"},
             "force": False,
             "snapshot_id": "batch-1",
+            "checkpoint_namespace": "lineage-1",
         },
     )
     result = runs.retry(original.run_id)
     assert store.statuses[result.run_id].original_run_id == original.run_id
-    assert queue.calls[-1][-1] == "batch-1"
+    assert queue.calls[-1][-2] == "batch-1"
+    assert queue.calls[-1][-1] == "lineage-1"
+    assert store.requests[result.run_id]["checkpoint_namespace"] == "lineage-1"
+
+
+def test_fresh_retry_starts_new_checkpoint_lineage() -> None:
+    runs, store, queue, _ = coordinator()
+    original = RunStatus(tenant="mahsa", kind="manual")
+    store.save(original)
+    store.save_request(
+        original.run_id,
+        {
+            "kind": "manual",
+            "payload": {"entry_type": "external"},
+            "force": True,
+            "checkpoint_namespace": "old-lineage",
+        },
+    )
+    result = runs.retry(original.run_id, fresh=True)
+    expected = str(result.run_id)
+    assert store.requests[result.run_id]["checkpoint_namespace"] == expected
+    assert queue.calls[-1][-1] == expected
 
 
 def test_retry_missing_run_raises() -> None:
