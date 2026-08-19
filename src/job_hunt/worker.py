@@ -55,23 +55,37 @@ def notify_documents(
     paths: list[str],
     caption: str,
     chat_id: str,
+    row_id: int,
+    job_url: str,
 ) -> dict[str, str]:
     store = _store()
     identifier = UUID(run_id)
     try:
         bootstrap = Container(settings).registry.get(tenant).bootstrap
         notifier = TelegramNotifier(bootstrap.secret("telegram"))
-        message_id = retry_transient(
+        media_id = retry_transient(
             notifier.send_documents,
             chat_id,
             [Path(path) for path in paths],
             caption,
         )
+        action_id = retry_transient(
+            notifier.send_application_actions,
+            chat_id,
+            caption=caption,
+            job_url=job_url,
+            row_id=row_id,
+            run_id=run_id,
+        )
         store.update(
             identifier,
-            notification={"state": "sent", "message_id": message_id},
+            notification={
+                "state": "sent",
+                "media_message_id": media_id,
+                "action_message_id": action_id,
+            },
         )
-        return {"state": "sent", "message_id": message_id}
+        return {"state": "sent", "message_id": action_id}
     except Exception as exc:
         store.update(
             identifier,
@@ -124,9 +138,6 @@ def process_submission(
                 threshold=services.config.qualification_threshold,
                 force=force,
                 applicant_filename=services.config.applicant_filename,
-                cloudinary_folder=services.config.cloudinary_folder_prefix,
-                cloudinary_tags=services.config.cloudinary_tags,
-                telegram_chat_id=services.config.telegram_chat_id,
             )
         finally:
             if lock.owned():
@@ -146,6 +157,8 @@ def process_submission(
                 list(result.notification_paths),
                 f"{job.title} at {job.company_name}",
                 services.config.telegram_chat_id,
+                result.row_id,
+                job.url,
             )
         return {
             "state": final_state,
