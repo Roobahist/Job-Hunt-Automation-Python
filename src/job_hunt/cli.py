@@ -9,11 +9,12 @@ import typer
 from pydantic import TypeAdapter
 from redis import Redis
 
+from job_hunt.application.runs import RunCoordinator
 from job_hunt.config import Settings, load_registry, read_seed
 from job_hunt.container import Container
-from job_hunt.domain.models import JobSubmission, RunStatus, TailoredContent
+from job_hunt.domain.models import JobSubmission, TailoredContent
+from job_hunt.queueing import CeleryQueue
 from job_hunt.run_store import RunStore
-from job_hunt.worker import discover_tenant, process_submission
 
 app = typer.Typer(no_args_is_help=True, help="Operate the multi-tenant job-hunt workflow.")
 config_app = typer.Typer(help="Validate local and Baserow configuration.")
@@ -30,6 +31,11 @@ def _store(settings: Settings) -> RunStore:
     )
 
 
+def _coordinator(settings: Settings) -> RunCoordinator:
+    container = Container(settings)
+    return RunCoordinator(_store(settings), CeleryQueue(), container.registry.get)
+
+
 @app.command()
 def submit(
     tenant: str,
@@ -39,28 +45,20 @@ def submit(
     settings = _settings()
     payload = json.loads(input_file.read_text(encoding="utf-8"))
     submission: Any = TypeAdapter(JobSubmission).validate_python(payload)
-    run = RunStatus(tenant=tenant, kind="manual")
-    store = _store(settings)
-    store.save(run)
     dumped = TypeAdapter(JobSubmission).dump_python(submission, mode="json")
-    store.save_request(
-        run.run_id, {"tenant": tenant, "payload": dumped, "kind": "manual", "force": force}
+    result = _coordinator(settings).enqueue_submission(
+        tenant,
+        dumped,
+        "manual",
+        force=force,
     )
-    task = process_submission.delay(tenant, dumped, str(run.run_id), force)
-    store.update(run.run_id, task_id=str(task.id))
-    typer.echo(str(run.run_id))
+    typer.echo(str(result.run_id))
 
 
 @app.command()
 def discover(tenant: str) -> None:
-    settings = _settings()
-    run = RunStatus(tenant=tenant, kind="discovery")
-    store = _store(settings)
-    store.save(run)
-    store.save_request(run.run_id, {"tenant": tenant, "kind": "discovery"})
-    task = discover_tenant.delay(tenant, str(run.run_id))
-    store.update(run.run_id, task_id=str(task.id))
-    typer.echo(str(run.run_id))
+    result = _coordinator(_settings()).enqueue_discovery(tenant)
+    typer.echo(str(result.run_id))
 
 
 @app.command()
@@ -73,23 +71,11 @@ def status(run_id: UUID) -> None:
 
 @app.command()
 def retry(run_id: UUID) -> None:
-    settings = _settings()
-    store = _store(settings)
-    original = store.get(run_id)
-    request = store.get_request(run_id)
-    if not original or not request:
-        raise typer.BadParameter("Run or replay data not found")
-    run = RunStatus(tenant=original.tenant, kind=original.kind, original_run_id=run_id)
-    store.save(run)
-    store.save_request(run.run_id, request)
-    if request["kind"] == "discovery":
-        task = discover_tenant.delay(original.tenant, str(run.run_id))
-    else:
-        task = process_submission.delay(
-            original.tenant, request["payload"], str(run.run_id), bool(request.get("force", False))
-        )
-    store.update(run.run_id, task_id=str(task.id))
-    typer.echo(str(run.run_id))
+    try:
+        result = _coordinator(_settings()).retry(run_id)
+    except KeyError as exc:
+        raise typer.BadParameter("Run or replay data not found") from exc
+    typer.echo(str(result.run_id))
 
 
 @app.command()
@@ -119,6 +105,8 @@ def validate_configuration(tenant: str | None = None, live: bool = False) -> Non
                 raise ValueError("master_cv.json is missing")
             if not (root / "templates/cv_template.tex").is_file():
                 raise ValueError("CV template is missing")
+            if not (root / "templates/cover_letter_template.tex").is_file():
+                raise ValueError("Cover-letter template is missing")
             if live:
                 Container(settings).tenant(key)
             typer.echo(f"OK {key}")
