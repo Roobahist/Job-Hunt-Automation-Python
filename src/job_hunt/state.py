@@ -67,3 +67,36 @@ class RedisState:
         pipeline.expire(key, ttl_seconds, nx=True)
         result = pipeline.execute()
         return int(result[0])
+
+    def checkpoints(self, checkpoint_namespace: str | None) -> RedisState:
+        if not checkpoint_namespace:
+            return self
+        return CheckpointScopedRedisState(
+            self.redis,
+            namespace=self.namespace,
+            checkpoint_namespace=checkpoint_namespace,
+        )
+
+
+class CheckpointScopedRedisState(RedisState):
+    """Share provider state globally while isolating LLM checkpoints by run lineage."""
+
+    def __init__(
+        self,
+        redis: Redis,
+        *,
+        namespace: str,
+        checkpoint_namespace: str,
+    ) -> None:
+        super().__init__(redis, namespace=namespace)
+        self.checkpoint_namespace = checkpoint_namespace
+
+    def set_checkpoint(self, digest: str, value: Mapping[str, Any], *, ttl_seconds: int) -> None:
+        super().set_checkpoint(
+            f"{self.checkpoint_namespace}:{digest}",
+            value,
+            ttl_seconds=ttl_seconds,
+        )
+
+    def get_checkpoint(self, digest: str) -> dict[str, Any] | None:
+        return super().get_checkpoint(f"{self.checkpoint_namespace}:{digest}")
