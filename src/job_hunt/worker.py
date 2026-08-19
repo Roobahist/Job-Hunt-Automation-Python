@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 from uuid import UUID
 
@@ -12,8 +13,11 @@ from job_hunt.application.discovery import build_search_url, normalize_discovery
 from job_hunt.config import Settings, load_registry
 from job_hunt.container import Container
 from job_hunt.domain.models import JobSubmission, RunState, RunStatus
+from job_hunt.integrations.telegram import TelegramNotifier
 from job_hunt.logging import configure_logging, logger
+from job_hunt.retry import retry_transient
 from job_hunt.run_store import RunStore
+from job_hunt.state import RedisState
 
 settings = Settings()
 configure_logging(json_logs=settings.environment != "development")
@@ -23,27 +27,80 @@ celery_app.conf.update(
     task_reject_on_worker_lost=True,
     worker_prefetch_multiplier=1,
     result_expires=settings.run_ttl_seconds,
+    worker_send_task_events=True,
+    task_send_sent_event=True,
     beat_schedule={
         "dispatch-due-tenants": {"task": "job_hunt.dispatch_due_tenants", "schedule": 3600.0}
     },
 )
 
 
+def _redis() -> Redis:
+    return Redis.from_url(settings.redis_url, decode_responses=True)
+
+
 def _store() -> RunStore:
-    return RunStore(
-        Redis.from_url(settings.redis_url, decode_responses=True), settings.run_ttl_seconds
-    )
+    return RunStore(_redis(), settings.run_ttl_seconds)
+
+
+def _state() -> RedisState:
+    return RedisState(_redis())
+
+
+@celery_app.task(name="job_hunt.notify_documents", bind=True, max_retries=3)  # type: ignore[untyped-decorator]
+def notify_documents(
+    self: Any,
+    tenant: str,
+    run_id: str,
+    paths: list[str],
+    caption: str,
+    chat_id: str,
+) -> dict[str, str]:
+    store = _store()
+    identifier = UUID(run_id)
+    try:
+        bootstrap = Container(settings).registry.get(tenant).bootstrap
+        notifier = TelegramNotifier(bootstrap.secret("telegram"))
+        message_id = retry_transient(
+            notifier.send_documents,
+            chat_id,
+            [Path(path) for path in paths],
+            caption,
+        )
+        store.update(
+            identifier,
+            notification={"state": "sent", "message_id": message_id},
+        )
+        return {"state": "sent", "message_id": message_id}
+    except Exception as exc:
+        store.update(
+            identifier,
+            notification={"state": "failed", "error": str(exc)},
+        )
+        logger().exception(
+            "notification_failed",
+            tenant=tenant,
+            run_id=run_id,
+            error_type=type(exc).__name__,
+        )
+        raise self.retry(exc=exc, countdown=min(60, 2 ** int(self.request.retries))) from exc
 
 
 @celery_app.task(name="job_hunt.process_submission", bind=True)  # type: ignore[untyped-decorator]
 def process_submission(
-    self: Any, tenant: str, submission: dict[str, Any], run_id: str, force: bool = False
+    self: Any,
+    tenant: str,
+    submission: dict[str, Any],
+    run_id: str,
+    force: bool = False,
+    snapshot_id: str | None = None,
 ) -> dict[str, Any]:
     store = _store()
     identifier = UUID(run_id)
     store.update(identifier, state=RunState.RUNNING, stage="normalization", task_id=self.request.id)
     try:
-        services = Container(settings).tenant(tenant)
+        snapshot = _state().get_snapshot(snapshot_id) if snapshot_id else None
+        services = Container(settings).tenant(tenant, snapshot=snapshot)
         parsed: Any = TypeAdapter(JobSubmission).validate_python(submission)
         job = services.normalizer.normalize(
             parsed,
@@ -74,8 +131,22 @@ def process_submission(
         finally:
             if lock.owned():
                 lock.release()
+
         final_state = RunState.SUCCEEDED if result.passed else RunState.SKIPPED
-        store.update(identifier, state=final_state, stage="complete")
+        store.update(
+            identifier,
+            state=final_state,
+            stage="complete",
+            notification={"state": "queued"} if result.notification_paths else None,
+        )
+        if result.notification_paths:
+            notify_documents.delay(
+                tenant,
+                run_id,
+                list(result.notification_paths),
+                f"{job.title} at {job.company_name}",
+                services.config.telegram_chat_id,
+            )
         return {
             "state": final_state,
             "row_id": result.row_id,
@@ -105,6 +176,12 @@ def discover_tenant(tenant: str, run_id: str) -> dict[str, int]:
     try:
         store.update(identifier, state=RunState.RUNNING, stage="discovery")
         services = Container(settings).tenant(tenant)
+        snapshot_id = run_id
+        _state().set_snapshot(
+            snapshot_id,
+            services.snapshot(),
+            ttl_seconds=settings.discovery_snapshot_ttl_seconds,
+        )
         criteria = list(
             services.baserow.iter_rows(services.config.baserow_table_ids["searchCriteria"])
         )
@@ -116,22 +193,34 @@ def discover_tenant(tenant: str, run_id: str) -> dict[str, int]:
         for job in jobs:
             child = RunStatus(tenant=tenant, kind="scheduled-job")
             store.save(child)
+            payload = {
+                "entry_type": "external",
+                "source": job.source,
+                "external_job_id": job.external_id,
+                "company_name": job.company_name,
+                "job_title": job.title,
+                "job_description": job.description,
+                "job_url": job.url,
+                "location": job.location,
+                "contract_type": job.contract_type,
+                "published_at": (job.published_at.isoformat() if job.published_at else None),
+            }
+            store.save_request(
+                child.run_id,
+                {
+                    "tenant": tenant,
+                    "payload": payload,
+                    "kind": "scheduled-job",
+                    "force": False,
+                    "snapshot_id": snapshot_id,
+                },
+            )
             process_submission.delay(
                 tenant,
-                {
-                    "entry_type": "external",
-                    "source": job.source,
-                    "external_job_id": job.external_id,
-                    "company_name": job.company_name,
-                    "job_title": job.title,
-                    "job_description": job.description,
-                    "job_url": job.url,
-                    "location": job.location,
-                    "contract_type": job.contract_type,
-                    "published_at": (job.published_at.isoformat() if job.published_at else None),
-                },
+                payload,
                 str(child.run_id),
                 False,
+                snapshot_id,
             )
         store.update(
             identifier,
@@ -158,7 +247,7 @@ def discover_tenant(tenant: str, run_id: str) -> dict[str, int]:
 
 @celery_app.task(name="job_hunt.dispatch_due_tenants")  # type: ignore[untyped-decorator]
 def dispatch_due_tenants() -> dict[str, int]:
-    redis = Redis.from_url(settings.redis_url, decode_responses=True)
+    redis = _redis()
     queued = 0
     failed = 0
     for key, bootstrap in load_registry(settings.registry_path).items():
