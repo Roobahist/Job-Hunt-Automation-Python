@@ -10,13 +10,15 @@ Development logs are readable console events. Non-development environments emit 
 
 | Error/stage | Likely cause | Check |
 |---|---|---|
-| `configuration_error` | Missing config row, prompt, field, option, or environment secret | `job-hunt config validate TENANT --live`, Configuration table, `users.toml`, container environment |
+| `configuration_error` | Missing active prompt, duplicate active prompt, invalid Baserow Output Structure, missing config row/field/option, or environment secret | `job-hunt config validate TENANT --live`, Prompts table, Configuration table, `users.toml`, container environment |
 | `authentication` | Expired/wrong provider credential | Corresponding `*_TOKEN`, `*_API_KEY`, or `*_URL` variable |
 | `rate_limit` | Provider quota or concurrency limit | `Retry-After`, Apify/Gemini/Telegram dashboard, configured item/concurrency limits |
-| `malformed_provider_response` | Provider or LLM output no longer satisfies the typed contract | Full exception and prompt schema; retry after provider recovery |
+| `malformed_provider_response` | Initial structured output and its auto-fix attempt both failed the active Baserow JSON Schema | Prompt key/version, Output Structure, model response, auto-fix validation error |
 | `document_rendering` | Invalid tailored JSON, template marker, or LaTeX | Run directory `.json`/`.tex`, renderer profile, `pdflatex` tail in the exception |
 | URL validation | Non-public host, redirect, oversized/non-text response | Use a public HTTP(S) posting URL; private/reserved networks are intentionally blocked |
 | Redis readiness | Redis unavailable | `docker compose ps`, `docker compose logs redis` |
+
+Each Celery job builds a fresh tenant service container and reloads active prompt definitions from Baserow. Prompt-template, temperature, status/version, and Output Structure edits therefore apply to the next job without restarting the worker.
 
 Transient network, 429, and 5xx failures retry with bounded exponential backoff and jitter. Validation, authentication, configuration, and permanent 4xx failures do not retry. Unexpected exceptions retain stack traces in logs. Failure alerts are intentionally not sent to Telegram.
 
@@ -27,4 +29,3 @@ Transient network, 429, and 5xx failures retry with bounded exponential backoff 
 - Reprocessing intentionally clears CV, cover letter, score, and apply fields and resets Status to New before rescoring.
 - Cloudinary paths are deterministic and use overwrite; Baserow lookups are filtered; Telegram is called only after persistence succeeds.
 - Do not run tests marked `live` without explicitly configured non-production credentials.
-
