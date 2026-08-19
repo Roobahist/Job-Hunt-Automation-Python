@@ -120,4 +120,6 @@ class LegacyGeminiWorkflowAI:
             )
         prompt = f"{source.template}\n\n{content}"
         generated = self.client.generate(prompt, _definition(source, _EXTRACTION_SCHEMA))
-        return assign_identity(Job(url=source_url, **generated))
+        generated.setdefault("source", "web")
+        generated["url"] = source_url
+        return assign_identity(Job.model_validate(generated))
