@@ -7,7 +7,8 @@ from datetime import datetime
 from typing import Any
 
 from jsonschema import Draft202012Validator
-from jsonschema.exceptions import SchemaError, ValidationError as JsonSchemaValidationError
+from jsonschema.exceptions import SchemaError
+from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 from job_hunt.domain.identity import assign_identity
