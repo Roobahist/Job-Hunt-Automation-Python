@@ -217,7 +217,11 @@ class GeminiWorkflowAI:
         }
         generated = self._run(definition, values)
         score = generated.get("score", generated.get("qualification_score"))
+        if not isinstance(score, int) or isinstance(score, bool):
+            raise ValueError("qualification_scoring must return an integer score")
         should_apply = generated.get("should_apply", generated.get("apply", False))
+        if not isinstance(should_apply, bool):
+            raise ValueError("qualification_scoring must return should_apply as a boolean")
         reasoning = generated.get(
             "reasoning",
             generated.get("qualification_reasoning", generated.get("reason", "Qualification scored")),
@@ -407,9 +411,9 @@ class GeminiWorkflowAI:
         for group in groups:
             if not isinstance(group, dict):
                 raise ValueError("Every returned skill group must be an object")
-            label = group.get("label")
+            returned_label = group.get("label")
             returned = group.get("skills")
-            if not isinstance(label, str) or not label.strip() or not isinstance(returned, list):
+            if not isinstance(returned_label, str) or not returned_label.strip() or not isinstance(returned, list):
                 raise ValueError("Every skill group requires label and skills")
             deduped: list[str] = []
             seen: set[str] = set()
@@ -421,7 +425,7 @@ class GeminiWorkflowAI:
                 if folded not in seen:
                     deduped.append(cleaned)
                     seen.add(folded)
-            tailored.append({"label": label.strip(), "value": ", ".join(deduped)})
+            tailored.append({"label": returned_label.strip(), "value": ", ".join(deduped)})
         return tailored
 
     def _summary_pipeline(

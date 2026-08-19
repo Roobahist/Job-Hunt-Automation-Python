@@ -314,7 +314,7 @@ class PooledGeminiStructuredClient(GeminiStructuredClient):
         if self.langfuse_handler is not None:
             config["callbacks"] = [self.langfuse_handler]
         started = time.perf_counter()
-        result = runnable.invoke(prompt, config=config)
+        result = runnable.invoke(prompt, config=config)  # type: ignore[arg-type]
         latency_ms = int((time.perf_counter() - started) * 1000)
         if not isinstance(result, dict):
             return (
@@ -384,7 +384,10 @@ class PooledGeminiStructuredClient(GeminiStructuredClient):
             f"ORIGINAL OUTPUT:\n{raw_output}"
         )
         failures: list[str] = []
+        invalid_keys: set[str] = set()
         for model_name, key in self._available(self.repair_models):
+            if self._key_id(key) in invalid_keys:
+                continue
             try:
                 parsed, _, parsing_error, metadata = self._pooled_structured_call(
                     model_name,
@@ -429,7 +432,10 @@ class PooledGeminiStructuredClient(GeminiStructuredClient):
         failures: list[str] = []
         quota_failures = 0
         attempted = 0
+        invalid_keys: set[str] = set()
         for model_name, key in self._available(self.content_models):
+            if self._key_id(key) in invalid_keys:
+                continue
             attempted += 1
             try:
                 parsed, raw_output, parsing_error, metadata = self._pooled_structured_call(
@@ -489,6 +495,7 @@ class PooledGeminiStructuredClient(GeminiStructuredClient):
                     self._cooldown(model_name, key, self._quota_cooldown(exc))
                     continue
                 if self._is_auth_error(exc):
+                    invalid_keys.add(self._key_id(key))
                     self._disable_key(key)
                     continue
                 continue

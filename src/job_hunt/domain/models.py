@@ -100,8 +100,8 @@ class Qualification(BaseModel):
 
 
 class TailoredContent(BaseModel):
-    cv: dict[str, object]
-    cover_letter: dict[str, object]
+    cv: dict[str, Any]
+    cover_letter: dict[str, Any]
 
 
 class ArtifactBundle(BaseModel):

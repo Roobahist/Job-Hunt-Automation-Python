@@ -19,6 +19,7 @@ from job_hunt.integrations.configuration import (
     BaserowConfigurationRepository,
     validate_prompt_contract,
 )
+from job_hunt.integrations.gemini import GeminiWorkflowAI
 from job_hunt.integrations.gemini_parallel import (
     ParallelGeminiWorkflowAI,
     ParallelMahsaGeminiWorkflowAI,
@@ -101,6 +102,7 @@ class Container:
             limits=self.settings.gemini_limits(),
         )
 
+        ai: GeminiWorkflowAI
         if bootstrap.renderer == "mahsa":
             validate_prompt_contract(prompts, MAHSA_PROMPT_KEYS, "mahsa")
             ai = ParallelMahsaGeminiWorkflowAI(
