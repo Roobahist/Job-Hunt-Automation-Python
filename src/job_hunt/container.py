@@ -6,6 +6,7 @@ from pathlib import Path
 from job_hunt.application.normalization import SubmissionNormalizer
 from job_hunt.application.workflow import ApplicationWorkflow
 from job_hunt.config import Settings, TenantRuntimeConfig, load_registry
+from job_hunt.domain.models import PromptDefinition
 from job_hunt.integrations.apify import ApifyProvider
 from job_hunt.integrations.artifacts import CloudinaryBaserowPublisher
 from job_hunt.integrations.baserow import BaserowClient, BaserowJobRepository
@@ -22,7 +23,7 @@ class TenantServices:
     config: TenantRuntimeConfig
     baserow: BaserowClient
     config_repository: BaserowConfigurationRepository
-    prompts: dict[str, str]
+    prompts: dict[str, PromptDefinition]
     normalizer: SubmissionNormalizer
     workflow: ApplicationWorkflow
     discovery: ApifyProvider
@@ -59,7 +60,10 @@ class Container:
                 bootstrap.secret("gemini"),
                 bootstrap.secret("gemini_backup", required=False),
                 config.gemini_model,
-            )
+            ),
+            prompts,
+            project_selection_count=config.project_selection_count,
+            work_experience_selection_count=config.work_experience_selection_count,
         )
         repository = BaserowJobRepository(
             baserow,
