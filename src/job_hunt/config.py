@@ -124,6 +124,7 @@ class SecretAliases(BaseModel):
     baserow: str
     telegram: str
     fillout: str
+    telegram_webhook: str | None = None
 
 
 class TenantBootstrap(BaseModel):
@@ -137,6 +138,10 @@ class TenantBootstrap(BaseModel):
 
     def secret(self, name: str, *, required: bool = True) -> str:
         alias = getattr(self.secrets, name)
+        if not alias:
+            if required:
+                raise ConfigurationError(f"Missing secret alias for {name} on tenant {self.key}")
+            return ""
         value = os.getenv(alias, "")
         if required and not value:
             raise ConfigurationError(f"Missing {alias} for tenant {self.key}")
@@ -163,10 +168,6 @@ class TenantRuntimeConfig(BaseModel):
     title_exclusions: list[str] = Field(default_factory=list)
     qualification_threshold: int = Field(default=33, ge=0, le=100)
     telegram_chat_id: str
-    # Retained so existing Baserow configuration rows remain valid. Artifacts now upload
-    # directly to Baserow and model selection is application-wide.
-    cloudinary_folder_prefix: str = "job-applications"
-    cloudinary_tags: list[str] = Field(default_factory=list)
     gemini_model: str | None = None
     project_selection_count: int | None = None
     work_experience_selection_count: int = Field(default=3, ge=1)
@@ -188,6 +189,7 @@ def load_registry(path: Path) -> dict[str, TenantBootstrap]:
             baserow=value["baserow_token_env"],
             telegram=value["telegram_token_env"],
             fillout=value["fillout_secret_env"],
+            telegram_webhook=value.get("telegram_webhook_secret_env"),
         )
         result[key] = TenantBootstrap(
             key=key,
