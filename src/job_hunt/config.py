@@ -29,7 +29,8 @@ class Settings(BaseSettings):
     apify_tokens: str = ""
     gemini_api_keys: str = ""
     gemini_content_models: str = (
-        "gemini-3.6-flash,gemini-3.5-flash,gemini-3-flash-preview,gemini-2.5-flash"
+        "gemini-3.6-flash,gemini-3.5-flash,gemini-3-flash-preview,gemini-2.5-flash,"
+        "gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-2.5-flash-lite"
     )
     gemini_repair_models: str = (
         "gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-2.5-flash-lite"
@@ -53,15 +54,25 @@ class Settings(BaseSettings):
         return keys
 
     def content_models(self) -> list[str]:
-        models = [model.removeprefix("models/") for model in self._split_csv(self.gemini_content_models)]
+        models = [
+            model.removeprefix("models/")
+            for model in self._split_csv(self.gemini_content_models)
+        ]
         if not models:
-            raise ConfigurationError("JOB_HUNT_GEMINI_CONTENT_MODELS must contain at least one model")
+            raise ConfigurationError(
+                "JOB_HUNT_GEMINI_CONTENT_MODELS must contain at least one model"
+            )
         return models
 
     def repair_models(self) -> list[str]:
-        models = [model.removeprefix("models/") for model in self._split_csv(self.gemini_repair_models)]
+        models = [
+            model.removeprefix("models/")
+            for model in self._split_csv(self.gemini_repair_models)
+        ]
         if not models:
-            raise ConfigurationError("JOB_HUNT_GEMINI_REPAIR_MODELS must contain at least one model")
+            raise ConfigurationError(
+                "JOB_HUNT_GEMINI_REPAIR_MODELS must contain at least one model"
+            )
         return models
 
 
@@ -164,7 +175,9 @@ def parse_configuration_rows(rows: list[Mapping[str, Any]]) -> TenantRuntimeConf
             continue
         key = str(row.get("configKey", "")).strip()
         if key:
-            values[key] = decode_config_value(str(row.get("valueType", "text")), str(row["value"]))
+            values[key] = decode_config_value(
+                str(row.get("valueType", "text")), str(row["value"])
+            )
     try:
         return TenantRuntimeConfig.model_validate(values)
     except ValidationError as exc:
