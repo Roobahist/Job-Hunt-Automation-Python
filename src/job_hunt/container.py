@@ -36,6 +36,7 @@ class TenantServices:
     baserow: BaserowClient
     config_repository: BaserowConfigurationRepository
     prompts: dict[str, PromptDefinition]
+    repository: BaserowJobRepository
     normalizer: SubmissionNormalizer
     workflow: ApplicationWorkflow
     discovery: ApifyProvider
@@ -140,6 +141,7 @@ class Container:
             baserow,
             config_repository,
             prompts,
+            repository,
             normalizer,
             workflow,
             discovery,
