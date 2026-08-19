@@ -8,14 +8,7 @@ from uuid import UUID
 
 from job_hunt.domain.models import Job, PromptDefinition
 from job_hunt.logging import logger
-from job_hunt.ports import (
-    ArtifactPublisher,
-    DocumentRenderer,
-    JobRepository,
-    Notifier,
-    Qualifier,
-    Tailor,
-)
+from job_hunt.ports import ArtifactPublisher, DocumentRenderer, JobRepository, Qualifier, Tailor
 from job_hunt.retry import retry_transient
 
 
@@ -24,7 +17,7 @@ class WorkflowResult:
     row_id: int
     passed: bool
     artifacts_published: bool
-    notification_id: str | None = None
+    notification_paths: tuple[str, ...] = ()
 
 
 class ApplicationWorkflow:
@@ -35,7 +28,6 @@ class ApplicationWorkflow:
         tailor: Tailor,
         renderer: DocumentRenderer,
         publisher: ArtifactPublisher,
-        notifier: Notifier,
         artifact_root: Path,
     ) -> None:
         self.repository = repository
@@ -43,7 +35,6 @@ class ApplicationWorkflow:
         self.tailor = tailor
         self.renderer = renderer
         self.publisher = publisher
-        self.notifier = notifier
         self.artifact_root = artifact_root
 
     def process(
@@ -60,6 +51,7 @@ class ApplicationWorkflow:
         cloudinary_tags: list[str],
         telegram_chat_id: str,
     ) -> WorkflowResult:
+        del telegram_chat_id
         log = logger().bind(run_id=str(run_id), job_identity=job.identity)
         existing = retry_transient(self.repository.find, job)
         row = (
@@ -69,6 +61,7 @@ class ApplicationWorkflow:
         )
         row_id = int(row["id"])
         log.info("job_persisted", stage="persist", row_id=row_id, reprocessed=bool(existing))
+
         qualification = retry_transient(self.qualifier.qualify, job, master_cv, prompts)
         passed = qualification.passes(threshold, force=force)
         retry_transient(self.repository.save_qualification, row_id, qualification, passed=passed)
@@ -81,7 +74,10 @@ class ApplicationWorkflow:
         )
         if not passed:
             return WorkflowResult(row_id, False, False)
-        tailored = retry_transient(self.tailor.tailor, job, master_cv, prompts)
+
+        # LLM operations checkpoint their successful structured results independently, so a
+        # transient failure later in tailoring does not consume quota by regenerating earlier stages.
+        tailored = self.tailor.tailor(job, master_cv, prompts)
         basename = f"{applicant_filename}-{job.company_name}-{job.internal_id}".replace("/", "-")
         artifacts = self.renderer.render(tailored, self.artifact_root / str(run_id), basename)
         uploaded = retry_transient(
@@ -91,11 +87,10 @@ class ApplicationWorkflow:
             cloudinary_tags,
         )
         retry_transient(self.repository.save_artifacts, row_id, uploaded)
-        notification_id = retry_transient(
-            self.notifier.send_documents,
-            telegram_chat_id,
-            artifacts.notification_paths(),
-            f"{job.title} at {job.company_name}",
+        log.info("job_documents_ready", stage="publish", row_id=row_id)
+        return WorkflowResult(
+            row_id,
+            True,
+            True,
+            tuple(str(path) for path in artifacts.notification_paths()),
         )
-        log.info("job_completed", stage="notify", row_id=row_id, notification_id=notification_id)
-        return WorkflowResult(row_id, True, True, notification_id)
