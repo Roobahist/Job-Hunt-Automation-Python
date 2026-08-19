@@ -1,27 +1,27 @@
 INSTALL_EXIT=0
 Using CPython 3.12.3 interpreter at: /usr/bin/python3.12
 Creating virtual environment at: .venv
-Resolved 112 packages in 0.67ms
+Resolved 112 packages in 0.65ms
    Building job-hunt-automation @ file:///home/runner/work/Job-Hunt-Automation-Python/Job-Hunt-Automation-Python
-Downloading mypy (14.1MiB)
 Downloading ruff (10.5MiB)
-Downloading zstandard (5.3MiB)
-Downloading pygments (1.2MiB)
-Downloading uvloop (4.2MiB)
 Downloading pydantic-core (2.0MiB)
 Downloading cryptography (4.5MiB)
+Downloading pygments (1.2MiB)
+Downloading mypy (14.1MiB)
+Downloading uvloop (4.2MiB)
+Downloading zstandard (5.3MiB)
 Downloading impit (4.0MiB)
  Downloaded pydantic-core
  Downloaded impit
+ Downloaded pygments
  Downloaded zstandard
  Downloaded ruff
  Downloaded uvloop
  Downloaded cryptography
- Downloaded pygments
       Built job-hunt-automation @ file:///home/runner/work/Job-Hunt-Automation-Python/Job-Hunt-Automation-Python
  Downloaded mypy
-Prepared 112 packages in 1.80s
-Installed 112 packages in 170ms
+Prepared 112 packages in 1.99s
+Installed 112 packages in 154ms
  + amqp==5.3.1
  + annotated-doc==0.0.5
  + annotated-types==0.8.0
@@ -235,4 +235,4 @@ src/job_hunt/tenants/registry.py                  38      4      6      2    86%
 ------------------------------------------------------------------------------------------
 TOTAL                                           2255    335    638    186    80%
 Required test coverage of 70% reached. Total coverage: 80.12%
-================== 73 passed, 2 skipped, 2 warnings in 5.64s ===================
+================== 73 passed, 2 skipped, 2 warnings in 5.94s ===================
