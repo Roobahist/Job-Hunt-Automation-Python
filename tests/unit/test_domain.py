@@ -41,9 +41,9 @@ def test_url_fallback_and_collision_rehash() -> None:
     assert stable_job_id("x") == stable_job_id("x")
 
 
-def test_qualification_uses_unified_safe_gate_and_force() -> None:
+def test_qualification_uses_score_gate_and_force() -> None:
     result = Qualification(score=90, should_apply=False, reasoning="Mismatch")
-    assert not result.passes(33)
+    assert result.passes(33)
     assert result.passes(33, force=True)
-    assert Qualification(score=33, should_apply=True, reasoning="Good").passes(33)
+    assert Qualification(score=33, should_apply=False, reasoning="Threshold met").passes(33)
     assert not Qualification(score=32, should_apply=True, reasoning="Low").passes(33)
