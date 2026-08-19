@@ -108,13 +108,18 @@ def process_submission(
     run_id: str,
     force: bool = False,
     snapshot_id: str | None = None,
+    checkpoint_namespace: str | None = None,
 ) -> dict[str, Any]:
     store = _store()
     identifier = UUID(run_id)
     store.update(identifier, state=RunState.RUNNING, stage="normalization", task_id=self.request.id)
     try:
         snapshot = _state().get_snapshot(snapshot_id) if snapshot_id else None
-        services = Container(settings).tenant(tenant, snapshot=snapshot)
+        services = Container(settings).tenant(
+            tenant,
+            snapshot=snapshot,
+            checkpoint_namespace=checkpoint_namespace or run_id,
+        )
         parsed: Any = TypeAdapter(JobSubmission).validate_python(submission)
         job = services.normalizer.normalize(
             parsed,
@@ -205,6 +210,7 @@ def discover_tenant(tenant: str, run_id: str) -> dict[str, int]:
         )
         for job in jobs:
             child = RunStatus(tenant=tenant, kind="scheduled-job")
+            checkpoint_namespace = str(child.run_id)
             store.save(child)
             payload = {
                 "entry_type": "external",
@@ -226,6 +232,7 @@ def discover_tenant(tenant: str, run_id: str) -> dict[str, int]:
                     "kind": "scheduled-job",
                     "force": False,
                     "snapshot_id": snapshot_id,
+                    "checkpoint_namespace": checkpoint_namespace,
                 },
             )
             process_submission.delay(
@@ -234,6 +241,7 @@ def discover_tenant(tenant: str, run_id: str) -> dict[str, int]:
                 str(child.run_id),
                 False,
                 snapshot_id,
+                checkpoint_namespace,
             )
         store.update(
             identifier,
