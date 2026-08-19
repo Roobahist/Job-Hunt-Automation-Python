@@ -8,7 +8,7 @@ import time
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta
 from threading import Lock
-from typing import Any
+from typing import Any, ClassVar
 from zoneinfo import ZoneInfo
 
 from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
@@ -50,9 +50,9 @@ def _langfuse_handler() -> object | None:
 class PooledGeminiStructuredClient(GeminiStructuredClient):
     """Use shared independent Gemini accounts and ordered model tiers for structured generation."""
 
-    _lock = Lock()
-    _unavailable_until: dict[str, float] = {}
-    _invalid_key_until: dict[str, float] = {}
+    _lock: ClassVar[Lock] = Lock()
+    _unavailable_until: ClassVar[dict[str, float]] = {}
+    _invalid_key_until: ClassVar[dict[str, float]] = {}
 
     def __init__(
         self,
