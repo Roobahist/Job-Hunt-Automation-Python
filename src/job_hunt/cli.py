@@ -13,6 +13,7 @@ from job_hunt.application.runs import RunCoordinator
 from job_hunt.config import Settings, load_registry, read_seed
 from job_hunt.container import Container
 from job_hunt.domain.models import JobSubmission, TailoredContent
+from job_hunt.integrations.gemini_catalog import validate_gemini_models
 from job_hunt.queueing import CeleryQueue
 from job_hunt.run_store import RunStore
 
@@ -112,6 +113,15 @@ def validate_configuration(tenant: str | None = None, live: bool = False) -> Non
             typer.echo(f"OK {key}")
         except Exception as exc:
             failures.append(f"{key}: {exc}")
+
+    if live:
+        try:
+            models = list(dict.fromkeys(settings.content_models() + settings.repair_models()))
+            validate_gemini_models(settings.shared_gemini_keys()[0], models)
+            typer.echo("OK shared Gemini models")
+        except Exception as exc:
+            failures.append(f"shared Gemini models: {exc}")
+
     if failures:
         typer.echo("\n".join(failures), err=True)
         raise typer.Exit(1)
