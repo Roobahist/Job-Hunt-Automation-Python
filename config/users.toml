@@ -6,6 +6,7 @@ baserow_base_url = "https://api.baserow.io"
 tenant_root = "tenants/mahsa"
 baserow_token_env = "MAHSA_BASEROW_TOKEN"
 telegram_token_env = "MAHSA_TELEGRAM_BOT_TOKEN"
+telegram_webhook_secret_env = "MAHSA_TELEGRAM_WEBHOOK_SECRET"
 fillout_secret_env = "MAHSA_FILLOUT_WEBHOOK_SECRET"
 
 [users.mojtaba]
@@ -16,4 +17,5 @@ baserow_base_url = "https://api.baserow.io"
 tenant_root = "tenants/mojtaba"
 baserow_token_env = "MOJTABA_BASEROW_TOKEN"
 telegram_token_env = "MOJTABA_TELEGRAM_BOT_TOKEN"
+telegram_webhook_secret_env = "MOJTABA_TELEGRAM_WEBHOOK_SECRET"
 fillout_secret_env = "MOJTABA_FILLOUT_WEBHOOK_SECRET"
