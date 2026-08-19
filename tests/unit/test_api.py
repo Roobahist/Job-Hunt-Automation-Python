@@ -11,6 +11,32 @@ from job_hunt.config import Settings
 from job_hunt.run_store import RunStore
 
 
+class Pipeline:
+    def __init__(self, redis: "FakeRedis") -> None:
+        self.redis = redis
+        self.pending: tuple[str, str] | None = None
+
+    def watch(self, _: str) -> None:
+        return None
+
+    def get(self, key: str) -> str | None:
+        return self.redis.get(key)
+
+    def multi(self) -> None:
+        return None
+
+    def setex(self, key: str, _: int, value: str) -> None:
+        self.pending = (key, value)
+
+    def execute(self) -> list[bool]:
+        if self.pending:
+            self.redis.data[self.pending[0]] = self.pending[1]
+        return [True]
+
+    def reset(self) -> None:
+        self.pending = None
+
+
 class FakeRedis:
     def __init__(self) -> None:
         self.data: dict[str, str] = {}
@@ -23,6 +49,9 @@ class FakeRedis:
 
     def ping(self) -> bool:
         return True
+
+    def pipeline(self) -> Pipeline:
+        return Pipeline(self)
 
 
 class FakeQueue:
@@ -39,12 +68,34 @@ class FakeQueue:
 
 
 class FakeBootstrap:
-    def secret(self, name: str) -> str:
-        assert name == "fillout"
-        return "webhook-secret"
+    def secret(self, name: str, *, required: bool = True) -> str:
+        values = {"fillout": "webhook-secret", "telegram_webhook": "telegram-secret"}
+        value = values.get(name, "")
+        if required and not value:
+            raise KeyError(name)
+        return value
+
+
+class FakeNotifier:
+    def __init__(self) -> None:
+        self.answers: list[tuple[str, str]] = []
+
+    def answer_callback(self, callback_id: str, text: str) -> None:
+        self.answers.append((callback_id, text))
+
+
+class FakeRepository:
+    def __init__(self) -> None:
+        self.statuses: list[tuple[int, str]] = []
+
+    def set_status(self, row_id: int, status: str) -> None:
+        self.statuses.append((row_id, status))
 
 
 class FakeContainer:
+    notifier = FakeNotifier()
+    repository = FakeRepository()
+
     def __init__(self) -> None:
         self.registry = SimpleNamespace(get=lambda _: object())
 
@@ -52,6 +103,8 @@ class FakeContainer:
         return SimpleNamespace(
             context=SimpleNamespace(bootstrap=FakeBootstrap()),
             config=SimpleNamespace(fillout_form_id="form-1", fillout_field_ids={}),
+            notifier=self.notifier,
+            workflow=SimpleNamespace(repository=self.repository),
         )
 
 
@@ -115,6 +168,18 @@ def test_discovery_and_fillout_auth_form_validation() -> None:
     )
     assert accepted.status_code == 202
     assert queue.calls[-1][-1] is False
+
+
+def test_telegram_callback_updates_status() -> None:
+    FakeContainer.repository.statuses.clear()
+    api, _ = client()
+    response = api.post(
+        "/webhooks/telegram/mahsa",
+        headers={"X-Telegram-Bot-Api-Secret-Token": "telegram-secret"},
+        json={"callback_query": {"id": "cb", "data": "status:applied:42"}},
+    )
+    assert response.status_code == 200
+    assert FakeContainer.repository.statuses == [(42, "applied")]
 
 
 def test_validation_error_is_structured() -> None:
