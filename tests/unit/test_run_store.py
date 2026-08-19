@@ -7,7 +7,7 @@ from job_hunt.run_store import RunStore
 
 
 class Pipeline:
-    def __init__(self, redis: "FakeRedis") -> None:
+    def __init__(self, redis: FakeRedis) -> None:
         self.redis = redis
         self.pending: tuple[str, str] | None = None
 
