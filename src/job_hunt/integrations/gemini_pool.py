@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import re
 import time
 from collections.abc import Sequence
+from datetime import UTC, datetime, timedelta
 from threading import Lock
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -18,10 +22,26 @@ from job_hunt.integrations.gemini import (
     _message_text,
     _validate_json_schema,
 )
+from job_hunt.logging import logger
+from job_hunt.state import RedisState
+
+_RETRY_SECONDS = re.compile(r"(?:retry|try again)[^0-9]{0,24}(\d+(?:\.\d+)?)\s*s", re.IGNORECASE)
+
+
+def _langfuse_handler() -> object | None:
+    if not os.getenv("LANGFUSE_PUBLIC_KEY") or not os.getenv("LANGFUSE_SECRET_KEY"):
+        return None
+    try:
+        from langfuse.langchain import CallbackHandler
+
+        return CallbackHandler()
+    except ImportError:
+        logger().warning("langfuse_unavailable", reason="langfuse package is not installed")
+        return None
 
 
 class PooledGeminiStructuredClient(GeminiStructuredClient):
-    """Use shared Gemini accounts and ordered model tiers for structured generation."""
+    """Use shared independent Gemini accounts and ordered model tiers for structured generation."""
 
     _lock = Lock()
     _unavailable_until: dict[str, float] = {}
@@ -34,11 +54,16 @@ class PooledGeminiStructuredClient(GeminiStructuredClient):
         repair_models: Sequence[str],
         *,
         quota_cooldown_seconds: int = 3600,
+        state: RedisState | None = None,
+        checkpoint_ttl_seconds: int = 604800,
     ) -> None:
         self.keys = [key for key in keys if key]
         self.content_models = [model.removeprefix("models/") for model in content_models if model]
         self.repair_models = [model.removeprefix("models/") for model in repair_models if model]
         self.quota_cooldown_seconds = quota_cooldown_seconds
+        self.state = state
+        self.checkpoint_ttl_seconds = checkpoint_ttl_seconds
+        self.langfuse_handler = _langfuse_handler()
         if not self.keys:
             raise ValueError("At least one Gemini API key is required")
         if not self.content_models:
@@ -96,9 +121,53 @@ class PooledGeminiStructuredClient(GeminiStructuredClient):
             )
         )
 
+    def _quota_cooldown(self, exc: Exception) -> int:
+        retry_after = getattr(exc, "retry_after", None)
+        if isinstance(retry_after, (int, float)) and retry_after > 0:
+            return max(1, int(retry_after))
+        response = getattr(exc, "response", None)
+        headers = getattr(response, "headers", None)
+        if headers:
+            raw = headers.get("retry-after")
+            try:
+                if raw is not None:
+                    return max(1, int(float(raw)))
+            except (TypeError, ValueError):
+                pass
+        text = str(exc)
+        match = _RETRY_SECONDS.search(text)
+        if match:
+            return max(1, int(float(match.group(1))))
+        lowered = text.lower()
+        if any(marker in lowered for marker in ("requests per day", "daily quota", " rpd")):
+            pacific = ZoneInfo("America/Los_Angeles")
+            now = datetime.now(pacific)
+            reset = (now + timedelta(days=1)).replace(hour=0, minute=0, second=5, microsecond=0)
+            return max(60, int((reset - now).total_seconds()))
+        return self.quota_cooldown_seconds
+
     def _available(self, models: Sequence[str]) -> list[tuple[str, str]]:
-        now = time.monotonic()
         ordered = [(model, key) for model in models for key in self.keys]
+        if self.state is not None:
+            available = [
+                candidate
+                for candidate in ordered
+                if self.state.available("gemini-key", self._key_id(candidate[1]))
+                and self.state.available("gemini-candidate", self._candidate_id(*candidate))
+            ]
+            if available:
+                return available
+            return sorted(
+                ordered,
+                key=lambda candidate: max(
+                    self.state.remaining_cooldown("gemini-key", self._key_id(candidate[1])),
+                    self.state.remaining_cooldown(
+                        "gemini-candidate", self._candidate_id(*candidate)
+                    ),
+                ),
+            )[:1]
+
+        now = time.monotonic()
         with self._lock:
             available = [
                 candidate
@@ -108,7 +177,6 @@ class PooledGeminiStructuredClient(GeminiStructuredClient):
             ]
             if available:
                 return available
-            # If all local circuits are open, probe the candidate that becomes available first.
             return [
                 min(
                     ordered,
@@ -119,17 +187,21 @@ class PooledGeminiStructuredClient(GeminiStructuredClient):
                 )
             ]
 
-    def _cooldown(self, model: str, key: str) -> None:
+    def _cooldown(self, model: str, key: str, seconds: int) -> None:
+        candidate_id = self._candidate_id(model, key)
+        if self.state is not None:
+            self.state.cooldown("gemini-candidate", candidate_id, seconds=seconds)
+            return
         with self._lock:
-            self._unavailable_until[self._candidate_id(model, key)] = (
-                time.monotonic() + self.quota_cooldown_seconds
-            )
+            self._unavailable_until[candidate_id] = time.monotonic() + seconds
 
     def _disable_key(self, key: str) -> None:
+        key_id = self._key_id(key)
+        if self.state is not None:
+            self.state.cooldown("gemini-key", key_id, seconds=self.quota_cooldown_seconds)
+            return
         with self._lock:
-            self._invalid_key_until[self._key_id(key)] = (
-                time.monotonic() + self.quota_cooldown_seconds
-            )
+            self._invalid_key_until[key_id] = time.monotonic() + self.quota_cooldown_seconds
 
     @staticmethod
     def _model_for_candidate(
@@ -142,7 +214,6 @@ class PooledGeminiStructuredClient(GeminiStructuredClient):
             "api_key": key,
             "max_retries": 0,
         }
-        # Google's newest model families no longer use these sampling settings.
         if model_name not in {"gemini-3.6-flash", "gemini-3.5-flash-lite"}:
             kwargs["temperature"] = temperature
         return ChatGoogleGenerativeAI(**kwargs)
@@ -154,28 +225,81 @@ class PooledGeminiStructuredClient(GeminiStructuredClient):
         prompt: str,
         schema: dict[str, Any],
         temperature: float,
-    ) -> tuple[dict[str, Any] | None, str, str | None]:
+        *,
+        operation: str,
+    ) -> tuple[dict[str, Any] | None, str, str | None, dict[str, Any]]:
         runnable = self._model_for_candidate(model_name, key, temperature).with_structured_output(
             schema=schema,
             method="json_schema",
             include_raw=True,
         )
-        result = runnable.invoke(prompt)
+        config: dict[str, Any] = {
+            "metadata": {
+                "operation": operation,
+                "model": model_name,
+                "account": self._key_id(key),
+                "langfuse_tags": ["job-hunt", operation],
+            }
+        }
+        if self.langfuse_handler is not None:
+            config["callbacks"] = [self.langfuse_handler]
+        started = time.perf_counter()
+        result = runnable.invoke(prompt, config=config)
+        latency_ms = int((time.perf_counter() - started) * 1000)
         if not isinstance(result, dict):
-            return None, "", "LangChain returned an unexpected structured-output wrapper"
+            return None, "", "LangChain returned an unexpected structured-output wrapper", {
+                "model": model_name,
+                "account": self._key_id(key),
+                "latency_ms": latency_ms,
+            }
         parsed = result.get("parsed")
-        raw_text = _message_text(result.get("raw"))
+        raw = result.get("raw")
+        raw_text = _message_text(raw)
         parsing_error = result.get("parsing_error")
+        usage = getattr(raw, "usage_metadata", None)
+        metadata = {
+            "model": model_name,
+            "account": self._key_id(key),
+            "latency_ms": latency_ms,
+            "usage": usage if isinstance(usage, dict) else {},
+        }
         if isinstance(parsed, dict):
-            return parsed, raw_text or _compact(parsed), str(parsing_error) if parsing_error else None
-        return None, raw_text, str(parsing_error) if parsing_error else "No parsed JSON object"
+            return (
+                parsed,
+                raw_text or _compact(parsed),
+                str(parsing_error) if parsing_error else None,
+                metadata,
+            )
+        return (
+            None,
+            raw_text,
+            str(parsing_error) if parsing_error else "No parsed JSON object",
+            metadata,
+        )
+
+    @staticmethod
+    def _checkpoint_digest(prompt: str, definition: PromptDefinition) -> str:
+        payload = json.dumps(
+            {
+                "key": definition.key,
+                "version": definition.version,
+                "prompt": prompt,
+                "schema": definition.output_structure,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return hashlib.sha256(payload.encode()).hexdigest()
 
     def _pooled_repair(
         self,
         raw_output: str,
         schema: dict[str, Any],
         validation_error: str,
-    ) -> dict[str, Any]:
+        *,
+        operation: str,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         repair_prompt = (
             "Repair the following model output so it conforms exactly to the supplied JSON Schema. "
             "Preserve the original meaning and facts. Do not add facts that were not present. "
@@ -187,21 +311,27 @@ class PooledGeminiStructuredClient(GeminiStructuredClient):
         failures: list[str] = []
         for model_name, key in self._available(self.repair_models):
             try:
-                parsed, _, parsing_error = self._pooled_structured_call(
-                    model_name, key, repair_prompt, schema, 0.0
+                parsed, _, parsing_error, metadata = self._pooled_structured_call(
+                    model_name,
+                    key,
+                    repair_prompt,
+                    schema,
+                    0.0,
+                    operation=f"{operation}:repair",
                 )
                 if parsed is None:
                     failures.append(
                         f"{model_name}/{self._key_id(key)}: {parsing_error or 'no parsed output'}"
                     )
                     continue
-                return _validate_json_schema(parsed, schema)
+                metadata["repaired"] = True
+                return _validate_json_schema(parsed, schema), metadata
             except ConfigurationError:
                 raise
             except Exception as exc:
                 failures.append(f"{model_name}/{self._key_id(key)}: {exc}")
                 if self._is_quota_error(exc):
-                    self._cooldown(model_name, key)
+                    self._cooldown(model_name, key, self._quota_cooldown(exc))
                 elif self._is_auth_error(exc):
                     self._disable_key(key)
                 continue
@@ -213,32 +343,66 @@ class PooledGeminiStructuredClient(GeminiStructuredClient):
         )
 
     def generate(self, prompt: str, definition: PromptDefinition) -> dict[str, Any]:
+        checkpoint = self._checkpoint_digest(prompt, definition)
+        if self.state is not None:
+            cached = self.state.get_checkpoint(checkpoint)
+            if cached is not None:
+                logger().info(
+                    "gemini_checkpoint_hit",
+                    prompt_key=definition.key,
+                    prompt_version=definition.version,
+                )
+                return _validate_json_schema(cached, definition.output_structure)
+
         failures: list[str] = []
         quota_failures = 0
         attempted = 0
         for model_name, key in self._available(self.content_models):
             attempted += 1
             try:
-                parsed, raw_output, parsing_error = self._pooled_structured_call(
+                parsed, raw_output, parsing_error, metadata = self._pooled_structured_call(
                     model_name,
                     key,
                     prompt,
                     definition.output_structure,
                     definition.temperature,
+                    operation=definition.key,
                 )
+                final: dict[str, Any] | None = None
                 if parsed is not None:
                     try:
-                        return _validate_json_schema(parsed, definition.output_structure)
+                        final = _validate_json_schema(parsed, definition.output_structure)
                     except JsonSchemaValidationError as exc:
                         parsing_error = str(exc)
                         raw_output = raw_output or _compact(parsed)
 
-                if raw_output:
-                    return self._pooled_repair(
+                if final is None and raw_output:
+                    final, metadata = self._pooled_repair(
                         raw_output,
                         definition.output_structure,
                         parsing_error or "structured output did not validate",
+                        operation=definition.key,
                     )
+
+                if final is not None:
+                    if self.state is not None:
+                        self.state.set_checkpoint(
+                            checkpoint,
+                            final,
+                            ttl_seconds=self.checkpoint_ttl_seconds,
+                        )
+                    logger().info(
+                        "gemini_generation",
+                        prompt_key=definition.key,
+                        prompt_version=definition.version,
+                        model=metadata.get("model"),
+                        account=metadata.get("account"),
+                        repaired=bool(metadata.get("repaired", False)),
+                        latency_ms=metadata.get("latency_ms"),
+                        usage=metadata.get("usage", {}),
+                    )
+                    return final
+
                 failures.append(
                     f"{model_name}/{self._key_id(key)}: "
                     f"{parsing_error or 'Gemini returned an empty response'}"
@@ -251,7 +415,7 @@ class PooledGeminiStructuredClient(GeminiStructuredClient):
                 failures.append(f"{model_name}/{self._key_id(key)}: {exc}")
                 if self._is_quota_error(exc):
                     quota_failures += 1
-                    self._cooldown(model_name, key)
+                    self._cooldown(model_name, key, self._quota_cooldown(exc))
                     continue
                 if self._is_auth_error(exc):
                     self._disable_key(key)
