@@ -10,8 +10,11 @@ from job_hunt.domain.models import Job, Qualification
 from job_hunt.errors import ConfigurationError
 from job_hunt.integrations.baserow import BaserowJobRepository
 from job_hunt.integrations.configuration import (
-    REQUIRED_PROMPT_KEYS,
+    COMMON_PROMPT_KEYS,
+    MAHSA_PROMPT_KEYS,
+    MOJTABA_PROMPT_KEYS,
     BaserowConfigurationRepository,
+    validate_prompt_contract,
 )
 
 
@@ -112,13 +115,15 @@ def test_repository_create_find_reset_and_updates() -> None:
 def test_configuration_reads_live_prompt_contract_and_validates_fields() -> None:
     client = Client()
     repository = BaserowConfigurationRepository(client, 1)  # type: ignore[arg-type]
-    client.rows = [prompt_row(key) for key in sorted(REQUIRED_PROMPT_KEYS)]
+    client.rows = [prompt_row(key) for key in sorted(MAHSA_PROMPT_KEYS)]
     client.rows.append(prompt_row("cv_summary_rewrite", version=99, status="Draft"))
     prompts = repository.prompts(2)
     summary = prompts["cv_summary_rewrite"]
     assert summary.version == 1
     assert summary.temperature == 0.2
     assert summary.output_structure["additionalProperties"] is False
+    validate_prompt_contract(prompts, MAHSA_PROMPT_KEYS, "mahsa")
+    validate_prompt_contract(prompts, MOJTABA_PROMPT_KEYS, "mojtaba")
     repository.validate_job_table(1)
 
     client.rows.append(prompt_row("cv_summary_rewrite", version=2))
@@ -130,28 +135,23 @@ def test_configuration_reads_live_prompt_contract_and_validates_fields() -> None
         repository.validate_job_table(1)
 
 
-def test_configuration_rejects_missing_or_invalid_prompt_schema() -> None:
+def test_configuration_rejects_missing_common_or_invalid_schema() -> None:
     client = Client()
     repository = BaserowConfigurationRepository(client, 1)  # type: ignore[arg-type]
-    client.rows = [prompt_row(key) for key in sorted(REQUIRED_PROMPT_KEYS)]
+    client.rows = [prompt_row(key) for key in sorted(MAHSA_PROMPT_KEYS)]
     client.rows[0]["Output Structure"] = "not json"
     with pytest.raises(ConfigurationError, match="invalid Output Structure"):
         repository.prompts(2)
 
-    client.rows = [prompt_row(key) for key in sorted(REQUIRED_PROMPT_KEYS - {"qualification_scoring"})]
+    client.rows = [prompt_row(key) for key in sorted(COMMON_PROMPT_KEYS - {"qualification_scoring"})]
     with pytest.raises(ConfigurationError, match="Missing active prompts"):
         repository.prompts(2)
 
 
-def test_configuration_preserves_legacy_prompt_tables() -> None:
+def test_profile_contracts_reject_missing_profile_specific_prompts() -> None:
     client = Client()
     repository = BaserowConfigurationRepository(client, 1)  # type: ignore[arg-type]
-    client.rows = [
-        {"Key": "qualification", "Prompt": "score", "Enabled": True},
-        {"Key": "cv_about_me", "Prompt": "rewrite about me", "Enabled": True},
-        {"Key": "disabled", "Prompt": "ignore", "Enabled": False},
-    ]
+    client.rows = [prompt_row(key) for key in sorted(MOJTABA_PROMPT_KEYS)]
     prompts = repository.prompts(2)
-    assert set(prompts) == {"qualification", "cv_about_me"}
-    assert prompts["qualification"].version == 1
-    assert prompts["qualification"].temperature == 0.2
+    with pytest.raises(ConfigurationError, match="mahsa"):
+        validate_prompt_contract(prompts, MAHSA_PROMPT_KEYS, "mahsa")
