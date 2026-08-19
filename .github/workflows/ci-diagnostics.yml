@@ -1,0 +1,57 @@
+name: CI Diagnostics
+
+on:
+  push:
+    branches: [ci-stabilization]
+
+permissions:
+  contents: write
+
+jobs:
+  diagnose:
+    if: ${{ !contains(github.event.head_commit.message || '', '[ci-diagnostics]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - name: Run complete quality chain
+        shell: bash
+        run: |
+          set +e
+          uv sync --extra dev > /tmp/install.log 2>&1
+          install_code=$?
+          uv run ruff check . > /tmp/ruff.log 2>&1
+          ruff_code=$?
+          uv run ruff format --check . > /tmp/format.log 2>&1
+          format_code=$?
+          uv run mypy > /tmp/mypy.log 2>&1
+          mypy_code=$?
+          uv run pytest > /tmp/pytest.log 2>&1
+          pytest_code=$?
+          {
+            echo "INSTALL_EXIT=$install_code"
+            cat /tmp/install.log
+            echo
+            echo "RUFF_EXIT=$ruff_code"
+            cat /tmp/ruff.log
+            echo
+            echo "FORMAT_EXIT=$format_code"
+            cat /tmp/format.log
+            echo
+            echo "MYPY_EXIT=$mypy_code"
+            cat /tmp/mypy.log
+            echo
+            echo "PYTEST_EXIT=$pytest_code"
+            cat /tmp/pytest.log
+          } > ci-diagnostics.txt
+      - name: Commit diagnostics
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ci-diagnostics.txt
+          git commit -m "Record full CI diagnostics [ci-diagnostics]"
+          git push
