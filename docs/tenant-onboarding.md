@@ -3,10 +3,14 @@
 1. Choose an existing renderer profile (`mahsa` dynamic sections or `mojtaba` fixed sections). Add a new renderer only if the JSON/injection contract is genuinely different.
 2. Add `tenants/<key>/master_cv.json`, `templates/cv_template.tex`, and `templates/cover_letter_template.tex`. Markers must match the chosen renderer exactly.
 3. Add a `[users.<key>]` entry to `config/users.toml`. Store only environment-variable aliases, never values.
-4. Copy the closest seed CSV, change tenant/table/form/option/chat settings, import it into a Baserow Configuration table, and set `config_table_id`.
-5. Import the matching `config/seeds/<tenant>-prompts.csv` into the configured Prompts table. Keep one enabled `qualification` row; all other enabled prompt rows are composed into the tenant-specific tailoring instruction set.
-6. Set provider credential variables, then run local and live configuration validation.
-7. Configure Fillout to call `/webhooks/fillout/<key>` with `Authorization: Bearer <tenant secret>` and the expected form ID.
-8. Exercise one forced operator submission, one normal gated submission, and one discovery in a non-production destination before enabling the tenant.
+4. Copy the closest configuration seed CSV, change tenant/table/form/option/chat settings, import it into a Baserow Configuration table, and set `config_table_id`.
+5. Import the matching prompt seed into the configured Prompts table. Prompt rows use the columns `Prompt Key`, `Version`, `Prompt Template`, `Output Structure`, `Temperature`, `Status`, and `Enabled`.
+6. Keep at most one row per Prompt Key with `Status = Active` and `Enabled = true`. Draft and disabled versions are ignored. The active row's JSON Schema is used directly for Gemini structured output and for post-response validation.
+7. For the Mojtaba workflow, keep active definitions for `cv_project_selection`, `cv_project_rewrite`, `cv_work_experience_selection`, `cv_work_experience_rewrite`, `cv_skills_tailoring`, `cv_summary_rewrite`, `cover_letter_generation`, `job_page_content_extraction`, and `qualification_scoring`.
+8. Set provider credential variables, then run local and live configuration validation.
+9. Configure Fillout to call `/webhooks/fillout/<key>` with `Authorization: Bearer <tenant secret>` and the expected form ID.
+10. Exercise one forced operator submission, one normal gated submission, and one discovery in a non-production destination before enabling the tenant.
+
+If an LLM result violates the active prompt's `Output Structure`, the workflow sends the malformed result, validation error, and required JSON Schema to an auto-fix Gemini call. The repaired result must pass the same JSON Schema before the workflow continues.
 
 Required Baserow Jobs fields are validated at startup: Job ID, Company Name, Title, Job Description, Link, Status, Score, Apply, CV, and Cover Letter. Additional metadata fields are supported by the repository mapping.
