@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from typing import cast
 from uuid import UUID
 
-from redis import Redis
+from redis import Redis, WatchError
 
 from job_hunt.domain.models import RunState, RunStatus
 
@@ -40,18 +40,32 @@ class RunStore:
         stage: str | None = None,
         **fields: object,
     ) -> RunStatus:
-        status = self.get(run_id)
-        if status is None:
-            raise KeyError(str(run_id))
-        values = status.model_dump()
-        if state is not None:
-            values["state"] = state
-        if stage is not None:
-            values["stage"] = stage
-        values.update(fields)
-        updated = RunStatus.model_validate(values)
-        self.save(updated)
-        return updated
+        key = self._key(run_id)
+        for _ in range(5):
+            pipeline = self.redis.pipeline()
+            try:
+                pipeline.watch(key)
+                raw = pipeline.get(key)
+                if raw is None:
+                    raise KeyError(str(run_id))
+                status = RunStatus.model_validate_json(raw)
+                values = status.model_dump()
+                if state is not None:
+                    values["state"] = state
+                if stage is not None:
+                    values["stage"] = stage
+                values.update(fields)
+                updated = RunStatus.model_validate(values)
+                updated.updated_at = datetime.now(UTC)
+                pipeline.multi()
+                pipeline.setex(key, self.ttl_seconds, updated.model_dump_json())
+                pipeline.execute()
+                return updated
+            except WatchError:
+                continue
+            finally:
+                pipeline.reset()
+        raise RuntimeError(f"Run {run_id} changed too frequently to update safely")
 
     @staticmethod
     def _key(run_id: UUID) -> str:
