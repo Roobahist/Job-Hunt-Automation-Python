@@ -219,20 +219,21 @@ class PooledGeminiStructuredClient(GeminiStructuredClient):
 
     def _available(self, models: Sequence[str]) -> list[tuple[str, str]]:
         ordered = [(model, key) for model in models for key in self.keys]
-        if self.state is not None:
+        state = self.state
+        if state is not None:
             available = [
                 candidate
                 for candidate in ordered
-                if self.state.available("gemini-key", self._key_id(candidate[1]))
-                and self.state.available("gemini-candidate", self._candidate_id(*candidate))
+                if state.available("gemini-key", self._key_id(candidate[1]))
+                and state.available("gemini-candidate", self._candidate_id(*candidate))
             ]
             if available:
                 return available
             return sorted(
                 ordered,
                 key=lambda candidate: max(
-                    self.state.remaining_cooldown("gemini-key", self._key_id(candidate[1])),
-                    self.state.remaining_cooldown("gemini-candidate", self._candidate_id(*candidate)),
+                    state.remaining_cooldown("gemini-key", self._key_id(candidate[1])),
+                    state.remaining_cooldown("gemini-candidate", self._candidate_id(*candidate)),
                 ),
             )[:1]
 

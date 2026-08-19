@@ -1,27 +1,27 @@
 INSTALL_EXIT=0
 Using CPython 3.12.3 interpreter at: /usr/bin/python3.12
 Creating virtual environment at: .venv
-Resolved 112 packages in 0.71ms
+Resolved 112 packages in 0.67ms
    Building job-hunt-automation @ file:///home/runner/work/Job-Hunt-Automation-Python/Job-Hunt-Automation-Python
-Downloading pygments (1.2MiB)
-Downloading pydantic-core (2.0MiB)
 Downloading mypy (14.1MiB)
-Downloading uvloop (4.2MiB)
 Downloading ruff (10.5MiB)
 Downloading zstandard (5.3MiB)
+Downloading pygments (1.2MiB)
+Downloading uvloop (4.2MiB)
+Downloading pydantic-core (2.0MiB)
 Downloading cryptography (4.5MiB)
 Downloading impit (4.0MiB)
  Downloaded pydantic-core
- Downloaded pygments
  Downloaded impit
  Downloaded zstandard
- Downloaded uvloop
  Downloaded ruff
+ Downloaded uvloop
  Downloaded cryptography
+ Downloaded pygments
       Built job-hunt-automation @ file:///home/runner/work/Job-Hunt-Automation-Python/Job-Hunt-Automation-Python
  Downloaded mypy
-Prepared 112 packages in 1.70s
-Installed 112 packages in 133ms
+Prepared 112 packages in 1.80s
+Installed 112 packages in 170ms
  + amqp==5.3.1
  + annotated-doc==0.0.5
  + annotated-types==0.8.0
@@ -141,10 +141,8 @@ All checks passed!
 FORMAT_EXIT=0
 70 files already formatted
 
-MYPY_EXIT=1
-src/job_hunt/integrations/gemini_pool.py:234: error: Item "None" of "RedisState | None" has no attribute "remaining_cooldown"  [union-attr]
-src/job_hunt/integrations/gemini_pool.py:235: error: Item "None" of "RedisState | None" has no attribute "remaining_cooldown"  [union-attr]
-Found 2 errors in 1 file (checked 41 source files)
+MYPY_EXIT=0
+Success: no issues found in 41 source files
 
 PYTEST_EXIT=0
 ============================= test session starts ==============================
@@ -218,7 +216,7 @@ src/job_hunt/integrations/gemini.py              287     71    122     39    69%
 src/job_hunt/integrations/gemini_catalog.py       11      0      2      0   100%
 src/job_hunt/integrations/gemini_mahsa.py        159     27     84     29    77%   20, 23, 34, 39, 42, 60, 62, 64, 67, 78, 80->75, 83, 91, 112, 117, 131, 135, 149, 153, 157, 162, 165->160, 179, 191, 204, 225, 236, 245, 249
 src/job_hunt/integrations/gemini_parallel.py      69      4     18      4    91%   27, 73, 86, 90
-src/job_hunt/integrations/gemini_pool.py         272     88     88     30    62%   41-47, 77, 79, 81, 96-99, 101, 121, 139-142, 146, 149, 156->168, 170-181, 185-196, 201, 205-210, 214, 217, 223-231, 249, 262-263, 270-271, 281-288, 300-348, 390, 401-402, 406, 411-412, 414, 424->432, 450->457, 467, 484, 488, 490, 501-503
+src/job_hunt/integrations/gemini_pool.py         273     88     88     30    62%   41-47, 77, 79, 81, 96-99, 101, 121, 139-142, 146, 149, 156->168, 170-181, 185-196, 201, 205-210, 214, 217, 224-232, 250, 263-264, 271-272, 282-289, 301-349, 391, 402-403, 407, 412-413, 415, 425->433, 451->458, 468, 485, 489, 491, 502-504
 src/job_hunt/integrations/http.py                 26      3     10      0    92%   17-19
 src/job_hunt/integrations/telegram.py             40      5      6      2    85%   22-23, 60, 97, 105
 src/job_hunt/logging.py                           19      2      6      2    84%   16, 18
@@ -235,6 +233,6 @@ src/job_hunt/state.py                             56      1      4      1    97%
 src/job_hunt/tenants/__init__.py                   2      0      0      0   100%
 src/job_hunt/tenants/registry.py                  38      4      6      2    86%   39, 43-44, 51
 ------------------------------------------------------------------------------------------
-TOTAL                                           2254    335    638    186    80%
+TOTAL                                           2255    335    638    186    80%
 Required test coverage of 70% reached. Total coverage: 80.12%
 ================== 73 passed, 2 skipped, 2 warnings in 5.64s ===================
