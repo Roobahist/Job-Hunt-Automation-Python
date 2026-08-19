@@ -5,7 +5,7 @@ import re
 import time
 from collections.abc import Iterable, Mapping, Sequence
 from threading import Lock
-from typing import Any
+from typing import Any, ClassVar
 
 from apify_client import ApifyClient
 
@@ -16,8 +16,8 @@ _RETRY_SECONDS = re.compile(r"(?:retry|try again)[^0-9]{0,20}(\d+(?:\.\d+)?)\s*s
 
 
 class ApifyProvider:
-    _lock = Lock()
-    _unavailable_until: dict[str, float] = {}
+    _lock: ClassVar[Lock] = Lock()
+    _unavailable_until: ClassVar[dict[str, float]] = {}
 
     def __init__(
         self,
