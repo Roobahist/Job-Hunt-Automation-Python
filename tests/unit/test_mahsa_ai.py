@@ -12,7 +12,10 @@ def definition(key: str) -> PromptDefinition:
         key=key,
         version=1,
         template=key,
-        output_structure={"type": "object"},
+        output_structure={
+            "type": "object",
+            "properties": {"value": {}},
+        },
         temperature=0.2,
     )
 
