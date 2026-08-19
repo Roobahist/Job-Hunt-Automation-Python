@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hmac
 from collections.abc import Callable
 from typing import Annotated
 from uuid import UUID
@@ -125,6 +126,38 @@ def create_app(
             "fillout",
             force=False,
         )
+
+    @app.post("/webhooks/telegram/{tenant}")
+    def telegram_webhook(
+        tenant: str,
+        payload: dict[str, object],
+        x_telegram_bot_api_secret_token: Annotated[str | None, Header()] = None,
+    ) -> dict[str, bool]:
+        services = container().tenant(tenant)
+        expected = services.context.bootstrap.secret("telegram_webhook", required=False)
+        if not expected or not x_telegram_bot_api_secret_token or not hmac.compare_digest(
+            expected, x_telegram_bot_api_secret_token
+        ):
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid Telegram webhook secret")
+        callback = payload.get("callback_query")
+        if not isinstance(callback, dict):
+            return {"ok": True}
+        callback_id = str(callback.get("id") or "")
+        data = str(callback.get("data") or "")
+        response_text = "Action ignored"
+        try:
+            if data.startswith("status:"):
+                _, status_key, raw_row_id = data.split(":", 2)
+                services.workflow.repository.set_status(int(raw_row_id), status_key)  # type: ignore[attr-defined]
+                response_text = "Status updated"
+            elif data.startswith("retry:"):
+                coordinator.retry(UUID(data.split(":", 1)[1]))
+                response_text = "Regeneration queued"
+        except (KeyError, ValueError):
+            response_text = "Action could not be applied"
+        if callback_id:
+            services.notifier.answer_callback(callback_id, response_text)
+        return {"ok": True}
 
     @app.post(
         "/v1/tenants/{tenant}/jobs",
