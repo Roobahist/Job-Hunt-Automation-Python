@@ -1,27 +1,27 @@
 INSTALL_EXIT=0
 Using CPython 3.12.3 interpreter at: /usr/bin/python3.12
 Creating virtual environment at: .venv
-Resolved 111 packages in 789ms
+Resolved 111 packages in 153ms
    Building job-hunt-automation @ file:///home/runner/work/Job-Hunt-Automation-Python/Job-Hunt-Automation-Python
-Downloading pygments (1.2MiB)
-Downloading cryptography (4.5MiB)
+Downloading zstandard (5.3MiB)
 Downloading uvloop (4.2MiB)
-Downloading ruff (10.5MiB)
+Downloading cryptography (4.5MiB)
+Downloading pygments (1.2MiB)
+Downloading impit (4.0MiB)
 Downloading mypy (14.1MiB)
 Downloading pydantic-core (2.0MiB)
-Downloading impit (4.0MiB)
-Downloading zstandard (5.3MiB)
+Downloading ruff (10.5MiB)
  Downloaded pydantic-core
+ Downloaded pygments
  Downloaded impit
  Downloaded zstandard
- Downloaded ruff
  Downloaded uvloop
+ Downloaded ruff
  Downloaded cryptography
- Downloaded pygments
       Built job-hunt-automation @ file:///home/runner/work/Job-Hunt-Automation-Python/Job-Hunt-Automation-Python
  Downloaded mypy
-Prepared 111 packages in 1.77s
-Installed 111 packages in 271ms
+Prepared 111 packages in 1.56s
+Installed 111 packages in 194ms
  + amqp==5.3.1
  + annotated-doc==0.0.5
  + annotated-types==0.8.0
@@ -134,30 +134,8 @@ Installed 111 packages in 271ms
  + xxhash==4.0.1
  + zstandard==0.25.0
 
-RUFF_EXIT=1
-E501 Line too long (126 > 120)
-  --> tests/contract/test_gemini_pool.py:80:121
-   |
-78 |     calls: list[tuple[str, str]] = []
-79 |
-80 |     def call(model: str, key: str, *_: object, **__: object) -> tuple[dict[str, Any] | None, str, str | None, dict[str, Any]]:
-   |                                                                                                                         ^^^^^^
-81 |         calls.append((model, key))
-82 |         metadata = {"model": model, "account": key, "latency_ms": 1}
-   |
-
-E501 Line too long (126 > 120)
-   --> tests/contract/test_gemini_pool.py:101:121
-    |
- 99 |     calls: list[tuple[str, str]] = []
-100 |
-101 |     def call(model: str, key: str, *_: object, **__: object) -> tuple[dict[str, Any] | None, str, str | None, dict[str, Any]]:
-    |                                                                                                                         ^^^^^^
-102 |         calls.append((model, key))
-103 |         metadata = {"model": model, "account": key, "latency_ms": 1}
-    |
-
-Found 2 errors.
+RUFF_EXIT=0
+All checks passed!
 
 FORMAT_EXIT=1
 unformatted: File would be reformatted
@@ -764,7 +742,7 @@ unformatted: File would be reformatted
    |
 
 unformatted: File would be reformatted
-   --> tests/contract/test_gemini_pool.py:37:43
+  --> tests/contract/test_gemini_pool.py:37:43
    |
 36 |     reset_pool()
    -     client = PooledGeminiStructuredClient(
@@ -772,6 +750,12 @@ unformatted: File would be reformatted
    -     )
 37 +     client = PooledGeminiStructuredClient(["key-1", "key-2"], ["best", "second"], ["repair"])
 38 |     calls: list[tuple[str, str]] = []
+39 |
+   -     def call(
+   -         model: str, key: str, *_: object, **__: object
+   -     ) -> tuple[dict[str, Any], str, None, dict[str, Any]]:
+40 +     def call(model: str, key: str, *_: object, **__: object) -> tuple[dict[str, Any], str, None, dict[str, Any]]:
+41 |         calls.append((model, key))
 --------------------------------------------------------------------------------
 52 |     reset_pool()
    -     client = PooledGeminiStructuredClient(
@@ -779,6 +763,12 @@ unformatted: File would be reformatted
    -     )
 53 +     client = PooledGeminiStructuredClient(["bad-key", "good-key"], ["best", "second"], ["repair"])
 54 |     calls: list[tuple[str, str]] = []
+55 |
+   -     def call(
+   -         model: str, key: str, *_: object, **__: object
+   -     ) -> tuple[dict[str, Any], str, None, dict[str, Any]]:
+56 +     def call(model: str, key: str, *_: object, **__: object) -> tuple[dict[str, Any], str, None, dict[str, Any]]:
+57 |         calls.append((model, key))
 --------------------------------------------------------------------------------
 70 |     reset_pool()
    -     client = PooledGeminiStructuredClient(
@@ -786,12 +776,6 @@ unformatted: File would be reformatted
    -     )
 71 +     client = PooledGeminiStructuredClient(["key-1", "key-2"], ["best", "second"], ["fast-repair", "backup-repair"])
 72 |     calls: list[tuple[str, str]] = []
-73 |
-   -     def call(model: str, key: str, *_: object, **__: object) -> tuple[dict[str, Any] | None, str, str | None, dict[str, Any]]:
-74 +     def call(
-75 +         model: str, key: str, *_: object, **__: object
-76 +     ) -> tuple[dict[str, Any] | None, str, str | None, dict[str, Any]]:
-77 |         calls.append((model, key))
 --------------------------------------------------------------------------------
 91 |     reset_pool()
    -     client = PooledGeminiStructuredClient(
@@ -799,12 +783,6 @@ unformatted: File would be reformatted
    -     )
 92 +     client = PooledGeminiStructuredClient(["key-1", "key-2"], ["best"], ["fast-repair", "backup-repair"])
 93 |     calls: list[tuple[str, str]] = []
-94 |
-   -     def call(model: str, key: str, *_: object, **__: object) -> tuple[dict[str, Any] | None, str, str | None, dict[str, Any]]:
-95 +     def call(
-96 +         model: str, key: str, *_: object, **__: object
-97 +     ) -> tuple[dict[str, Any] | None, str, str | None, dict[str, Any]]:
-98 |         calls.append((model, key))
    |
 
 unformatted: File would be reformatted
@@ -1133,7 +1111,7 @@ ERROR: Coverage failure: total of 74 is less than fail-under=90
 =================================== FAILURES ===================================
 _________________ test_invalid_key_is_skipped_for_lower_models _________________
 
-monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7fdf2e3aa9c0>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7fc0e26a6600>
 
     def test_invalid_key_is_skipped_for_lower_models(monkeypatch: pytest.MonkeyPatch) -> None:
         reset_pool()
@@ -1142,7 +1120,9 @@ monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7fdf2e3aa9c0>
         )
         calls: list[tuple[str, str]] = []
     
-        def call(model: str, key: str, *_: object, **__: object) -> tuple[dict[str, Any], str, None, dict[str, Any]]:
+        def call(
+            model: str, key: str, *_: object, **__: object
+        ) -> tuple[dict[str, Any], str, None, dict[str, Any]]:
             calls.append((model, key))
             if key == "bad-key":
                 raise RuntimeError("API key not valid")
@@ -1178,9 +1158,9 @@ E                   'good-key',
 E               ),
 E           ]
 
-tests/contract/test_gemini_pool.py:70: AssertionError
+tests/contract/test_gemini_pool.py:74: AssertionError
 ----------------------------- Captured stdout call -----------------------------
-[2m2026-08-19T23:35:20.591278Z[0m [[32m[1minfo     [0m] [1mgemini_generation             [0m [36maccount[0m=[35maccount[0m [36mlatency_ms[0m=[35m1[0m [36mmodel[0m=[35mtest[0m [36mprompt_key[0m=[35mtest[0m [36mprompt_version[0m=[35m1.0[0m [36mrepaired[0m=[35mFalse[0m [36musage[0m=[35m{}[0m
+[2m2026-08-19T23:36:08.629256Z[0m [[32m[1minfo     [0m] [1mgemini_generation             [0m [36maccount[0m=[35maccount[0m [36mlatency_ms[0m=[35m1[0m [36mmodel[0m=[35mtest[0m [36mprompt_key[0m=[35mtest[0m [36mprompt_version[0m=[35m1.0[0m [36mrepaired[0m=[35mFalse[0m [36musage[0m=[35m{}[0m
 ______ test_mahsa_profile_reuses_shared_operations_and_preserves_sections ______
 
     def test_mahsa_profile_reuses_shared_operations_and_preserves_sections() -> None:
@@ -1289,4 +1269,4 @@ FAILED tests/contract/test_gemini_pool.py::test_invalid_key_is_skipped_for_lower
 FAILED tests/unit/test_mahsa_ai.py::test_mahsa_profile_reuses_shared_operations_and_preserves_sections - pydantic_core._pydantic_core.ValidationError: 1 validation error for PromptDefinition
   Value error, output_structure must define object properties [type=value_error, input_value={'key': 'cv_summary_rewri...t'}, 'temperature': 0.2}, input_type=dict]
     For further information visit https://errors.pydantic.dev/2.13/v/value_error
-============= 2 failed, 71 passed, 2 skipped, 2 warnings in 5.92s ==============
+============= 2 failed, 71 passed, 2 skipped, 2 warnings in 5.67s ==============
