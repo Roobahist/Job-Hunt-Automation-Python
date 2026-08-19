@@ -141,3 +141,17 @@ def test_configuration_rejects_missing_or_invalid_prompt_schema() -> None:
     client.rows = [prompt_row(key) for key in sorted(REQUIRED_PROMPT_KEYS - {"qualification_scoring"})]
     with pytest.raises(ConfigurationError, match="Missing active prompts"):
         repository.prompts(2)
+
+
+def test_configuration_preserves_legacy_prompt_tables() -> None:
+    client = Client()
+    repository = BaserowConfigurationRepository(client, 1)  # type: ignore[arg-type]
+    client.rows = [
+        {"Key": "qualification", "Prompt": "score", "Enabled": True},
+        {"Key": "cv_about_me", "Prompt": "rewrite about me", "Enabled": True},
+        {"Key": "disabled", "Prompt": "ignore", "Enabled": False},
+    ]
+    prompts = repository.prompts(2)
+    assert set(prompts) == {"qualification", "cv_about_me"}
+    assert prompts["qualification"].version == 1
+    assert prompts["qualification"].temperature == 0.2
