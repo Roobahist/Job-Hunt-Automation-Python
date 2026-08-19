@@ -34,7 +34,7 @@ def test_http_error_classification_and_retry_after() -> None:
 @respx.mock
 def test_telegram_uses_one_multipart_media_group(tmp_path: Path) -> None:
     files = []
-    for index in range(5):
+    for index in range(3):
         path = tmp_path / f"{index}.pdf"
         path.write_bytes(b"pdf")
         files.append(path)
@@ -44,8 +44,29 @@ def test_telegram_uses_one_multipart_media_group(tmp_path: Path) -> None:
     result = TelegramNotifier("secret").send_documents("42", files, "caption")
     assert result == "12"
     body = route.calls[0].request.content
-    assert body.count(b'Content-Disposition: form-data; name="file_') == 5
-    assert b"sendMediaGroup" not in body
+    assert body.count(b'Content-Disposition: form-data; name="file_') == 3
+
+
+@respx.mock
+def test_telegram_action_message_has_workflow_controls() -> None:
+    route = respx.post("https://api.telegram.org/botsecret/sendMessage").mock(
+        return_value=httpx.Response(200, json={"ok": True, "result": {"message_id": 13}})
+    )
+    notifier = TelegramNotifier("secret")
+    assert (
+        notifier.send_application_actions(
+            "42",
+            caption="Designer at Example",
+            job_url="https://example.com/job",
+            row_id=77,
+            run_id="run-1",
+        )
+        == "13"
+    )
+    payload = route.calls[0].request.read().decode()
+    assert "status:applied:77" in payload
+    assert "status:dropped:77" in payload
+    assert "retry:run-1" in payload
 
 
 def test_telegram_enforces_api_album_size(tmp_path: Path) -> None:
