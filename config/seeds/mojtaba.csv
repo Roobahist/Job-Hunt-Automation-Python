@@ -22,4 +22,3 @@ qualification_threshold,qualification,number,33,true,Minimum qualification score
 telegram_chat_id,telegram,text,119184698,true,Telegram destination chat or user ID
 cloudinary_folder_prefix,cloudinary,text,job-applications,true,Base folder used for Cloudinary application artifacts
 cloudinary_tags,cloudinary,json,"[""job-application"",""generated-document""]",true,Common Cloudinary tags applied to generated documents
-gemini_model,ai,text,models/gemini-3.5-flash-lite,true,Gemini model used by generation and scoring nodes
