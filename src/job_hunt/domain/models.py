@@ -130,9 +130,7 @@ class ArtifactBundle(BaseModel):
     def notification_paths(self) -> tuple[Path, ...]:
         return (
             self.archive,
-            self.cv_tex,
             self.cv_pdf,
-            self.cover_letter_tex,
             self.cover_letter_pdf,
         )
 
@@ -157,6 +155,7 @@ class RunStatus(BaseModel):
     original_run_id: UUID | None = None
     counts: dict[str, int] = Field(default_factory=dict)
     error: dict[str, object] | None = None
+    notification: dict[str, object] | None = None
 
 
 class EnqueueResponse(BaseModel):
