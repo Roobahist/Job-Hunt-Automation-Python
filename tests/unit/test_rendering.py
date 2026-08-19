@@ -1,0 +1,81 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from job_hunt.domain.models import TailoredContent
+from job_hunt.errors import DocumentRenderingError
+from job_hunt.rendering.documents import TenantDocumentRenderer
+from job_hunt.rendering.latex import escape_latex, inject_once, latex_value
+from job_hunt.rendering.profiles import (
+    MahsaCoverLetterRenderer,
+    MahsaCvRenderer,
+    MojtabaCoverLetterRenderer,
+    MojtabaCvRenderer,
+)
+
+
+class FakeCompiler:
+    def compile(self, tex_path: Path) -> Path:
+        pdf = tex_path.with_suffix(".pdf")
+        pdf.write_bytes(b"%PDF-1.4 test")
+        return pdf
+
+
+def cover(company: str = "A&B") -> dict[str, object]:
+    return {
+        "date": "August 19, 2026",
+        "company_name": company,
+        "paragraphs": ["First.", "Second.", "Third."],
+    }
+
+
+def test_shared_latex_safety_and_injection() -> None:
+    assert escape_latex("A&B_#") == r"A\&B\_\#"
+    assert latex_value({"text": r"\textbf{Safe}", "format": "latex"}) == r"\textbf{Safe}"
+    assert inject_once("x %%__A__%%", {"%%__A__%%": "y"}) == "x y"
+    with pytest.raises(DocumentRenderingError, match="must occur once"):
+        inject_once("none", {"%%__A__%%": "y"})
+
+
+@pytest.mark.parametrize(
+    "tenant,cv_renderer,cover_renderer",
+    [
+        ("mahsa", MahsaCvRenderer(), MahsaCoverLetterRenderer()),
+        ("mojtaba", MojtabaCvRenderer(), MojtabaCoverLetterRenderer()),
+    ],
+)
+def test_real_tenant_templates_and_master_cv_render(
+    tmp_path: Path, tenant: str, cv_renderer: object, cover_renderer: object
+) -> None:
+    root = Path("tenants") / tenant
+    master = json.loads((root / "master_cv.json").read_text())
+    renderer = TenantDocumentRenderer(
+        cv_renderer,  # type: ignore[arg-type]
+        cover_renderer,  # type: ignore[arg-type]
+        root / "templates/cv_template.tex",
+        root / "templates/cover_letter_template.tex",
+        FakeCompiler(),
+    )
+    bundle = renderer.render(
+        TailoredContent(cv=master, cover_letter=cover()), tmp_path / tenant, tenant
+    )
+    assert bundle.cv_pdf.read_bytes().startswith(b"%PDF")
+    assert bundle.cover_letter_pdf.exists() and bundle.archive.exists()
+    assert "%%__" not in bundle.cv_tex.read_text()
+    assert r"A\&B" in bundle.cover_letter_tex.read_text()
+
+
+def test_cover_letter_requires_exactly_three_paragraphs() -> None:
+    template = " ".join(MahsaCoverLetterRenderer.markers.values())
+    with pytest.raises(DocumentRenderingError, match="exactly three"):
+        MahsaCoverLetterRenderer().render(
+            template, {"date": "x", "company_name": "y", "paragraphs": ["one"]}
+        )
+
+
+def test_mahsa_requires_one_education_marker() -> None:
+    with pytest.raises(DocumentRenderingError, match="exactly one"):
+        MahsaCvRenderer().render("%%__SECTIONS__%%", {"sections": []})
