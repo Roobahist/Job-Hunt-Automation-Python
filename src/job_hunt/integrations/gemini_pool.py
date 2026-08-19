@@ -5,8 +5,8 @@ import json
 import os
 import re
 import time
-from collections.abc import Sequence
-from datetime import UTC, datetime, timedelta
+from collections.abc import Mapping, Sequence
+from datetime import datetime, timedelta
 from threading import Lock
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -26,6 +26,13 @@ from job_hunt.logging import logger
 from job_hunt.state import RedisState
 
 _RETRY_SECONDS = re.compile(r"(?:retry|try again)[^0-9]{0,24}(\d+(?:\.\d+)?)\s*s", re.IGNORECASE)
+
+
+class LocalCapacityError(RuntimeError):
+    def __init__(self, message: str, retry_after: int) -> None:
+        super().__init__(message)
+        self.retry_after = retry_after
+        self.status_code = 429
 
 
 def _langfuse_handler() -> object | None:
@@ -56,6 +63,7 @@ class PooledGeminiStructuredClient(GeminiStructuredClient):
         quota_cooldown_seconds: int = 3600,
         state: RedisState | None = None,
         checkpoint_ttl_seconds: int = 604800,
+        limits: Mapping[str, Mapping[str, int]] | None = None,
     ) -> None:
         self.keys = [key for key in keys if key]
         self.content_models = [model.removeprefix("models/") for model in content_models if model]
@@ -63,6 +71,10 @@ class PooledGeminiStructuredClient(GeminiStructuredClient):
         self.quota_cooldown_seconds = quota_cooldown_seconds
         self.state = state
         self.checkpoint_ttl_seconds = checkpoint_ttl_seconds
+        self.limits = {
+            model.removeprefix("models/"): dict(values)
+            for model, values in (limits or {}).items()
+        }
         self.langfuse_handler = _langfuse_handler()
         if not self.keys:
             raise ValueError("At least one Gemini API key is required")
@@ -121,6 +133,71 @@ class PooledGeminiStructuredClient(GeminiStructuredClient):
             )
         )
 
+    @staticmethod
+    def _seconds_to_next_minute() -> int:
+        return max(1, 61 - datetime.now().second)
+
+    @staticmethod
+    def _seconds_to_daily_reset() -> int:
+        pacific = ZoneInfo("America/Los_Angeles")
+        now = datetime.now(pacific)
+        reset = (now + timedelta(days=1)).replace(hour=0, minute=0, second=5, microsecond=0)
+        return max(60, int((reset - now).total_seconds()))
+
+    def _reserve_capacity(self, model: str, key: str, prompt: str) -> None:
+        if self.state is None:
+            return
+        limits = self.limits.get(model)
+        if not limits:
+            return
+        account = self._key_id(key)
+        candidate = self._candidate_id(model, key)
+        now = datetime.now()
+        minute_bucket = now.strftime("%Y%m%d%H%M")
+
+        rpm = limits.get("rpm")
+        if rpm:
+            count = self.state.increment_window(
+                "gemini-rpm",
+                candidate,
+                minute_bucket,
+                ttl_seconds=90,
+            )
+            if count > rpm:
+                retry_after = self._seconds_to_next_minute()
+                self.state.cooldown("gemini-candidate", candidate, seconds=retry_after)
+                raise LocalCapacityError("local requests-per-minute budget exhausted", retry_after)
+
+        tpm = limits.get("tpm")
+        if tpm:
+            estimated_tokens = max(1, len(prompt) // 4)
+            tokens = self.state.increment_window(
+                "gemini-tpm",
+                candidate,
+                minute_bucket,
+                ttl_seconds=90,
+                amount=estimated_tokens,
+            )
+            if tokens > tpm:
+                retry_after = self._seconds_to_next_minute()
+                self.state.cooldown("gemini-candidate", candidate, seconds=retry_after)
+                raise LocalCapacityError("local tokens-per-minute budget exhausted", retry_after)
+
+        rpd = limits.get("rpd")
+        if rpd:
+            pacific = ZoneInfo("America/Los_Angeles")
+            day_bucket = datetime.now(pacific).strftime("%Y%m%d")
+            daily = self.state.increment_window(
+                "gemini-rpd",
+                account + ":" + model,
+                day_bucket,
+                ttl_seconds=self._seconds_to_daily_reset() + 60,
+            )
+            if daily > rpd:
+                retry_after = self._seconds_to_daily_reset()
+                self.state.cooldown("gemini-candidate", candidate, seconds=retry_after)
+                raise LocalCapacityError("local requests-per-day budget exhausted", retry_after)
+
     def _quota_cooldown(self, exc: Exception) -> int:
         retry_after = getattr(exc, "retry_after", None)
         if isinstance(retry_after, (int, float)) and retry_after > 0:
@@ -140,10 +217,7 @@ class PooledGeminiStructuredClient(GeminiStructuredClient):
             return max(1, int(float(match.group(1))))
         lowered = text.lower()
         if any(marker in lowered for marker in ("requests per day", "daily quota", " rpd")):
-            pacific = ZoneInfo("America/Los_Angeles")
-            now = datetime.now(pacific)
-            reset = (now + timedelta(days=1)).replace(hour=0, minute=0, second=5, microsecond=0)
-            return max(60, int((reset - now).total_seconds()))
+            return self._seconds_to_daily_reset()
         return self.quota_cooldown_seconds
 
     def _available(self, models: Sequence[str]) -> list[tuple[str, str]]:
@@ -228,6 +302,7 @@ class PooledGeminiStructuredClient(GeminiStructuredClient):
         *,
         operation: str,
     ) -> tuple[dict[str, Any] | None, str, str | None, dict[str, Any]]:
+        self._reserve_capacity(model_name, key, prompt)
         runnable = self._model_for_candidate(model_name, key, temperature).with_structured_output(
             schema=schema,
             method="json_schema",
