@@ -23,9 +23,11 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
     operator_token: str = ""
     run_ttl_seconds: int = 604800
+    discovery_snapshot_ttl_seconds: int = Field(default=7200, ge=300)
+    llm_checkpoint_ttl_seconds: int = Field(default=604800, ge=300)
 
-    # Provider capacity is shared by every tenant. Comma-separated environment values keep
-    # secrets outside source control while allowing any number of free-tier accounts.
+    # Provider capacity is shared by every tenant. Each configured key belongs to a separate
+    # free-tier account, while all tenants consume the same ordered account pool.
     apify_tokens: str = ""
     gemini_api_keys: str = ""
     gemini_content_models: str = (
@@ -78,7 +80,6 @@ class Settings(BaseSettings):
 
 class SecretAliases(BaseModel):
     baserow: str
-    cloudinary: str
     telegram: str
     fillout: str
 
@@ -120,10 +121,10 @@ class TenantRuntimeConfig(BaseModel):
     title_exclusions: list[str] = Field(default_factory=list)
     qualification_threshold: int = Field(default=33, ge=0, le=100)
     telegram_chat_id: str
+    # Retained so existing Baserow configuration rows remain valid. Artifacts now upload
+    # directly to Baserow and model selection is application-wide.
     cloudinary_folder_prefix: str = "job-applications"
     cloudinary_tags: list[str] = Field(default_factory=list)
-    # Retained only so existing Baserow configuration rows remain valid. Model selection is
-    # now application-wide through JOB_HUNT_GEMINI_CONTENT_MODELS/REPAIR_MODELS.
     gemini_model: str | None = None
     project_selection_count: int | None = None
     work_experience_selection_count: int = Field(default=3, ge=1)
@@ -143,7 +144,6 @@ def load_registry(path: Path) -> dict[str, TenantBootstrap]:
     for key, value in raw.items():
         aliases = SecretAliases(
             baserow=value["baserow_token_env"],
-            cloudinary=value["cloudinary_url_env"],
             telegram=value["telegram_token_env"],
             fillout=value["fillout_secret_env"],
         )
@@ -175,9 +175,7 @@ def parse_configuration_rows(rows: list[Mapping[str, Any]]) -> TenantRuntimeConf
             continue
         key = str(row.get("configKey", "")).strip()
         if key:
-            values[key] = decode_config_value(
-                str(row.get("valueType", "text")), str(row["value"])
-            )
+            values[key] = decode_config_value(str(row.get("valueType", "text")), str(row["value"]))
     try:
         return TenantRuntimeConfig.model_validate(values)
     except ValidationError as exc:
