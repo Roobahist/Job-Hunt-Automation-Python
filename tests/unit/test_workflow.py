@@ -50,7 +50,7 @@ class AI:
 
 class Renderer:
     def render(self, *_: object) -> Any:
-        paths = [Path(f"/tmp/{index}") for index in range(8)]
+        paths = [Path("/tmp/application.zip"), Path("/tmp/cv.pdf"), Path("/tmp/cl.pdf")]
         return SimpleNamespace(notification_paths=lambda: paths)
 
 
@@ -63,25 +63,11 @@ class Publisher:
         return {"CV": []}
 
 
-class Notifier:
-    def __init__(self) -> None:
-        self.calls = 0
-
-    def send_documents(self, *_: object) -> str:
-        self.calls += 1
-        return "message"
-
-
-def make_workflow(
-    repo: Repository, result: Qualification
-) -> tuple[ApplicationWorkflow, Publisher, Notifier]:
-    publisher, notifier = Publisher(), Notifier()
+def make_workflow(repo: Repository, result: Qualification) -> tuple[ApplicationWorkflow, Publisher]:
+    publisher = Publisher()
     return (
-        ApplicationWorkflow(
-            repo, AI(result), AI(result), Renderer(), publisher, notifier, Path("runs")
-        ),
+        ApplicationWorkflow(repo, AI(result), AI(result), Renderer(), publisher, Path("runs")),
         publisher,
-        notifier,
     )
 
 
@@ -107,43 +93,41 @@ def process(workflow: ApplicationWorkflow, *, force: bool = False) -> object:
         threshold=33,
         force=force,
         applicant_filename="Person",
-        cloudinary_folder="jobs",
-        cloudinary_tags=[],
-        telegram_chat_id="1",
     )
 
 
 def test_below_threshold_stops_expensive_side_effects() -> None:
     repo = Repository()
-    workflow, publisher, notifier = make_workflow(
+    workflow, publisher = make_workflow(
         repo, Qualification(score=32, should_apply=True, reasoning="low")
     )
     result = process(workflow)
     assert not result.passed  # type: ignore[attr-defined]
-    assert publisher.calls == notifier.calls == 0
+    assert publisher.calls == 0
     assert ("qualification", False) in repo.calls
 
 
 def test_should_apply_does_not_block_documents_above_threshold() -> None:
     repo = Repository()
-    workflow, publisher, notifier = make_workflow(
+    workflow, publisher = make_workflow(
         repo, Qualification(score=90, should_apply=False, reasoning="metadata only")
     )
     result = process(workflow)
     assert result.passed  # type: ignore[attr-defined]
-    assert publisher.calls == notifier.calls == 1
+    assert publisher.calls == 1
+    assert len(result.notification_paths) == 3  # type: ignore[attr-defined]
     assert ("qualification", True) in repo.calls
 
 
 def test_force_processes_and_existing_job_resets_first() -> None:
     repo = Repository(existing=True)
-    workflow, publisher, notifier = make_workflow(
+    workflow, publisher = make_workflow(
         repo, Qualification(score=1, should_apply=False, reasoning="no")
     )
     result = process(workflow, force=True)
     assert result.passed  # type: ignore[attr-defined]
     assert ("reset", 7) in repo.calls
-    assert publisher.calls == notifier.calls == 1
+    assert publisher.calls == 1
 
 
 def test_permanent_error_is_not_retried() -> None:
@@ -151,7 +135,7 @@ def test_permanent_error_is_not_retried() -> None:
         def find(self, job: Job) -> None:
             raise WorkflowError("bad", ErrorKind.VALIDATION)
 
-    workflow, _, _ = make_workflow(
+    workflow, _ = make_workflow(
         BrokenRepository(), Qualification(score=1, should_apply=False, reasoning="no")
     )
     with pytest.raises(WorkflowError):
