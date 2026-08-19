@@ -50,7 +50,7 @@ markers = ["integration: requires local Redis or pdflatex", "live: calls configu
 
 [tool.ruff]
 target-version = "py312"
-line-length = 100
+line-length = 120
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
