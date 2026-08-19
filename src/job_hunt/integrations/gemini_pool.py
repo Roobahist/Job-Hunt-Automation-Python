@@ -12,10 +12,15 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 
 from job_hunt.domain.models import PromptDefinition
 from job_hunt.errors import ConfigurationError, ErrorKind, ProviderError
-from job_hunt.integrations.gemini import _compact, _message_text, _validate_json_schema
+from job_hunt.integrations.gemini import (
+    GeminiStructuredClient,
+    _compact,
+    _message_text,
+    _validate_json_schema,
+)
 
 
-class PooledGeminiStructuredClient:
+class PooledGeminiStructuredClient(GeminiStructuredClient):
     """Use shared Gemini accounts and ordered model tiers for structured generation."""
 
     _lock = Lock()
@@ -101,8 +106,7 @@ class PooledGeminiStructuredClient:
             ]
             if available:
                 return available
-            # Capacity may have reset while every local circuit is still open. Probe the
-            # candidate whose cooldown expires first rather than failing without a request.
+            # If all local circuits are open, probe the candidate whose cooldown expires first.
             return [
                 min(
                     ordered,
@@ -119,7 +123,7 @@ class PooledGeminiStructuredClient:
             )
 
     @staticmethod
-    def _model(
+    def _model_for_candidate(
         model_name: str,
         key: str,
         temperature: float,
@@ -129,12 +133,12 @@ class PooledGeminiStructuredClient:
             "api_key": key,
             "max_retries": 0,
         }
-        # Google's latest-model API no longer uses sampling temperature on these models.
+        # Google's newest model families no longer use these sampling settings.
         if model_name not in {"gemini-3.6-flash", "gemini-3.5-flash-lite"}:
             kwargs["temperature"] = temperature
         return ChatGoogleGenerativeAI(**kwargs)
 
-    def _structured_call(
+    def _pooled_structured_call(
         self,
         model_name: str,
         key: str,
@@ -142,7 +146,7 @@ class PooledGeminiStructuredClient:
         schema: dict[str, Any],
         temperature: float,
     ) -> tuple[dict[str, Any] | None, str, str | None]:
-        runnable = self._model(model_name, key, temperature).with_structured_output(
+        runnable = self._model_for_candidate(model_name, key, temperature).with_structured_output(
             schema=schema,
             method="json_schema",
             include_raw=True,
@@ -157,7 +161,7 @@ class PooledGeminiStructuredClient:
             return parsed, raw_text or _compact(parsed), str(parsing_error) if parsing_error else None
         return None, raw_text, str(parsing_error) if parsing_error else "No parsed JSON object"
 
-    def _repair(
+    def _pooled_repair(
         self,
         raw_output: str,
         schema: dict[str, Any],
@@ -174,7 +178,7 @@ class PooledGeminiStructuredClient:
         failures: list[str] = []
         for model_name, key in self._available(self.repair_models):
             try:
-                parsed, _, parsing_error = self._structured_call(
+                parsed, _, parsing_error = self._pooled_structured_call(
                     model_name, key, repair_prompt, schema, 0.0
                 )
                 if parsed is None:
@@ -199,9 +203,12 @@ class PooledGeminiStructuredClient:
 
     def generate(self, prompt: str, definition: PromptDefinition) -> dict[str, Any]:
         failures: list[str] = []
+        quota_failures = 0
+        attempted = 0
         for model_name, key in self._available(self.content_models):
+            attempted += 1
             try:
-                parsed, raw_output, parsing_error = self._structured_call(
+                parsed, raw_output, parsing_error = self._pooled_structured_call(
                     model_name,
                     key,
                     prompt,
@@ -216,7 +223,7 @@ class PooledGeminiStructuredClient:
                         raw_output = raw_output or _compact(parsed)
 
                 if raw_output:
-                    return self._repair(
+                    return self._pooled_repair(
                         raw_output,
                         definition.output_structure,
                         parsing_error or "structured output did not validate",
@@ -231,18 +238,20 @@ class PooledGeminiStructuredClient:
                 raise
             except Exception as exc:
                 failures.append(f"{model_name}/{self._key_id(key)}: {exc}")
-                if self._is_quota_error(exc) or self._is_auth_error(exc):
+                if self._is_quota_error(exc):
+                    quota_failures += 1
                     self._cooldown(model_name, key)
                     continue
-                # A model/provider-specific failure can still be recovered by another account
-                # or lower-ranked model. Schema/configuration failures are raised separately.
+                if self._is_auth_error(exc):
+                    self._cooldown(model_name, key)
+                    continue
                 continue
 
         raise ProviderError(
             "Gemini generation failed across all configured keys and content models: "
             + "; ".join(failures),
             ErrorKind.RATE_LIMIT
-            if failures and all("quota" in failure.lower() for failure in failures)
+            if attempted > 0 and quota_failures == attempted
             else ErrorKind.MALFORMED_PROVIDER_RESPONSE,
             retryable=True,
             provider="gemini",
