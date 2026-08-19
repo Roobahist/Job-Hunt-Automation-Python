@@ -23,10 +23,15 @@ def definition() -> PromptDefinition:
     )
 
 
+def reset_pool() -> None:
+    PooledGeminiStructuredClient._unavailable_until.clear()
+    PooledGeminiStructuredClient._invalid_key_until.clear()
+
+
 def test_content_exhausts_all_keys_before_next_model(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    PooledGeminiStructuredClient._unavailable_until.clear()
+    reset_pool()
     client = PooledGeminiStructuredClient(
         ["key-1", "key-2"],
         ["best", "second"],
@@ -54,10 +59,41 @@ def test_content_exhausts_all_keys_before_next_model(
     ]
 
 
+def test_invalid_key_is_skipped_for_lower_models(monkeypatch: pytest.MonkeyPatch) -> None:
+    reset_pool()
+    client = PooledGeminiStructuredClient(
+        ["bad-key", "good-key"],
+        ["best", "second"],
+        ["repair"],
+    )
+    calls: list[tuple[str, str]] = []
+
+    def call(
+        model: str,
+        key: str,
+        *_: object,
+        **__: object,
+    ) -> tuple[dict[str, Any], str, None]:
+        calls.append((model, key))
+        if key == "bad-key":
+            raise RuntimeError("API key not valid")
+        if model == "best":
+            raise RuntimeError("RESOURCE_EXHAUSTED: quota exceeded")
+        return {"value": "ok"}, '{"value":"ok"}', None
+
+    monkeypatch.setattr(client, "_pooled_structured_call", call)
+    assert client.generate("prompt", definition()) == {"value": "ok"}
+    assert calls == [
+        ("best", "bad-key"),
+        ("best", "good-key"),
+        ("second", "good-key"),
+    ]
+
+
 def test_invalid_content_output_uses_repair_tier(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    PooledGeminiStructuredClient._unavailable_until.clear()
+    reset_pool()
     client = PooledGeminiStructuredClient(
         ["key-1", "key-2"],
         ["best", "second"],
@@ -86,7 +122,7 @@ def test_invalid_content_output_uses_repair_tier(
 def test_repair_rotates_keys_before_weaker_repair_model(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    PooledGeminiStructuredClient._unavailable_until.clear()
+    reset_pool()
     client = PooledGeminiStructuredClient(
         ["key-1", "key-2"],
         ["best"],
