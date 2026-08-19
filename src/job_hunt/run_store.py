@@ -44,8 +44,8 @@ class RunStore:
         for _ in range(5):
             pipeline = self.redis.pipeline()
             try:
-                pipeline.watch(key)
-                raw = pipeline.get(key)
+                pipeline.watch(key)  # type: ignore[no-untyped-call]
+                raw = cast(str | bytes | None, pipeline.get(key))
                 if raw is None:
                     raise KeyError(str(run_id))
                 status = RunStatus.model_validate_json(raw)
