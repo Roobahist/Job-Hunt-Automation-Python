@@ -12,7 +12,7 @@ from job_hunt.run_store import RunStore
 
 
 class Pipeline:
-    def __init__(self, redis: "FakeRedis") -> None:
+    def __init__(self, redis: FakeRedis) -> None:
         self.redis = redis
         self.pending: tuple[str, str] | None = None
 
@@ -58,8 +58,26 @@ class FakeQueue:
     def __init__(self) -> None:
         self.calls: list[tuple[object, ...]] = []
 
-    def submission(self, tenant: str, payload: dict[str, Any], run_id: UUID, force: bool) -> str:
-        self.calls.append(("submission", tenant, payload, run_id, force))
+    def submission(
+        self,
+        tenant: str,
+        payload: dict[str, Any],
+        run_id: UUID,
+        force: bool,
+        snapshot_id: str | None = None,
+        checkpoint_namespace: str | None = None,
+    ) -> str:
+        self.calls.append(
+            (
+                "submission",
+                tenant,
+                payload,
+                run_id,
+                force,
+                snapshot_id,
+                checkpoint_namespace,
+            )
+        )
         return "task-1"
 
     def discovery(self, tenant: str, run_id: UUID) -> str:
@@ -146,7 +164,7 @@ def test_submit_status_and_retry() -> None:
     assert status_response.json()["task_id"] == "task-1"
     retry = api.post(f"/v1/runs/{run_id}/retry", headers=auth())
     assert retry.status_code == 202
-    assert queue.calls[0][-1] is True
+    assert queue.calls[0][4] is True
 
 
 def test_discovery_and_fillout_auth_form_validation() -> None:
@@ -167,7 +185,7 @@ def test_discovery_and_fillout_auth_form_validation() -> None:
         "/webhooks/fillout/mahsa", json=payload, headers={"Authorization": "Bearer webhook-secret"}
     )
     assert accepted.status_code == 202
-    assert queue.calls[-1][-1] is False
+    assert queue.calls[-1][4] is False
 
 
 def test_telegram_callback_updates_status() -> None:
