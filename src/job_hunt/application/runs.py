@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any, Protocol
 from uuid import UUID
 
@@ -21,7 +22,12 @@ class Queue(Protocol):
 
 
 class RunCoordinator:
-    def __init__(self, store: RunStore, queue: Queue, tenant_exists: callable) -> None:  # type: ignore[valid-type]
+    def __init__(
+        self,
+        store: RunStore,
+        queue: Queue,
+        tenant_exists: Callable[[str], object],
+    ) -> None:
         self.store = store
         self.queue = queue
         self.tenant_exists = tenant_exists
