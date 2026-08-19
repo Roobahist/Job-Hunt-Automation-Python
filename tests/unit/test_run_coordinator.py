@@ -1,0 +1,97 @@
+from __future__ import annotations
+
+from typing import Any
+from uuid import UUID, uuid4
+
+from job_hunt.application.runs import RunCoordinator
+from job_hunt.domain.models import RunStatus
+
+
+class Store:
+    def __init__(self) -> None:
+        self.statuses: dict[UUID, RunStatus] = {}
+        self.requests: dict[UUID, dict[str, object]] = {}
+
+    def save(self, status: RunStatus) -> None:
+        self.statuses[status.run_id] = status
+
+    def get(self, run_id: UUID) -> RunStatus | None:
+        return self.statuses.get(run_id)
+
+    def save_request(self, run_id: UUID, request: dict[str, object]) -> None:
+        self.requests[run_id] = request
+
+    def get_request(self, run_id: UUID) -> dict[str, object] | None:
+        return self.requests.get(run_id)
+
+    def update(self, run_id: UUID, **fields: object) -> RunStatus:
+        status = self.statuses[run_id]
+        for key, value in fields.items():
+            setattr(status, key, value)
+        return status
+
+
+class Queue:
+    def __init__(self) -> None:
+        self.calls: list[tuple[object, ...]] = []
+
+    def submission(
+        self,
+        tenant: str,
+        payload: dict[str, Any],
+        run_id: UUID,
+        force: bool,
+        snapshot_id: str | None = None,
+    ) -> str:
+        self.calls.append(("submission", tenant, payload, run_id, force, snapshot_id))
+        return "submission-task"
+
+    def discovery(self, tenant: str, run_id: UUID) -> str:
+        self.calls.append(("discovery", tenant, run_id))
+        return "discovery-task"
+
+
+def coordinator() -> tuple[RunCoordinator, Store, Queue, list[str]]:
+    store, queue, tenants = Store(), Queue(), []
+    runs = RunCoordinator(store, queue, lambda tenant: tenants.append(tenant))  # type: ignore[arg-type]
+    return runs, store, queue, tenants
+
+
+def test_enqueue_submission_and_discovery() -> None:
+    runs, store, queue, tenants = coordinator()
+    response = runs.enqueue_submission("mahsa", {"entry_type": "url"}, "manual", force=True)
+    assert tenants == ["mahsa"]
+    assert store.statuses[response.run_id].task_id == "submission-task"
+    assert store.requests[response.run_id]["force"] is True
+
+    discovery = runs.enqueue_discovery("mojtaba")
+    assert store.statuses[discovery.run_id].task_id == "discovery-task"
+    assert queue.calls[-1][0] == "discovery"
+
+
+def test_retry_preserves_discovery_snapshot() -> None:
+    runs, store, queue, _ = coordinator()
+    original = RunStatus(tenant="mahsa", kind="scheduled-job")
+    store.save(original)
+    store.save_request(
+        original.run_id,
+        {
+            "kind": "scheduled-job",
+            "payload": {"entry_type": "external"},
+            "force": False,
+            "snapshot_id": "batch-1",
+        },
+    )
+    result = runs.retry(original.run_id)
+    assert store.statuses[result.run_id].original_run_id == original.run_id
+    assert queue.calls[-1][-1] == "batch-1"
+
+
+def test_retry_missing_run_raises() -> None:
+    runs, _, _, _ = coordinator()
+    try:
+        runs.retry(uuid4())
+    except KeyError:
+        pass
+    else:
+        raise AssertionError("missing run should raise KeyError")
