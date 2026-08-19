@@ -1,33 +1,50 @@
 # Job Hunt Automation
 
-A Python 3.12, multi-tenant replacement for the Mahsa and Mojtaba n8n workflows. The application has one domain workflow and explicit provider/renderer boundaries; tenant profiles contain only bootstrap configuration, master CV data, templates, and schema-specific document rendering.
+A Python 3.12 multi-tenant replacement for the Mahsa and Mojtaba n8n workflows. Both tenants share the same API, worker, provider, schema-validation, persistence, and document-generation infrastructure. Tenant-specific code is limited to CV assembly and rendering differences.
 
-## Services
+## Architecture
 
-- FastAPI accepts authenticated Fillout and operator requests and returns a run ID immediately.
-- Celery workers normalize, deduplicate, score, tailor, render, upload, persist, and notify.
-- Celery Beat checks hourly for tenants whose configured discovery interval is due.
-- Redis provides queues, run state, replay data, locks, and idempotency coordination.
-- Baserow remains the business system of record and prompt/configuration source.
-- LangChain `ChatGoogleGenerativeAI` handles Gemini calls. Each active Baserow prompt supplies its own prompt template, JSON Output Structure, temperature, and version.
-- Apify and Gemini credentials are application-wide shared capacity pools. They are not assigned to individual tenants.
+- FastAPI accepts Fillout, operator, and optional Telegram callback requests.
+- Celery workers normalize jobs, qualify them, tailor application content, render PDFs, and persist results.
+- Celery Beat dispatches scheduled discoveries.
+- Redis provides Celery transport, run state, replay data, locks, discovery snapshots, LLM checkpoints, provider cooldowns, and proactive Gemini quota counters.
+- Baserow is the business system of record, prompt/configuration source, and final document store.
+- LangChain `ChatGoogleGenerativeAI` handles Gemini structured-output calls.
+- Flower provides Celery task visibility on port 5555.
+- Langfuse tracing is optional and enabled by environment variables only.
 
-Documents are generated when `score >= qualification_threshold`. The `should_apply` value is retained as qualification metadata but does not gate document generation. Authenticated API/CLI submissions can deliberately pass `force=true`; Fillout and scheduled discovery cannot.
+Documents are generated when `score >= qualification_threshold`. `should_apply` remains stored as qualification metadata but does not gate document generation. Operator API and CLI submissions can use `force=true`; Fillout and scheduled discovery cannot.
 
-Prompt responses are generated with Gemini native JSON Schema structured output, then validated again against the exact Baserow `Output Structure`. If validation fails, a separate repair-model tier fixes the malformed response and the repaired result is validated again before it is accepted.
+## Baserow prompt contract
+
+Every active prompt is read from Baserow using these columns:
+
+```text
+Prompt Key
+Version
+Prompt Template
+Output Structure
+Temperature
+Status
+Enabled
+```
+
+Only rows with `Status = Active` and `Enabled = true` are used. The Baserow `Output Structure` is passed to Gemini as JSON Schema and independently validated afterward. If validation fails, a separate repair-model tier receives the malformed output, validation error, and exact schema. The repaired result must pass the same schema.
+
+Successful structured results are checkpointed in Redis using a digest of the rendered prompt, prompt key/version, and JSON Schema. If a later stage fails, retrying the job reuses already completed LLM stages rather than spending quota regenerating them.
 
 ## Shared provider capacity
 
-Set all free-tier provider credentials once in `.env`:
+All tenants share application-wide pools. Each configured key/token is expected to belong to a separate free-tier account:
 
 ```bash
 JOB_HUNT_APIFY_TOKENS=token1,token2,token3
 JOB_HUNT_GEMINI_API_KEYS=key1,key2,key3
 ```
 
-Apify tries the shared tokens in order. When an account reports quota, usage-limit, rate-limit, payment/capacity, or authentication exhaustion, that token is placed on cooldown and the same request moves to the next shared token.
+Provider cooldown state is stored in Redis, so all Celery worker processes see the same exhausted accounts. Retry metadata is used when available instead of applying one fixed cooldown to every failure.
 
-Gemini uses two ordered model tiers. Main content generation defaults to:
+Gemini primary generation is model-first and account-second. By default the workflow exhausts every account on the strongest model before moving down the list:
 
 ```text
 gemini-3.6-flash
@@ -39,9 +56,7 @@ gemini-3.1-flash-lite
 gemini-2.5-flash-lite
 ```
 
-For each content model, every configured API key is tried before the workflow moves to the next model. This keeps all available capacity on the strongest model before degrading to a weaker model. Flash-Lite models are only used for primary generation after every stronger Flash model has been exhausted. The list is controlled by `JOB_HUNT_GEMINI_CONTENT_MODELS`.
-
-Structured-output repair starts directly with a separate high-throughput tier so strong-model quota is preserved:
+Structure repair starts directly with the higher-throughput Lite tier:
 
 ```text
 gemini-3.5-flash-lite
@@ -49,22 +64,40 @@ gemini-3.1-flash-lite
 gemini-2.5-flash-lite
 ```
 
-The repair list is controlled by `JOB_HUNT_GEMINI_REPAIR_MODELS`. `JOB_HUNT_PROVIDER_QUOTA_COOLDOWN_SECONDS` controls how long a key/model combination remains locally unavailable after a quota or authentication failure. The old tenant-level `gemini_model` configuration is no longer used for provider selection.
+`JOB_HUNT_GEMINI_LIMITS_JSON` can override the proactive RPM/TPM/RPD budgets. Redis counters reduce avoidable 429 requests, while provider responses remain the final source of truth. `job-hunt config validate --live` also checks that configured model IDs are exposed by the Gemini account.
 
-For the Mojtaba CV pipeline, project selection, project rewriting, work-experience selection, work-experience rewriting, skills tailoring, summary rewriting, cover-letter generation, job-page extraction, and qualification scoring remain separate model operations. Editing an active prompt template, temperature, or Output Structure in Baserow changes the next runtime execution without a code change.
+## Discovery snapshots and parallel tailoring
+
+A scheduled discovery loads the tenant configuration and active prompts once, stores that snapshot in Redis, and passes the same snapshot ID to every job produced by that discovery. Jobs in one batch therefore use the same prompt versions while avoiding repeated Baserow configuration reads.
+
+Independent tailoring branches run concurrently within the configured `JOB_HUNT_LLM_PARALLELISM` limit. Mojtaba runs project tailoring, work-experience tailoring, and skills tailoring in parallel before summary generation. Mahsa runs work-experience tailoring, skills tailoring, and the references decision in parallel. Shared Redis quota counters coordinate those calls across workers.
+
+## Persistence and notifications
+
+Generated CV and cover-letter PDFs upload directly to Baserow. JSON and TeX sources remain in the local ZIP bundle, eliminating the previous Cloudinary transport hop.
+
+Reprocessing never clears an existing working CV or cover letter before a replacement succeeds. After new documents are persisted, the Baserow row moves to `To Apply` when that status is configured.
+
+Telegram delivery is a separate Celery task. A Telegram outage cannot turn completed document generation into a failed application run or trigger another set of Gemini calls. Notifications include optional controls for opening the job, marking it Applied, skipping it, or queuing regeneration when a Telegram webhook is configured.
+
+## Observability
+
+Flower is exposed at `http://localhost:5555` by Docker Compose. Set `FLOWER_BASIC_AUTH=user:password` before exposing it beyond localhost.
+
+Set `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` to enable Langfuse tracing. Gemini logs and traces include the prompt key/version, selected model, anonymized account identifier, latency, repair usage, and provider usage metadata when available.
 
 ## Local setup
 
-1. Install [uv](https://docs.astral.sh/uv/) and Docker.
+1. Install uv and Docker.
 2. Run `uv sync --extra dev` and copy `.env.example` to `.env`.
 3. Import the tenant configuration seed into a Baserow Configuration table and put its ID in `config/users.toml`.
-4. Import the matching prompt seed into the tenant Prompts table. Prompt rows use `Prompt Key`, `Version`, `Prompt Template`, `Output Structure`, `Temperature`, `Status`, and `Enabled`; runtime uses only enabled rows whose status is `Active`.
-5. Put the shared Apify and Gemini pools in the `JOB_HUNT_APIFY_TOKENS` and `JOB_HUNT_GEMINI_API_KEYS` environment variables. Keep tenant-specific Baserow, Cloudinary, Telegram, and Fillout credentials under each tenant's aliases.
-6. Validate files with `uv run job-hunt config validate`; add `--live` after credentials and Baserow are ready.
+4. Import the matching prompt seed into the tenant Prompts table.
+5. Fill the shared Apify/Gemini pools and tenant-specific Baserow, Telegram, and Fillout secrets.
+6. Run `uv run job-hunt config validate`; use `--live` after provider credentials are configured.
 7. Start the stack with `docker compose up --build -d`.
-8. Run all offline checks with `make check`.
+8. Run `uv run ruff check .`, `uv run mypy`, and `uv run pytest` locally. GitHub Actions runs the same quality checks automatically.
 
-OpenAPI documentation is available at `http://localhost:8000/docs`. See [Operations](docs/operations.md), [tenant onboarding](docs/tenant-onboarding.md), and [VPS deployment](docs/vps-deployment.md).
+FastAPI documentation is available at `http://localhost:8000/docs`.
 
 ## Operator examples
 
@@ -80,6 +113,4 @@ uv run job-hunt retry RUN_UUID
 uv run job-hunt discover mojtaba
 ```
 
-## External API contracts
-
-The adapters follow the official Apify Python client, Baserow database API, Cloudinary upload API, Telegram `sendMediaGroup`, Fillout webhooks, LangChain Google Generative AI integration, and Gemini structured-output contracts.
+See `docs/operations.md`, `docs/tenant-onboarding.md`, and `docs/vps-deployment.md` for deployment and troubleshooting details.
