@@ -19,5 +19,3 @@ title_exclusions,linkedin,json,"[""senior"",""manager"",""director"",""lead"",""
 work_experience_selection_count,cv,number,3,true,Number of experience entries selected for a tailored CV
 qualification_threshold,qualification,number,33,true,Minimum qualification score required by the hourly workflow
 telegram_chat_id,telegram,text,386886099,true,Telegram destination chat or user ID
-cloudinary_folder_prefix,cloudinary,text,job-applications,true,Base folder used for Cloudinary application artifacts
-cloudinary_tags,cloudinary,json,"[""job-application"",""generated-document""]",true,Common Cloudinary tags applied to generated documents
