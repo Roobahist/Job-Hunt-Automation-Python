@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from typing import Any
 
 from job_hunt.domain.models import ArtifactBundle
@@ -17,10 +17,7 @@ class BaserowArtifactPublisher:
     def __init__(self, baserow: BaserowClient) -> None:
         self.baserow = baserow
 
-    def publish(
-        self, artifacts: ArtifactBundle, folder: str, tags: Sequence[str]
-    ) -> Mapping[str, Any]:
-        del folder, tags
+    def publish(self, artifacts: ArtifactBundle) -> Mapping[str, Any]:
         return {
             "CV": [self.baserow.upload_file(artifacts.cv_pdf)],
             "Cover Letter": [self.baserow.upload_file(artifacts.cover_letter_pdf)],
