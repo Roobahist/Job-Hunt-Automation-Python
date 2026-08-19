@@ -25,6 +25,7 @@ class PooledGeminiStructuredClient(GeminiStructuredClient):
 
     _lock = Lock()
     _unavailable_until: dict[str, float] = {}
+    _invalid_key_until: dict[str, float] = {}
 
     def __init__(
         self,
@@ -102,16 +103,18 @@ class PooledGeminiStructuredClient(GeminiStructuredClient):
             available = [
                 candidate
                 for candidate in ordered
-                if self._unavailable_until.get(self._candidate_id(*candidate), 0) <= now
+                if self._invalid_key_until.get(self._key_id(candidate[1]), 0) <= now
+                and self._unavailable_until.get(self._candidate_id(*candidate), 0) <= now
             ]
             if available:
                 return available
-            # If all local circuits are open, probe the candidate whose cooldown expires first.
+            # If all local circuits are open, probe the candidate that becomes available first.
             return [
                 min(
                     ordered,
-                    key=lambda candidate: self._unavailable_until.get(
-                        self._candidate_id(*candidate), 0
+                    key=lambda candidate: max(
+                        self._invalid_key_until.get(self._key_id(candidate[1]), 0),
+                        self._unavailable_until.get(self._candidate_id(*candidate), 0),
                     ),
                 )
             ]
@@ -119,6 +122,12 @@ class PooledGeminiStructuredClient(GeminiStructuredClient):
     def _cooldown(self, model: str, key: str) -> None:
         with self._lock:
             self._unavailable_until[self._candidate_id(model, key)] = (
+                time.monotonic() + self.quota_cooldown_seconds
+            )
+
+    def _disable_key(self, key: str) -> None:
+        with self._lock:
+            self._invalid_key_until[self._key_id(key)] = (
                 time.monotonic() + self.quota_cooldown_seconds
             )
 
@@ -191,8 +200,10 @@ class PooledGeminiStructuredClient(GeminiStructuredClient):
                 raise
             except Exception as exc:
                 failures.append(f"{model_name}/{self._key_id(key)}: {exc}")
-                if self._is_quota_error(exc) or self._is_auth_error(exc):
+                if self._is_quota_error(exc):
                     self._cooldown(model_name, key)
+                elif self._is_auth_error(exc):
+                    self._disable_key(key)
                 continue
         raise ProviderError(
             "Gemini structure-repair capacity failed across all configured candidates: "
@@ -243,7 +254,7 @@ class PooledGeminiStructuredClient(GeminiStructuredClient):
                     self._cooldown(model_name, key)
                     continue
                 if self._is_auth_error(exc):
-                    self._cooldown(model_name, key)
+                    self._disable_key(key)
                     continue
                 continue
 
