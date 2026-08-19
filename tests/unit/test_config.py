@@ -5,7 +5,13 @@ from pathlib import Path
 
 import pytest
 
-from job_hunt.config import Settings, decode_config_value, load_registry, parse_configuration_rows, read_seed
+from job_hunt.config import (
+    Settings,
+    decode_config_value,
+    load_registry,
+    parse_configuration_rows,
+    read_seed,
+)
 from job_hunt.errors import ConfigurationError
 
 
