@@ -34,11 +34,14 @@ gemini-3.6-flash
 gemini-3.5-flash
 gemini-3-flash-preview
 gemini-2.5-flash
+gemini-3.5-flash-lite
+gemini-3.1-flash-lite
+gemini-2.5-flash-lite
 ```
 
-For each content model, every configured API key is tried before the workflow moves to the next model. This keeps all available capacity on the strongest model before degrading to a weaker model. The list is controlled by `JOB_HUNT_GEMINI_CONTENT_MODELS`.
+For each content model, every configured API key is tried before the workflow moves to the next model. This keeps all available capacity on the strongest model before degrading to a weaker model. Flash-Lite models are only used for primary generation after every stronger Flash model has been exhausted. The list is controlled by `JOB_HUNT_GEMINI_CONTENT_MODELS`.
 
-Structured-output repair uses a separate high-throughput tier so main-model quota is preserved:
+Structured-output repair starts directly with a separate high-throughput tier so strong-model quota is preserved:
 
 ```text
 gemini-3.5-flash-lite
