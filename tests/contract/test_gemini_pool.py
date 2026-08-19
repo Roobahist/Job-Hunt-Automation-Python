@@ -28,90 +28,62 @@ def reset_pool() -> None:
     PooledGeminiStructuredClient._invalid_key_until.clear()
 
 
-def test_content_exhausts_all_keys_before_next_model(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def response(value: dict[str, Any]) -> tuple[dict[str, Any], str, None, dict[str, Any]]:
+    return value, "json", None, {"model": "test", "account": "account", "latency_ms": 1}
+
+
+def test_content_exhausts_all_keys_before_next_model(monkeypatch: pytest.MonkeyPatch) -> None:
     reset_pool()
     client = PooledGeminiStructuredClient(
-        ["key-1", "key-2"],
-        ["best", "second"],
-        ["repair"],
+        ["key-1", "key-2"], ["best", "second"], ["repair"]
     )
     calls: list[tuple[str, str]] = []
 
-    def call(
-        model: str,
-        key: str,
-        *_: object,
-        **__: object,
-    ) -> tuple[dict[str, Any], str, None]:
+    def call(model: str, key: str, *_: object, **__: object) -> tuple[dict[str, Any], str, None, dict[str, Any]]:
         calls.append((model, key))
         if model == "best":
             raise RuntimeError("RESOURCE_EXHAUSTED: quota exceeded")
-        return {"value": "ok"}, '{"value":"ok"}', None
+        return response({"value": "ok"})
 
     monkeypatch.setattr(client, "_pooled_structured_call", call)
     assert client.generate("prompt", definition()) == {"value": "ok"}
-    assert calls == [
-        ("best", "key-1"),
-        ("best", "key-2"),
-        ("second", "key-1"),
-    ]
+    assert calls == [("best", "key-1"), ("best", "key-2"), ("second", "key-1")]
 
 
 def test_invalid_key_is_skipped_for_lower_models(monkeypatch: pytest.MonkeyPatch) -> None:
     reset_pool()
     client = PooledGeminiStructuredClient(
-        ["bad-key", "good-key"],
-        ["best", "second"],
-        ["repair"],
+        ["bad-key", "good-key"], ["best", "second"], ["repair"]
     )
     calls: list[tuple[str, str]] = []
 
-    def call(
-        model: str,
-        key: str,
-        *_: object,
-        **__: object,
-    ) -> tuple[dict[str, Any], str, None]:
+    def call(model: str, key: str, *_: object, **__: object) -> tuple[dict[str, Any], str, None, dict[str, Any]]:
         calls.append((model, key))
         if key == "bad-key":
             raise RuntimeError("API key not valid")
         if model == "best":
             raise RuntimeError("RESOURCE_EXHAUSTED: quota exceeded")
-        return {"value": "ok"}, '{"value":"ok"}', None
+        return response({"value": "ok"})
 
     monkeypatch.setattr(client, "_pooled_structured_call", call)
     assert client.generate("prompt", definition()) == {"value": "ok"}
-    assert calls == [
-        ("best", "bad-key"),
-        ("best", "good-key"),
-        ("second", "good-key"),
-    ]
+    assert calls == [("best", "bad-key"), ("best", "good-key"), ("second", "good-key")]
 
 
-def test_invalid_content_output_uses_repair_tier(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_invalid_content_output_uses_repair_tier(monkeypatch: pytest.MonkeyPatch) -> None:
     reset_pool()
     client = PooledGeminiStructuredClient(
-        ["key-1", "key-2"],
-        ["best", "second"],
-        ["fast-repair", "backup-repair"],
+        ["key-1", "key-2"], ["best", "second"], ["fast-repair", "backup-repair"]
     )
     calls: list[tuple[str, str]] = []
 
-    def call(
-        model: str,
-        key: str,
-        *_: object,
-        **__: object,
-    ) -> tuple[dict[str, Any] | None, str, str | None]:
+    def call(model: str, key: str, *_: object, **__: object) -> tuple[dict[str, Any] | None, str, str | None, dict[str, Any]]:
         calls.append((model, key))
+        metadata = {"model": model, "account": key, "latency_ms": 1}
         if model == "best":
-            return {"wrong": "shape"}, '{"wrong":"shape"}', None
+            return {"wrong": "shape"}, '{"wrong":"shape"}', None, metadata
         if model == "fast-repair":
-            return {"value": "fixed"}, '{"value":"fixed"}', None
+            return {"value": "fixed"}, '{"value":"fixed"}', None, metadata
         raise AssertionError("Unexpected candidate")
 
     monkeypatch.setattr(client, "_pooled_structured_call", call)
@@ -119,36 +91,24 @@ def test_invalid_content_output_uses_repair_tier(
     assert calls == [("best", "key-1"), ("fast-repair", "key-1")]
 
 
-def test_repair_rotates_keys_before_weaker_repair_model(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_repair_rotates_keys_before_weaker_repair_model(monkeypatch: pytest.MonkeyPatch) -> None:
     reset_pool()
     client = PooledGeminiStructuredClient(
-        ["key-1", "key-2"],
-        ["best"],
-        ["fast-repair", "backup-repair"],
+        ["key-1", "key-2"], ["best"], ["fast-repair", "backup-repair"]
     )
     calls: list[tuple[str, str]] = []
 
-    def call(
-        model: str,
-        key: str,
-        *_: object,
-        **__: object,
-    ) -> tuple[dict[str, Any] | None, str, str | None]:
+    def call(model: str, key: str, *_: object, **__: object) -> tuple[dict[str, Any] | None, str, str | None, dict[str, Any]]:
         calls.append((model, key))
+        metadata = {"model": model, "account": key, "latency_ms": 1}
         if model == "best":
-            return {"wrong": "shape"}, '{"wrong":"shape"}', None
+            return {"wrong": "shape"}, '{"wrong":"shape"}', None, metadata
         if model == "fast-repair" and key == "key-1":
             raise RuntimeError("429 quota exceeded")
         if model == "fast-repair" and key == "key-2":
-            return {"value": "fixed"}, '{"value":"fixed"}', None
+            return {"value": "fixed"}, '{"value":"fixed"}', None, metadata
         raise AssertionError("Unexpected candidate")
 
     monkeypatch.setattr(client, "_pooled_structured_call", call)
     assert client.generate("prompt", definition()) == {"value": "fixed"}
-    assert calls == [
-        ("best", "key-1"),
-        ("fast-repair", "key-1"),
-        ("fast-repair", "key-2"),
-    ]
+    assert calls == [("best", "key-1"), ("fast-repair", "key-1"), ("fast-repair", "key-2")]
