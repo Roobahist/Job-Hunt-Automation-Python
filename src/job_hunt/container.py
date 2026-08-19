@@ -11,9 +11,14 @@ from job_hunt.integrations.apify import ApifyProvider
 from job_hunt.integrations.artifacts import CloudinaryBaserowPublisher
 from job_hunt.integrations.baserow import BaserowClient, BaserowJobRepository
 from job_hunt.integrations.cloudinary import CloudinaryPublisher
-from job_hunt.integrations.configuration import BaserowConfigurationRepository
+from job_hunt.integrations.configuration import (
+    MAHSA_PROMPT_KEYS,
+    MOJTABA_PROMPT_KEYS,
+    BaserowConfigurationRepository,
+    validate_prompt_contract,
+)
 from job_hunt.integrations.gemini import GeminiStructuredClient, GeminiWorkflowAI
-from job_hunt.integrations.gemini_legacy import LegacyGeminiWorkflowAI
+from job_hunt.integrations.gemini_mahsa import MahsaGeminiWorkflowAI
 from job_hunt.integrations.telegram import TelegramNotifier
 from job_hunt.tenants.registry import TenantContext, TenantRegistry
 
@@ -61,15 +66,22 @@ class Container:
             bootstrap.secret("gemini_backup", required=False),
             config.gemini_model,
         )
-        if "qualification_scoring" in prompts:
-            ai = GeminiWorkflowAI(
+        if bootstrap.renderer == "mahsa":
+            validate_prompt_contract(prompts, MAHSA_PROMPT_KEYS, "mahsa")
+            ai = MahsaGeminiWorkflowAI(
                 structured_client,
                 prompts,
                 project_selection_count=config.project_selection_count,
                 work_experience_selection_count=config.work_experience_selection_count,
             )
         else:
-            ai = LegacyGeminiWorkflowAI(structured_client, prompts)
+            validate_prompt_contract(prompts, MOJTABA_PROMPT_KEYS, "mojtaba")
+            ai = GeminiWorkflowAI(
+                structured_client,
+                prompts,
+                project_selection_count=config.project_selection_count,
+                work_experience_selection_count=config.work_experience_selection_count,
+            )
         repository = BaserowJobRepository(
             baserow,
             config.baserow_table_ids["jobs"],
