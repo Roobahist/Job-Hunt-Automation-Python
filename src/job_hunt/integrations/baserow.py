@@ -116,7 +116,6 @@ class BaserowJobRepository:
         )
 
     def reset(self, row_id: int, job: Job) -> Mapping[str, Any]:
-        # Preserve the last working CV and cover letter until a replacement is fully generated.
         return self.client.update_row(
             self.table_id,
             row_id,
@@ -145,6 +144,15 @@ class BaserowJobRepository:
         if "toApply" in self.status_options:
             values["Status"] = self.status_options["toApply"]
         self.client.update_row(self.table_id, row_id, values)
+
+    def set_status(self, row_id: int, status_key: str) -> None:
+        if status_key not in self.status_options:
+            raise KeyError(f"Unknown status key: {status_key}")
+        self.client.update_row(
+            self.table_id,
+            row_id,
+            {"Status": self.status_options[status_key]},
+        )
 
     def _job_fields(self, job: Job) -> dict[str, Any]:
         normalized_contract = "".join(
