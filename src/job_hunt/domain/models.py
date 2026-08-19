@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
@@ -70,6 +70,23 @@ class Job(BaseModel):
     def require_content(self) -> Job:
         if not self.company_name or not self.title or not self.description:
             raise ValueError("company_name, title, and description are required")
+        return self
+
+
+class PromptDefinition(BaseModel):
+    key: str = Field(min_length=1)
+    version: float
+    template: str = Field(min_length=1)
+    output_structure: dict[str, Any]
+    temperature: float = Field(ge=0, le=2)
+
+    @model_validator(mode="after")
+    def require_object_schema(self) -> PromptDefinition:
+        if self.output_structure.get("type") != "object":
+            raise ValueError("output_structure must define an object JSON Schema")
+        properties = self.output_structure.get("properties")
+        if not isinstance(properties, dict) or not properties:
+            raise ValueError("output_structure must define object properties")
         return self
 
 
