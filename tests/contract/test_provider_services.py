@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Any
 
@@ -8,8 +7,7 @@ import pytest
 
 from job_hunt.domain.models import ArtifactBundle, Job, PromptDefinition
 from job_hunt.errors import ProviderError
-from job_hunt.integrations.artifacts import CloudinaryBaserowPublisher
-from job_hunt.integrations.cloudinary import CloudinaryPublisher
+from job_hunt.integrations.artifacts import BaserowArtifactPublisher
 from job_hunt.integrations.gemini import GeminiStructuredClient, GeminiWorkflowAI
 
 
@@ -42,46 +40,18 @@ def definition(key: str, schema: dict[str, Any]) -> PromptDefinition:
     )
 
 
-def test_cloudinary_uses_raw_signed_uploads(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    calls: list[tuple[str, dict[str, Any]]] = []
-    monkeypatch.setattr("job_hunt.integrations.cloudinary.cloudinary.config", lambda **_: None)
-    monkeypatch.setattr(
-        "job_hunt.integrations.cloudinary.cloudinary.uploader.upload",
-        lambda path, **kwargs: (
-            calls.append((path, kwargs)) or {"secure_url": "https://cdn/" + Path(path).name}
-        ),
-    )
-    old = os.environ.pop("CLOUDINARY_URL", None)
-    try:
-        result = CloudinaryPublisher("cloudinary://key:secret@cloud").publish(
-            bundle(tmp_path), "folder", ["tag"]
-        )
-    finally:
-        if old:
-            os.environ["CLOUDINARY_URL"] = old
-    assert len(result) == 7
-    assert all(call[1]["resource_type"] == "raw" and call[1]["overwrite"] for call in calls)
-    assert "CLOUDINARY_URL" not in os.environ or os.environ["CLOUDINARY_URL"] == old
-
-
-def test_cloudinary_baserow_import_mapping(tmp_path: Path) -> None:
-    artifact = bundle(tmp_path)
-
-    class Cloud:
-        def publish(self, artifacts: ArtifactBundle, *_: object) -> dict[str, dict[str, str]]:
-            return {
-                path.name: {"secure_url": "https://cdn/" + path.name}
-                for path in artifacts.all_paths()
-            }
+def test_baserow_publisher_uploads_only_final_pdfs(tmp_path: Path) -> None:
+    uploaded: list[str] = []
 
     class Base:
-        def upload_via_url(self, url: str) -> dict[str, str]:
-            return {"name": url.rsplit("/", 1)[-1]}
+        def upload_file(self, path: Path) -> dict[str, str]:
+            uploaded.append(path.name)
+            return {"name": path.name}
 
-    result = CloudinaryBaserowPublisher(Cloud(), Base()).publish(artifact, "f", [])  # type: ignore[arg-type]
-    assert len(result["CV"]) == len(result["Cover Letter"]) == 3
+    result = BaserowArtifactPublisher(Base()).publish(bundle(tmp_path))  # type: ignore[arg-type]
+    assert uploaded == ["cv.pdf", "cl.pdf"]
+    assert result["CV"] == [{"name": "cv.pdf"}]
+    assert result["Cover Letter"] == [{"name": "cl.pdf"}]
 
 
 def test_gemini_schema_failure_calls_auto_fix(monkeypatch: pytest.MonkeyPatch) -> None:
