@@ -1,0 +1,82 @@
+from __future__ import annotations
+
+from typing import Any
+
+from job_hunt.domain.models import Job, PromptDefinition
+from job_hunt.integrations.configuration import MAHSA_PROMPT_KEYS
+from job_hunt.integrations.gemini_mahsa import MahsaGeminiWorkflowAI
+
+
+def definition(key: str) -> PromptDefinition:
+    return PromptDefinition(
+        key=key,
+        version=1,
+        template=key,
+        output_structure={"type": "object"},
+        temperature=0.2,
+    )
+
+
+def test_mahsa_profile_reuses_shared_operations_and_preserves_sections() -> None:
+    prompts = {key: definition(key) for key in MAHSA_PROMPT_KEYS}
+    calls: list[str] = []
+
+    class Structured:
+        def generate(self, _: str, prompt: PromptDefinition) -> dict[str, Any]:
+            calls.append(prompt.key)
+            outputs: dict[str, dict[str, Any]] = {
+                "cv_work_experience_selection": {"selected_indices": [1]},
+                "cv_work_experience_rewrite": {
+                    "contents": [["Parent tailored"], ["Nested tailored"]]
+                },
+                "cv_skills_tailoring": {
+                    "groups": [{"label": "Design", "skills": ["Figma", "Framer"]}]
+                },
+                "cv_references_inclusion": {"include_references": False},
+                "cv_summary_rewrite": {"summary": ["Tailored summary"]},
+                "cover_letter_generation": {"paragraphs": ["One", "Two", "Three"]},
+            }
+            return outputs[prompt.key]
+
+    master_cv = {
+        "sections": [
+            {"type": "text", "title": "ABOUT ME", "content": ["Old summary"]},
+            {
+                "type": "entries",
+                "title": "EXPERIENCE",
+                "entries": [
+                    {"title": "Parent", "parent": None, "content": ["Parent old"]},
+                    {"title": "Nested", "parent": "Parent", "content": ["Nested old"]},
+                ],
+            },
+            {"type": "education"},
+            {
+                "type": "label_rows",
+                "title": "SKILLS",
+                "rows": [{"label": "Design", "value": "Figma | Framer"}],
+            },
+            {
+                "type": "references",
+                "title": "REFERENCES",
+                "items": [{"name": "Person"}],
+            },
+        ]
+    }
+    ai = MahsaGeminiWorkflowAI(Structured(), prompts, work_experience_selection_count=1)  # type: ignore[arg-type]
+    job = Job(source="x", url="https://x/1", company_name="C", title="T", description="D")
+    tailored = ai.tailor(job, master_cv, prompts)
+    sections = tailored.cv["sections"]
+    assert isinstance(sections, list)
+    by_type = {section["type"]: section for section in sections}
+    assert by_type["text"]["content"] == ["Tailored summary"]
+    assert [entry["title"] for entry in by_type["entries"]["entries"]] == ["Parent", "Nested"]
+    assert by_type["label_rows"]["rows"][0]["value"] == "Figma | Framer"
+    assert by_type["references"]["items"] == []
+    assert calls == [
+        "cv_work_experience_selection",
+        "cv_work_experience_rewrite",
+        "cv_skills_tailoring",
+        "cv_references_inclusion",
+        "cv_summary_rewrite",
+        "cover_letter_generation",
+    ]
