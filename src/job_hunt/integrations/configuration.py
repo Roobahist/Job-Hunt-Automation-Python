@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from jsonschema import Draft202012Validator
+from jsonschema.exceptions import SchemaError
 from pydantic import ValidationError
 
 from job_hunt.config import TenantRuntimeConfig, parse_configuration_rows
@@ -81,6 +83,12 @@ def _output_schema(value: Any, key: str) -> dict[str, Any]:
         raise ConfigurationError(f"Prompt '{key}' has no Output Structure JSON Schema")
     if not isinstance(schema, dict):
         raise ConfigurationError(f"Prompt '{key}' Output Structure must be a JSON object")
+    try:
+        Draft202012Validator.check_schema(schema)
+    except SchemaError as exc:
+        raise ConfigurationError(
+            f"Prompt '{key}' has invalid Output Structure JSON Schema: {exc.message}"
+        ) from exc
     return schema
 
 
