@@ -47,11 +47,7 @@ class ApplicationWorkflow:
         threshold: int,
         force: bool,
         applicant_filename: str,
-        cloudinary_folder: str,
-        cloudinary_tags: list[str],
-        telegram_chat_id: str,
     ) -> WorkflowResult:
-        del telegram_chat_id
         log = logger().bind(run_id=str(run_id), job_identity=job.identity)
         existing = retry_transient(self.repository.find, job)
         row = (
@@ -75,17 +71,10 @@ class ApplicationWorkflow:
         if not passed:
             return WorkflowResult(row_id, False, False)
 
-        # LLM operations checkpoint their successful structured results independently, so a
-        # transient failure later in tailoring does not consume quota by regenerating earlier stages.
         tailored = self.tailor.tailor(job, master_cv, prompts)
         basename = f"{applicant_filename}-{job.company_name}-{job.internal_id}".replace("/", "-")
         artifacts = self.renderer.render(tailored, self.artifact_root / str(run_id), basename)
-        uploaded = retry_transient(
-            self.publisher.publish,
-            artifacts,
-            f"{cloudinary_folder}/{job.internal_id}",
-            cloudinary_tags,
-        )
+        uploaded = retry_transient(self.publisher.publish, artifacts)
         retry_transient(self.repository.save_artifacts, row_id, uploaded)
         log.info("job_documents_ready", stage="publish", row_id=row_id)
         return WorkflowResult(
