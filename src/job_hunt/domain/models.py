@@ -79,7 +79,7 @@ class Qualification(BaseModel):
     reasoning: str = Field(min_length=1)
 
     def passes(self, threshold: int, *, force: bool = False) -> bool:
-        return force or (self.score >= threshold and self.should_apply)
+        return force or self.score >= threshold
 
 
 class TailoredContent(BaseModel):
