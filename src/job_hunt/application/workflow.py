@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-from job_hunt.domain.models import Job
+from job_hunt.domain.models import Job, PromptDefinition
 from job_hunt.logging import logger
 from job_hunt.ports import (
     ArtifactPublisher,
@@ -52,7 +52,7 @@ class ApplicationWorkflow:
         *,
         run_id: UUID,
         master_cv: Mapping[str, Any],
-        prompts: Mapping[str, str],
+        prompts: Mapping[str, PromptDefinition],
         threshold: int,
         force: bool,
         applicant_filename: str,
