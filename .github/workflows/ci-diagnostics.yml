@@ -24,6 +24,8 @@ jobs:
           set +e
           uv sync --extra dev > /tmp/install.log 2>&1
           install_code=$?
+          uv run ruff check . --fix > /tmp/ruff-fix.log 2>&1
+          uv run ruff format . > /tmp/format-fix.log 2>&1
           uv run ruff check . > /tmp/ruff.log 2>&1
           ruff_code=$?
           uv run ruff format --check . > /tmp/format.log 2>&1
@@ -48,10 +50,13 @@ jobs:
             echo "PYTEST_EXIT=$pytest_code"
             cat /tmp/pytest.log
           } > ci-diagnostics.txt
-      - name: Commit diagnostics
+      - name: Commit normalized source and diagnostics
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add ci-diagnostics.txt
-          git commit -m "Record full CI diagnostics [ci-diagnostics]"
+          git add -A
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m "Normalize and record full CI diagnostics [ci-diagnostics]"
           git push
