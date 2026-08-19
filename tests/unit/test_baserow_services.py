@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import pytest
@@ -8,7 +9,10 @@ from job_hunt.domain.identity import assign_identity
 from job_hunt.domain.models import Job, Qualification
 from job_hunt.errors import ConfigurationError
 from job_hunt.integrations.baserow import BaserowJobRepository
-from job_hunt.integrations.configuration import BaserowConfigurationRepository
+from job_hunt.integrations.configuration import (
+    REQUIRED_PROMPT_KEYS,
+    BaserowConfigurationRepository,
+)
 
 
 class Client:
@@ -64,6 +68,24 @@ def sample_job() -> Job:
     )
 
 
+def prompt_row(key: str, *, version: float = 1, status: str = "Active") -> dict[str, Any]:
+    schema = {
+        "type": "object",
+        "properties": {"value": {"type": "string"}},
+        "required": ["value"],
+        "additionalProperties": False,
+    }
+    return {
+        "Prompt Key": key,
+        "Version": version,
+        "Prompt Template": f"prompt for {key}",
+        "Output Structure": json.dumps(schema),
+        "Temperature": 0.2,
+        "Status": status,
+        "Enabled": True,
+    }
+
+
 def test_repository_create_find_reset_and_updates() -> None:
     client = Client()
     repo = BaserowJobRepository(
@@ -87,18 +109,35 @@ def test_repository_create_find_reset_and_updates() -> None:
     assert client.updates[-1]["CV"][0]["name"] == "x"
 
 
-def test_configuration_prompts_and_field_validation() -> None:
+def test_configuration_reads_live_prompt_contract_and_validates_fields() -> None:
     client = Client()
     repository = BaserowConfigurationRepository(client, 1)  # type: ignore[arg-type]
-    client.rows = [
-        {"Key": "qualification", "Prompt": "score", "Enabled": True},
-        {"Key": "tailoring", "Prompt": "tailor", "Enabled": True},
-    ]
-    assert repository.prompts(2)["qualification"] == "score"
+    client.rows = [prompt_row(key) for key in sorted(REQUIRED_PROMPT_KEYS)]
+    client.rows.append(prompt_row("cv_summary_rewrite", version=99, status="Draft"))
+    prompts = repository.prompts(2)
+    summary = prompts["cv_summary_rewrite"]
+    assert summary.version == 1
+    assert summary.temperature == 0.2
+    assert summary.output_structure["additionalProperties"] is False
     repository.validate_job_table(1)
-    client.rows.append({"Key": "tailoring", "Prompt": "duplicate", "Enabled": True})
-    with pytest.raises(ConfigurationError, match="Duplicate"):
+
+    client.rows.append(prompt_row("cv_summary_rewrite", version=2))
+    with pytest.raises(ConfigurationError, match="Duplicate active prompt"):
         repository.prompts(2)
+
     client.fields = [{"name": "Job ID"}]
     with pytest.raises(ConfigurationError, match="missing fields"):
         repository.validate_job_table(1)
+
+
+def test_configuration_rejects_missing_or_invalid_prompt_schema() -> None:
+    client = Client()
+    repository = BaserowConfigurationRepository(client, 1)  # type: ignore[arg-type]
+    client.rows = [prompt_row(key) for key in sorted(REQUIRED_PROMPT_KEYS)]
+    client.rows[0]["Output Structure"] = "not json"
+    with pytest.raises(ConfigurationError, match="invalid Output Structure"):
+        repository.prompts(2)
+
+    client.rows = [prompt_row(key) for key in sorted(REQUIRED_PROMPT_KEYS - {"qualification_scoring"})]
+    with pytest.raises(ConfigurationError, match="Missing active prompts"):
+        repository.prompts(2)
