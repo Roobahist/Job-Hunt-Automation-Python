@@ -49,6 +49,13 @@ class BaserowClient:
             url = payload.get("next")
             query = {}
 
+    def get_row(self, table_id: int, row_id: int) -> dict[str, Any]:
+        response = self._request(
+            "GET",
+            f"/api/database/rows/table/{table_id}/{row_id}/?user_field_names=true",
+        )
+        return cast(dict[str, Any], response.json())
+
     def find_equal(self, table_id: int, field: str, value: object) -> dict[str, Any] | None:
         rows = list(self.iter_rows(table_id, **{f"filter__{field}__equal": value, "size": 2}))
         return rows[0] if rows else None
@@ -148,6 +155,18 @@ class BaserowJobRepository:
             row_id,
             {"Status": self.status_options[status_key]},
         )
+
+    def has_status(self, row_id: int, status_key: str) -> bool:
+        if status_key not in self.status_options:
+            raise KeyError(f"Unknown status key: {status_key}")
+        row = self.client.get_row(self.table_id, row_id)
+        current = row.get("Status")
+        expected_id = self.status_options[status_key]
+        if isinstance(current, Mapping):
+            return current.get("id") == expected_id
+        if isinstance(current, int):
+            return current == expected_id
+        return False
 
     def _job_fields(self, job: Job) -> dict[str, Any]:
         normalized_contract = "".join(
