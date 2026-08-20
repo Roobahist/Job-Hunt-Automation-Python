@@ -283,6 +283,7 @@ class PooledGeminiStructuredClient(GeminiStructuredClient):
             "model": model_name,
             "api_key": key,
             "max_retries": 0,
+            "timeout": 60.0,
         }
         if model_name not in {"gemini-3.6-flash", "gemini-3.5-flash-lite"}:
             kwargs["temperature"] = temperature
