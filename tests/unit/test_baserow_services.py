@@ -91,7 +91,7 @@ def prompt_row(key: str, *, version: float = 1, status: str = "Active") -> dict[
     }
 
 
-def test_repository_create_find_reset_and_updates() -> None:
+def test_repository_create_find_and_narrow_updates() -> None:
     client = Client()
     repo = BaserowJobRepository(
         client,
@@ -104,20 +104,36 @@ def test_repository_create_find_reset_and_updates() -> None:
     assert created["Status"] == 10
     assert created["Job ID"] == 4452378707
     assert created["Date"] == "2026-08-19"
+    assert created["Link"] == job.url
+
     client.rows = [{"id": 3, "Job ID": 4452378707, "Link": job.url}]
     assert repo.find(job)["id"] == 3  # type: ignore[index]
+
+    updates_before_reset = len(client.updates)
     reset = repo.reset(3, job)
-    assert "CV" not in reset and "Cover Letter" not in reset and reset["Status"] == 10
+    assert reset == {"id": 3}
+    assert len(client.updates) == updates_before_reset
+
     repo.save_qualification(
         3,
         Qualification(score=20, should_apply=False, reasoning="low"),
         passed=False,
     )
-    assert client.updates[-1]["Status"] == 11
-    repo.save_artifacts(3, {"CV": [{"name": "x"}]}, job_url=job.url)
-    assert client.updates[-1]["CV"][0]["name"] == "x"
-    assert client.updates[-1]["Link"] == job.url
-    assert client.updates[-1]["Status"] == 12
+    assert client.updates[-1] == {"Score": 20, "Apply": False}
+    assert "Link" not in client.updates[-1]
+    assert "Status" not in client.updates[-1]
+
+    repo.save_artifacts(
+        3,
+        {
+            "CV": [{"name": "cv.pdf"}],
+            "Cover Letter": [{"name": "cl.pdf"}],
+        },
+    )
+    assert set(client.updates[-1]) == {"CV", "Cover Letter"}
+    assert "Link" not in client.updates[-1]
+    assert "Status" not in client.updates[-1]
+
     repo.set_status(3, "applied")
     assert client.updates[-1]["Status"] == 13
 
