@@ -1,7 +1,7 @@
 [users.mahsa]
 enabled = true
 renderer = "mahsa"
-config_table_id = 0 # Replace after importing config/seeds/mahsa.csv
+config_table_id = 1145045
 baserow_base_url = "https://api.baserow.io"
 tenant_root = "tenants/mahsa"
 baserow_token_env = "MAHSA_BASEROW_TOKEN"
@@ -12,7 +12,7 @@ fillout_secret_env = "MAHSA_FILLOUT_WEBHOOK_SECRET"
 [users.mojtaba]
 enabled = true
 renderer = "mojtaba"
-config_table_id = 0 # Replace after importing config/seeds/mojtaba.csv
+config_table_id = 1145044
 baserow_base_url = "https://api.baserow.io"
 tenant_root = "tenants/mojtaba"
 baserow_token_env = "MOJTABA_BASEROW_TOKEN"
