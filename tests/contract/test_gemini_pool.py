@@ -5,6 +5,7 @@ from typing import Any
 import pytest
 
 from job_hunt.domain.models import PromptDefinition
+from job_hunt.errors import ErrorKind, ProviderError
 from job_hunt.integrations.gemini_pool import PooledGeminiStructuredClient
 
 
@@ -108,3 +109,37 @@ def test_repair_rotates_keys_before_weaker_repair_model(monkeypatch: pytest.Monk
     monkeypatch.setattr(client, "_pooled_structured_call", call)
     assert client.generate("prompt", definition()) == {"value": "fixed"}
     assert calls == [("best", "key-1"), ("fast-repair", "key-1"), ("fast-repair", "key-2")]
+
+
+def test_repair_provider_error_does_not_abort_remaining_content_candidates(monkeypatch: pytest.MonkeyPatch) -> None:
+    reset_pool()
+    client = PooledGeminiStructuredClient(["key-1", "key-2"], ["best"], ["repair"])
+    content_calls: list[tuple[str, str]] = []
+    repair_calls = 0
+
+    def call(
+        model: str, key: str, *_: object, **__: object
+    ) -> tuple[dict[str, Any] | None, str, str | None, dict[str, Any]]:
+        content_calls.append((model, key))
+        metadata = {"model": model, "account": key, "latency_ms": 1}
+        if key == "key-1":
+            return {"wrong": "shape"}, '{"wrong":"shape"}', None, metadata
+        return {"value": "ok"}, '{"value":"ok"}', None, metadata
+
+    def repair(*_: object, **__: object) -> tuple[dict[str, Any], dict[str, Any]]:
+        nonlocal repair_calls
+        repair_calls += 1
+        raise ProviderError(
+            "repair capacity exhausted",
+            ErrorKind.RATE_LIMIT,
+            retryable=True,
+            provider="gemini",
+            retry_after=300,
+        )
+
+    monkeypatch.setattr(client, "_pooled_structured_call", call)
+    monkeypatch.setattr(client, "_pooled_repair", repair)
+
+    assert client.generate("prompt", definition()) == {"value": "ok"}
+    assert repair_calls == 1
+    assert content_calls == [("best", "key-1"), ("best", "key-2")]
