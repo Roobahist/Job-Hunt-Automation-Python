@@ -99,15 +99,11 @@ def _output_schema(value: Any, key: str) -> dict[str, Any]:
     try:
         Draft202012Validator.check_schema(schema)
     except SchemaError as exc:
-        raise ConfigurationError(
-            f"Prompt '{key}' has invalid Output Structure JSON Schema: {exc.message}"
-        ) from exc
+        raise ConfigurationError(f"Prompt '{key}' has invalid Output Structure JSON Schema: {exc.message}") from exc
     return schema
 
 
-def validate_prompt_contract(
-    prompts: dict[str, PromptDefinition], required: set[str], profile: str
-) -> None:
+def validate_prompt_contract(prompts: dict[str, PromptDefinition], required: set[str], profile: str) -> None:
     missing = required - prompts.keys()
     if missing:
         raise ConfigurationError(f"Missing active prompts for {profile}: {sorted(missing)}")
@@ -120,9 +116,7 @@ class BaserowConfigurationRepository:
 
     def load(self) -> TenantRuntimeConfig:
         if self.configuration_table_id <= 0:
-            raise ConfigurationError(
-                "Set a positive Baserow configuration table ID in config/users.toml"
-            )
+            raise ConfigurationError("Set a positive Baserow configuration table ID in config/users.toml")
         return parse_configuration_rows(list(self.client.iter_rows(self.configuration_table_id)))
 
     def prompts(self, table_id: int) -> dict[str, PromptDefinition]:
@@ -136,9 +130,7 @@ class BaserowConfigurationRepository:
             if str(status_value or "").strip() != "Active":
                 continue
 
-            key = str(
-                _scalar(_field(row, "Prompt Key", "Key", "prompt_key", "key")) or ""
-            ).strip()
+            key = str(_scalar(_field(row, "Prompt Key", "Key", "prompt_key", "key")) or "").strip()
             if not key:
                 continue
             if key in prompts:
@@ -163,9 +155,7 @@ class BaserowConfigurationRepository:
             try:
                 prompt = PromptDefinition(
                     key=key,
-                    version=float(
-                        _scalar(_field(row, "Version", "Prompt Version", "version"))
-                    ),
+                    version=float(_scalar(_field(row, "Version", "Prompt Version", "version"))),
                     template=template,
                     output_structure=_output_schema(
                         _field(
@@ -177,9 +167,7 @@ class BaserowConfigurationRepository:
                         ),
                         key,
                     ),
-                    temperature=float(
-                        _scalar(_field(row, "Temperature", "temperature"))
-                    ),
+                    temperature=float(_scalar(_field(row, "Temperature", "temperature"))),
                 )
             except (TypeError, ValueError, ValidationError) as exc:
                 raise ConfigurationError(f"Invalid active prompt '{key}': {exc}") from exc
