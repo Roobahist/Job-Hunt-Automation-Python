@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -61,12 +62,13 @@ class Client:
 def sample_job() -> Job:
     return assign_identity(
         Job(
-            source="x",
-            external_id="1",
-            url="https://x/1",
+            source="linkedin",
+            external_id="4452378707",
+            url="https://linkedin.com/jobs/view/4452378707",
             company_name="C",
             title="T",
             description="D",
+            published_at=datetime(2026, 8, 19, tzinfo=UTC),
         )
     )
 
@@ -100,7 +102,9 @@ def test_repository_create_find_reset_and_updates() -> None:
     job = sample_job()
     created = repo.create(job)
     assert created["Status"] == 10
-    client.rows = [{"id": 3, "Job ID": job.internal_id, "Link": job.url}]
+    assert created["Job ID"] == 4452378707
+    assert created["Date"] == "2026-08-19"
+    client.rows = [{"id": 3, "Job ID": 4452378707, "Link": job.url}]
     assert repo.find(job)["id"] == 3  # type: ignore[index]
     reset = repo.reset(3, job)
     assert "CV" not in reset and "Cover Letter" not in reset and reset["Status"] == 10
