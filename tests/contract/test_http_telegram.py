@@ -48,6 +48,32 @@ def test_telegram_uses_one_multipart_media_group(tmp_path: Path) -> None:
 
 
 @respx.mock
+def test_telegram_archive_document_carries_workflow_controls(tmp_path: Path) -> None:
+    archive = tmp_path / "application.zip"
+    archive.write_bytes(b"zip")
+    route = respx.post("https://api.telegram.org/botsecret/sendDocument").mock(
+        return_value=httpx.Response(200, json={"ok": True, "result": {"message_id": 14}})
+    )
+    notifier = TelegramNotifier("secret")
+    assert (
+        notifier.send_document_with_actions(
+            "42",
+            archive,
+            caption="Designer at Example",
+            job_url="https://example.com/job",
+            row_id=77,
+            run_id="run-1",
+        )
+        == "14"
+    )
+    payload = route.calls[0].request.content
+    assert b"application.zip" in payload
+    assert b"status%3Aapplied%3A77" in payload or b"status:applied:77" in payload
+    assert b"status%3Adropped%3A77" in payload or b"status:dropped:77" in payload
+    assert b"retry%3Arun-1" in payload or b"retry:run-1" in payload
+
+
+@respx.mock
 def test_telegram_action_message_has_workflow_controls() -> None:
     route = respx.post("https://api.telegram.org/botsecret/sendMessage").mock(
         return_value=httpx.Response(200, json={"ok": True, "result": {"message_id": 13}})
