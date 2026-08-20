@@ -48,6 +48,83 @@ def test_telegram_uses_one_multipart_media_group(tmp_path: Path) -> None:
 
 
 @respx.mock
+def test_processing_message_starts_as_placeholder_and_can_be_skipped() -> None:
+    route = respx.post("https://api.telegram.org/botsecret/sendDocument").mock(
+        return_value=httpx.Response(200, json={"ok": True, "result": {"message_id": 31}})
+    )
+    message_id = TelegramNotifier("secret").send_processing_message(
+        "42",
+        caption="Status: processing",
+        job_url="https://example.com/job",
+        row_id=77,
+    )
+    assert message_id == "31"
+    body = route.calls[0].request.content
+    assert b"processing.txt" in body
+    assert b"Skip Processing" in body
+    assert b"status%3Adropped%3A77" in body or b"status:dropped:77" in body
+
+
+@respx.mock
+def test_processing_message_updates_caption_in_place() -> None:
+    route = respx.post("https://api.telegram.org/botsecret/editMessageCaption").mock(
+        return_value=httpx.Response(200, json={"ok": True, "result": {"message_id": 31}})
+    )
+    result = TelegramNotifier("secret").edit_processing_message(
+        "42",
+        "31",
+        caption="Status: qualification",
+        job_url="https://example.com/job",
+        row_id=77,
+    )
+    assert result == "31"
+    payload = route.calls[0].request.json()
+    assert payload["message_id"] == 31
+    assert payload["caption"] == "Status: qualification"
+    assert payload["reply_markup"]["inline_keyboard"][1][0]["text"] == "Skip Processing"
+
+
+@respx.mock
+def test_processing_message_is_replaced_by_zip_with_final_actions(tmp_path: Path) -> None:
+    archive = tmp_path / "application.zip"
+    archive.write_bytes(b"zip")
+    route = respx.post("https://api.telegram.org/botsecret/editMessageMedia").mock(
+        return_value=httpx.Response(200, json={"ok": True, "result": {"message_id": 31}})
+    )
+    result = TelegramNotifier("secret").finalize_processing_message(
+        "42",
+        "31",
+        archive,
+        caption="Status: complete",
+        job_url="https://example.com/job",
+        row_id=77,
+        run_id="run-1",
+    )
+    assert result == "31"
+    body = route.calls[0].request.content
+    assert b"application.zip" in body
+    assert b"status%3Aapplied%3A77" in body or b"status:applied:77" in body
+    assert b"status%3Adropped%3A77" in body or b"status:dropped:77" in body
+    assert b"retry%3Arun-1" in body or b"retry:run-1" in body
+
+
+@respx.mock
+def test_late_complete_progress_refresh_preserves_final_keyboard() -> None:
+    route = respx.post("https://api.telegram.org/botsecret/editMessageCaption").mock(
+        return_value=httpx.Response(200, json={"ok": True, "result": {"message_id": 31}})
+    )
+    TelegramNotifier("secret").edit_processing_message(
+        "42",
+        "31",
+        caption="Status: ✅ Complete",
+        job_url="https://example.com/job",
+        row_id=77,
+    )
+    payload = route.calls[0].request.json()
+    assert "reply_markup" not in payload
+
+
+@respx.mock
 def test_telegram_archive_document_carries_workflow_controls(tmp_path: Path) -> None:
     archive = tmp_path / "application.zip"
     archive.write_bytes(b"zip")
