@@ -84,12 +84,16 @@ class ApplicationWorkflow:
             else retry_transient(self.repository.create, job)
         )
         row_id = int(row["id"])
+        if force:
+            # A forced/manual submission is an explicit user override. Reset a
+            # previously dropped row before any downstream live-status checks run.
+            retry_transient(self.repository.set_status, row_id, "new")
         if persisted is not None:
             persisted(row_id)
         self._progress(progress, "persistence", "finish")
-        log.info("job_persisted", stage="persist", row_id=row_id, reprocessed=bool(existing))
+        log.info("job_persisted", stage="persist", row_id=row_id, reprocessed=bool(existing), forced=force)
 
-        if self.compatibility_filter is not None:
+        if self.compatibility_filter is not None and not force:
             self._progress(progress, "compatibility_filter", "start")
             compatible = self.compatibility_filter.compatible(job, prompts)
             self._progress(progress, "compatibility_filter", "finish")
@@ -98,12 +102,14 @@ class ApplicationWorkflow:
                 retry_transient(self.repository.set_status, row_id, "dropped")
                 log.info("job_compatibility_filtered", stage="compatibility_filter", row_id=row_id)
                 return QualificationResult(row_id=row_id, passed=False, score=cast(int, None))
+        elif force:
+            log.info("job_compatibility_bypassed", stage="compatibility_filter", row_id=row_id)
 
         self._progress(progress, "qualification", "start")
         qualification = self.qualifier.qualify(job, master_cv, prompts)
         passed = qualification.passes(threshold, force=force)
         retry_transient(self.repository.save_qualification, row_id, qualification)
-        if qualification.score < threshold:
+        if qualification.score < threshold and not force:
             retry_transient(self.repository.set_status, row_id, "dropped")
             passed = False
         self._progress(progress, "qualification", "finish")
@@ -113,6 +119,7 @@ class ApplicationWorkflow:
             score=qualification.score,
             should_apply=qualification.should_apply,
             passed=passed,
+            forced=force,
         )
         return QualificationResult(row_id=row_id, passed=passed, score=qualification.score)
 
