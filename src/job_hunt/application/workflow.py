@@ -72,7 +72,8 @@ class ApplicationWorkflow:
             return WorkflowResult(row_id, False, False)
 
         tailored = self.tailor.tailor(job, master_cv, prompts)
-        basename = f"{applicant_filename}-{job.company_name}-{job.internal_id}".replace("/", "-")
+        source_id = job.external_id or str(job.internal_id)
+        basename = f"{applicant_filename}-{job.company_name}-{source_id}".replace("/", "-")
         artifacts = self.renderer.render(tailored, self.artifact_root / str(run_id), basename)
         uploaded = retry_transient(self.publisher.publish, artifacts)
         retry_transient(self.repository.save_artifacts, row_id, uploaded)
