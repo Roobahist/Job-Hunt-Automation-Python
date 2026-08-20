@@ -30,6 +30,19 @@ celery_app.conf.update(
     worker_send_task_events=True,
     task_send_sent_event=True,
     beat_schedule={"dispatch-due-tenants": {"task": "job_hunt.dispatch_due_tenants", "schedule": 3600.0}},
+    # Route tasks onto two queues so expensive document generation (many
+    # Gemini calls + LaTeX render + upload) never blocks the head of the
+    # line for cheap discovery/normalization/qualification work.
+    # "fast"      -> discovery, dispatch, submission normalization + qualification
+    # "documents" -> CV/CL generation and its Telegram notification
+    task_routes={
+        "job_hunt.discover_tenant": {"queue": "fast"},
+        "job_hunt.dispatch_due_tenants": {"queue": "fast"},
+        "job_hunt.process_submission": {"queue": "fast"},
+        "job_hunt.generate_documents": {"queue": "documents"},
+        "job_hunt.notify_documents": {"queue": "documents"},
+    },
+    task_default_queue="fast",
 )
 
 

@@ -13,11 +13,32 @@ services:
     depends_on: {redis: {condition: service_healthy}}
     restart: unless-stopped
 
-  worker:
+  worker-fast:
     build:
       context: .
       target: worker
     env_file: .env
+    command: >-
+      celery -A job_hunt.worker.celery_app worker
+      --loglevel=INFO -Q fast --hostname=fast@%h
+      --concurrency=${FAST_WORKER_CONCURRENCY:-4}
+    volumes:
+      - artifacts:/app/runs
+      - ./src:/app/src:ro
+      - ./config:/app/config:ro
+      - ./tenants:/app/tenants:ro
+    depends_on: {redis: {condition: service_healthy}}
+    restart: unless-stopped
+
+  worker-documents:
+    build:
+      context: .
+      target: worker
+    env_file: .env
+    command: >-
+      celery -A job_hunt.worker.celery_app worker
+      --loglevel=INFO -Q documents --hostname=documents@%h
+      --concurrency=${DOCUMENT_WORKER_CONCURRENCY:-2}
     volumes:
       - artifacts:/app/runs
       - ./src:/app/src:ro
