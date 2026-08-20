@@ -62,11 +62,7 @@ class TelegramNotifier:
     def _message_id(payload: dict[str, object], error_message: str) -> str:
         result = payload.get("result")
         if not isinstance(result, dict) or "message_id" not in result:
-            raise ProviderError(
-                error_message,
-                ErrorKind.MALFORMED_PROVIDER_RESPONSE,
-                provider="telegram",
-            )
+            raise ProviderError(error_message, ErrorKind.MALFORMED_PROVIDER_RESPONSE, provider="telegram")
         return str(result["message_id"])
 
     def send_processing_message(
@@ -77,9 +73,7 @@ class TelegramNotifier:
         job_url: str,
         row_id: int | None = None,
     ) -> str:
-        placeholder = (
-            b"Job processing is in progress. This placeholder will be replaced by the application ZIP when complete.\n"
-        )
+        placeholder = b"Job processing is in progress. This placeholder will be replaced by the application ZIP when complete.\n"
         payload = self._post(
             "/sendDocument",
             data={
@@ -111,6 +105,27 @@ class TelegramNotifier:
         )
         return self._message_id(payload, "Telegram returned no edited processing message")
 
+    def edit_final_caption(
+        self,
+        chat_id: str,
+        message_id: str,
+        *,
+        caption: str,
+        job_url: str,
+        row_id: int,
+        run_id: str,
+    ) -> str:
+        payload = self._post(
+            "/editMessageCaption",
+            json={
+                "chat_id": chat_id,
+                "message_id": int(message_id),
+                "caption": caption[:1024],
+                "reply_markup": self._actions(job_url, row_id, run_id),
+            },
+        )
+        return self._message_id(payload, "Telegram returned no edited final message")
+
     def finalize_processing_message(
         self,
         chat_id: str,
@@ -122,11 +137,7 @@ class TelegramNotifier:
         row_id: int,
         run_id: str,
     ) -> str:
-        media = {
-            "type": "document",
-            "media": "attach://document",
-            "caption": caption[:1024],
-        }
+        media = {"type": "document", "media": "attach://document", "caption": caption[:1024]}
         with document.open("rb") as handle:
             payload = self._post(
                 "/editMessageMedia",
@@ -145,34 +156,18 @@ class TelegramNotifier:
         if not 2 <= len(paths) <= 10:
             raise ValueError("Telegram media groups require 2 to 10 documents")
         media = [
-            {
-                "type": "document",
-                "media": f"attach://file_{index}",
-                **({"caption": caption[:1024]} if index == 0 else {}),
-            }
+            {"type": "document", "media": f"attach://file_{index}", **({"caption": caption[:1024]} if index == 0 else {})}
             for index, _ in enumerate(paths)
         ]
         with ExitStack() as stack:
             files = {
-                f"file_{index}": (
-                    path.name,
-                    stack.enter_context(path.open("rb")),
-                    "application/octet-stream",
-                )
+                f"file_{index}": (path.name, stack.enter_context(path.open("rb")), "application/octet-stream")
                 for index, path in enumerate(paths)
             }
-            payload = self._post(
-                "/sendMediaGroup",
-                data={"chat_id": chat_id, "media": json.dumps(media)},
-                files=files,
-            )
+            payload = self._post("/sendMediaGroup", data={"chat_id": chat_id, "media": json.dumps(media)}, files=files)
         result = payload.get("result")
         if not isinstance(result, list) or not result or not isinstance(result[0], dict):
-            raise ProviderError(
-                "Telegram returned no media-group message",
-                ErrorKind.MALFORMED_PROVIDER_RESPONSE,
-                provider="telegram",
-            )
+            raise ProviderError("Telegram returned no media-group message", ErrorKind.MALFORMED_PROVIDER_RESPONSE, provider="telegram")
         return str(result[0]["message_id"])
 
     def send_document_with_actions(
@@ -188,11 +183,7 @@ class TelegramNotifier:
         with document.open("rb") as handle:
             payload = self._post(
                 "/sendDocument",
-                data={
-                    "chat_id": chat_id,
-                    "caption": caption[:1024],
-                    "reply_markup": json.dumps(self._actions(job_url, row_id, run_id)),
-                },
+                data={"chat_id": chat_id, "caption": caption[:1024], "reply_markup": json.dumps(self._actions(job_url, row_id, run_id))},
                 files={"document": (document.name, handle, "application/octet-stream")},
             )
         return self._message_id(payload, "Telegram returned no document message")
@@ -231,17 +222,7 @@ class TelegramNotifier:
         archives = [path for path in artifacts if path.suffix.casefold() == ".zip"]
         if len(archives) != 1:
             raise ValueError("Application notification requires exactly one ZIP archive")
-        return self.send_document_with_actions(
-            chat_id,
-            archives[0],
-            caption=caption,
-            job_url=job_url,
-            row_id=row_id,
-            run_id=run_id,
-        )
+        return self.send_document_with_actions(chat_id, archives[0], caption=caption, job_url=job_url, row_id=row_id, run_id=run_id)
 
     def answer_callback(self, callback_query_id: str, text: str) -> None:
-        self._post(
-            "/answerCallbackQuery",
-            json={"callback_query_id": callback_query_id, "text": text[:200]},
-        )
+        self._post("/answerCallbackQuery", json={"callback_query_id": callback_query_id, "text": text[:200]})
