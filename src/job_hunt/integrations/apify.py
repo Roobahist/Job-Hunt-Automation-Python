@@ -6,6 +6,7 @@ import time
 from collections.abc import Iterable, Mapping, Sequence
 from threading import Lock
 from typing import Any, ClassVar
+from urllib.parse import urlparse
 
 from apify_client import ApifyClient
 
@@ -92,7 +93,11 @@ class ApifyProvider:
 
         now = time.monotonic()
         with self._lock:
-            available = [token for token in self.tokens if self._unavailable_until.get(self._token_id(token), 0) <= now]
+            available = [
+                token
+                for token in self.tokens
+                if self._unavailable_until.get(self._token_id(token), 0) <= now
+            ]
             if available:
                 return available
             return [
@@ -132,7 +137,9 @@ class ApifyProvider:
         failures: list[str] = []
         for token in self._available_tokens():
             try:
-                yield from self._run_with_client(ApifyClient(token), actor_id, run_input, max_items)
+                yield from self._run_with_client(
+                    ApifyClient(token), actor_id, run_input, max_items
+                )
                 return
             except ProviderError:
                 raise
@@ -154,21 +161,45 @@ class ApifyProvider:
             provider="apify",
         )
 
-    def discover(self, urls: Sequence[str], *, max_items: int) -> Iterable[Mapping[str, Any]]:
-        return self._run(self.search_actor_id, {"startUrls": list(urls)}, max_items=max_items)
+    @staticmethod
+    def _valid_http_url(value: str) -> bool:
+        parsed = urlparse(value.strip())
+        return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
 
-    def fetch_linkedin(self, job_id: int, *, country: str, max_concurrency: int) -> Mapping[str, Any]:
+    def discover(self, urls: Sequence[str], *, max_items: int) -> Iterable[Mapping[str, Any]]:
+        requests = [
+            {"url": url.strip()}
+            for url in urls
+            if isinstance(url, str) and self._valid_http_url(url)
+        ]
+        if not requests:
+            raise ProviderError(
+                "No valid LinkedIn search URLs were generated",
+                ErrorKind.BUSINESS,
+                provider="apify",
+            )
+        return self._run(self.search_actor_id, {"startUrls": requests}, max_items=max_items)
+
+    def fetch_linkedin(
+        self, job_id: int, *, country: str, max_concurrency: int
+    ) -> Mapping[str, Any]:
+        job_url = f"https://www.linkedin.com/jobs/view/{job_id}"
         items = list(
             self._run(
                 self.single_actor_id,
                 {
-                    "urls": [f"https://www.linkedin.com/jobs/view/{job_id}"],
-                    "proxy": {"useApifyProxy": True, "apifyProxyCountry": country.upper()},
+                    "jobUrls": [job_url],
+                    "proxy": {
+                        "useApifyProxy": True,
+                        "apifyProxyCountry": country.upper(),
+                    },
                     "maxConcurrency": max_concurrency,
                 },
                 max_items=1,
             )
         )
         if not items:
-            raise ProviderError("LinkedIn job was not found", ErrorKind.BUSINESS, provider="apify")
+            raise ProviderError(
+                "LinkedIn job was not found", ErrorKind.BUSINESS, provider="apify"
+            )
         return items[0]
