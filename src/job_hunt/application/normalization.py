@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import urlsplit
 
 from job_hunt.domain.identity import assign_identity
 from job_hunt.domain.models import (
@@ -17,6 +19,44 @@ from job_hunt.domain.models import (
 from job_hunt.ports import DiscoveryProvider
 from job_hunt.security import fetch_public_text
 
+_LINKEDIN_JOB_ID = re.compile(r"(?:^|[-/])(\d{6,})(?:/)?$")
+
+
+def linkedin_job_id_from_url(url: str) -> int | None:
+    parts = urlsplit(url)
+    if not (parts.hostname or "").lower().endswith("linkedin.com"):
+        return None
+    if "/jobs/view/" not in parts.path:
+        return None
+    match = _LINKEDIN_JOB_ID.search(parts.path.rstrip("/"))
+    return int(match.group(1)) if match else None
+
+
+def _parse_datetime(value: Any) -> datetime | None:
+    if value in {None, ""}:
+        return None
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, (int, float)):
+        timestamp = float(value)
+        if timestamp > 10_000_000_000:
+            timestamp /= 1000
+        return datetime.fromtimestamp(timestamp, tz=UTC)
+    text = str(value).strip()
+    if not text:
+        return None
+    if text.isdigit():
+        return _parse_datetime(int(text))
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%b %d, %Y", "%B %d, %Y"):
+            try:
+                return datetime.strptime(text, fmt).replace(tzinfo=UTC)
+            except ValueError:
+                continue
+    return None
+
 
 def job_from_provider(data: Mapping[str, Any], *, source: str = "linkedin") -> Job:
     external_id = data.get("id") or data.get("jobId") or data.get("job_id")
@@ -24,7 +64,16 @@ def job_from_provider(data: Mapping[str, Any], *, source: str = "linkedin") -> J
     company = data.get("companyName") or data.get("company") or data.get("company_name")
     title = data.get("title") or data.get("jobTitle") or data.get("job_title")
     description = data.get("description") or data.get("jobDescription") or data.get("job_description")
-    published = data.get("publishedAt") or data.get("published_at")
+    published = (
+        data.get("publishedAt")
+        or data.get("published_at")
+        or data.get("postedAt")
+        or data.get("posted_at")
+        or data.get("datePosted")
+        or data.get("date_posted")
+        or data.get("postedDate")
+        or data.get("publishedDate")
+    )
     return assign_identity(
         Job(
             source=source,
@@ -35,7 +84,7 @@ def job_from_provider(data: Mapping[str, Any], *, source: str = "linkedin") -> J
             description=str(description or ""),
             location=str(data.get("location") or "") or None,
             contract_type=str(data.get("contractType") or data.get("contract_type") or "") or None,
-            published_at=datetime.fromisoformat(str(published).replace("Z", "+00:00")) if published else None,
+            published_at=_parse_datetime(published),
         )
     )
 
@@ -45,6 +94,14 @@ class SubmissionNormalizer:
         self.discovery = discovery
         self.extractor = extractor
         self.linkedin_template = linkedin_template
+
+    def _linkedin(self, job_id: int, *, country: str, max_concurrency: int) -> Job:
+        raw = self.discovery.fetch_linkedin(job_id, country=country, max_concurrency=max_concurrency)
+        enriched = dict(raw) | {
+            "id": raw.get("id") or raw.get("jobId") or raw.get("job_id") or job_id,
+            "url": raw.get("url") or raw.get("link") or self.linkedin_template.format(jobId=job_id),
+        }
+        return job_from_provider(enriched)
 
     def normalize(self, submission: JobSubmission, *, country: str, max_concurrency: int) -> Job:
         if isinstance(submission, ExternalSubmission):
@@ -62,17 +119,22 @@ class SubmissionNormalizer:
                 )
             )
         if isinstance(submission, LinkedInSubmission):
-            raw = self.discovery.fetch_linkedin(
-                submission.linkedin_job_id, country=country, max_concurrency=max_concurrency
+            return self._linkedin(
+                submission.linkedin_job_id,
+                country=country,
+                max_concurrency=max_concurrency,
             )
-            enriched = dict(raw) | {
-                "id": raw.get("id", submission.linkedin_job_id),
-                "url": raw.get("url", self.linkedin_template.format(jobId=submission.linkedin_job_id)),
-            }
-            return job_from_provider(enriched)
         if isinstance(submission, UrlSubmission):
-            content = fetch_public_text(str(submission.job_url))
-            return assign_identity(self.extractor.extract_job(content, str(submission.job_url)))
+            source_url = str(submission.job_url)
+            linkedin_job_id = linkedin_job_id_from_url(source_url)
+            if linkedin_job_id is not None:
+                return self._linkedin(
+                    linkedin_job_id,
+                    country=country,
+                    max_concurrency=max_concurrency,
+                )
+            content = fetch_public_text(source_url)
+            return assign_identity(self.extractor.extract_job(content, source_url))
         if isinstance(submission, AiContentSubmission):
             return assign_identity(
                 self.extractor.extract_job(submission.page_content, str(submission.source_url or ""))
