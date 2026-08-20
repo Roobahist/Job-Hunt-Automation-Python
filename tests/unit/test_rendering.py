@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -59,9 +60,29 @@ def test_real_tenant_templates_and_master_cv_render(
         root / "templates/cover_letter_template.tex",
         FakeCompiler(),
     )
-    bundle = renderer.render(TailoredContent(cv=master, cover_letter=cover()), tmp_path / tenant, tenant)
+    bundle = renderer.render(
+        TailoredContent(cv=master, cover_letter=cover()),
+        tmp_path / tenant,
+        tenant,
+        applicant_filename="Applicant",
+    )
     assert bundle.cv_pdf.read_bytes().startswith(b"%PDF")
     assert bundle.cover_letter_pdf.exists() and bundle.archive.exists()
+    assert bundle.cv_json.name == "Applicant_CV.json"
+    assert bundle.cv_tex.name == "Applicant_CV.tex"
+    assert bundle.cv_pdf.name == "Applicant_CV.pdf"
+    assert bundle.cover_letter_json.name == "Applicant_CL.json"
+    assert bundle.cover_letter_tex.name == "Applicant_CL.tex"
+    assert bundle.cover_letter_pdf.name == "Applicant_CL.pdf"
+    with zipfile.ZipFile(bundle.archive) as archive:
+        assert set(archive.namelist()) == {
+            "Applicant_CV.json",
+            "Applicant_CV.tex",
+            "Applicant_CV.pdf",
+            "Applicant_CL.json",
+            "Applicant_CL.tex",
+            "Applicant_CL.pdf",
+        }
     assert "%%__" not in bundle.cv_tex.read_text()
     assert r"A\&B" in bundle.cover_letter_tex.read_text()
 
