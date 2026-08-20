@@ -30,6 +30,7 @@ REQUIRED_JOB_FIELDS = {
 
 COMMON_PROMPT_KEYS = {
     "cover_letter_generation",
+    "job_compatibility_filter",
     "job_page_content_extraction",
     "qualification_scoring",
 }
