@@ -11,6 +11,8 @@ import httpx
 from job_hunt.errors import ErrorKind, ProviderError
 from job_hunt.integrations.http import raise_provider_error
 
+_DROPPED_STATUS_MARKER = "Status: ⛔ Dropped"
+
 
 class TelegramNotifier:
     def __init__(
@@ -76,6 +78,18 @@ class TelegramNotifier:
             )
         return str(result["message_id"])
 
+    def delete_message(self, chat_id: str, message_id: str) -> None:
+        payload = self._post(
+            "/deleteMessage",
+            json={"chat_id": chat_id, "message_id": int(message_id)},
+        )
+        if payload.get("result") is not True:
+            raise ProviderError(
+                "Telegram did not confirm message deletion",
+                ErrorKind.MALFORMED_PROVIDER_RESPONSE,
+                provider="telegram",
+            )
+
     def send_processing_message(
         self,
         chat_id: str,
@@ -84,6 +98,10 @@ class TelegramNotifier:
         job_url: str,
         row_id: int | None = None,
     ) -> str:
+        # A job may be dropped while its notification-init task is still queued.
+        # In that case there should never be a placeholder message to clean up.
+        if _DROPPED_STATUS_MARKER in caption:
+            return ""
         placeholder = (
             b"Job processing is in progress. This placeholder will be replaced by "
             b"the application ZIP when complete.\n"
@@ -108,6 +126,12 @@ class TelegramNotifier:
         job_url: str,
         row_id: int | None = None,
     ) -> str:
+        # Dropped is a terminal cleanup state. Every drop path eventually refreshes
+        # the persistent processing message, so centralizing deletion here keeps all
+        # rejection paths consistent without sending extra Telegram messages.
+        if _DROPPED_STATUS_MARKER in caption:
+            self.delete_message(chat_id, message_id)
+            return message_id
         data: dict[str, object] = {
             "chat_id": chat_id,
             "message_id": int(message_id),
