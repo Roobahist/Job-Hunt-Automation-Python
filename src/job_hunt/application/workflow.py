@@ -61,7 +61,7 @@ class ApplicationWorkflow:
 
         qualification = retry_transient(self.qualifier.qualify, job, master_cv, prompts)
         passed = qualification.passes(threshold, force=force)
-        retry_transient(self.repository.save_qualification, row_id, qualification, passed=passed)
+        retry_transient(self.repository.save_qualification, row_id, qualification)
         log.info(
             "job_qualified",
             stage="qualification",
