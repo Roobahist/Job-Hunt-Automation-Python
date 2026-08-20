@@ -95,6 +95,26 @@ def test_provider_timestamp_date_is_supported() -> None:
     assert job.published_at == datetime.fromtimestamp(1_756_166_400, tz=UTC)
 
 
+def test_linkedin_url_actor_output_fields_are_supported() -> None:
+    job = job_from_provider(
+        {
+            "jobId": "4350364210",
+            "url": "https://www.linkedin.com/jobs/view/4350364210",
+            "companyName": "Netflix",
+            "title": "Data Engineer",
+            "descriptionText": "Build data systems",
+            "location": "Canada",
+            "employmentType": "Full-time",
+            "postedAt": "2026-06-12T00:00:00.000Z",
+        }
+    )
+    assert job.external_id == "4350364210"
+    assert job.company_name == "Netflix"
+    assert job.description == "Build data systems"
+    assert job.contract_type == "Full-time"
+    assert job.published_at == datetime(2026, 6, 12, tzinfo=UTC)
+
+
 def test_fillout_ai_and_url_branches() -> None:
     ai = fillout_submission({"entryType": "ai_content", "pageContent": "text", "jobUrl": "https://x/job"}, {})
     assert isinstance(ai, AiContentSubmission)
