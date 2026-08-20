@@ -11,7 +11,14 @@ import httpx
 from job_hunt.errors import ErrorKind, ProviderError
 from job_hunt.integrations.http import raise_provider_error
 
-_DROPPED_STATUS_MARKER = "Status: ⛔ Dropped"
+_TERMINAL_CLEANUP_STATUS_MARKERS = (
+    "Status: ⛔ Dropped",
+    "Status: ❌ Failed",
+)
+
+
+def _should_cleanup(caption: str) -> bool:
+    return any(marker in caption for marker in _TERMINAL_CLEANUP_STATUS_MARKERS)
 
 
 class TelegramNotifier:
@@ -98,9 +105,9 @@ class TelegramNotifier:
         job_url: str,
         row_id: int | None = None,
     ) -> str:
-        # A job may be dropped while its notification-init task is still queued.
+        # A run can become terminal while its notification-init task is still queued.
         # In that case there should never be a placeholder message to clean up.
-        if _DROPPED_STATUS_MARKER in caption:
+        if _should_cleanup(caption):
             return ""
         placeholder = (
             b"Job processing is in progress. This placeholder will be replaced by "
@@ -126,10 +133,9 @@ class TelegramNotifier:
         job_url: str,
         row_id: int | None = None,
     ) -> str:
-        # Dropped is a terminal cleanup state. Every drop path eventually refreshes
-        # the persistent processing message, so centralizing deletion here keeps all
-        # rejection paths consistent without sending extra Telegram messages.
-        if _DROPPED_STATUS_MARKER in caption:
+        # Terminal runs without a finalized ZIP are removed from Telegram. Every drop
+        # and terminal-failure path refreshes this same persistent message.
+        if _should_cleanup(caption):
             self.delete_message(chat_id, message_id)
             return message_id
         data: dict[str, object] = {
