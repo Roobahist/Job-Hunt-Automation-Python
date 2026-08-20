@@ -3,12 +3,12 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 from job_hunt.domain.models import Job, PromptDefinition
 from job_hunt.logging import logger
-from job_hunt.ports import ArtifactPublisher, DocumentRenderer, JobRepository, Qualifier, Tailor
+from job_hunt.ports import ArtifactPublisher, CompatibilityFilter, DocumentRenderer, JobRepository, Qualifier, Tailor
 from job_hunt.retry import retry_transient
 
 ProgressCallback = Callable[[str, str], None]
@@ -40,8 +40,11 @@ class ApplicationWorkflow:
         renderer: DocumentRenderer,
         publisher: ArtifactPublisher,
         artifact_root: Path,
+        *,
+        compatibility_filter: CompatibilityFilter | None = None,
     ) -> None:
         self.repository = repository
+        self.compatibility_filter = compatibility_filter
         self.qualifier = qualifier
         self.tailor = tailor
         self.renderer = renderer
@@ -85,6 +88,16 @@ class ApplicationWorkflow:
             persisted(row_id)
         self._progress(progress, "persistence", "finish")
         log.info("job_persisted", stage="persist", row_id=row_id, reprocessed=bool(existing))
+
+        if self.compatibility_filter is not None:
+            self._progress(progress, "compatibility_filter", "start")
+            compatible = self.compatibility_filter.compatible(job, prompts)
+            self._progress(progress, "compatibility_filter", "finish")
+            log.info("job_compatibility_checked", stage="compatibility_filter", compatible=compatible)
+            if not compatible:
+                retry_transient(self.repository.set_status, row_id, "dropped")
+                log.info("job_compatibility_filtered", stage="compatibility_filter", row_id=row_id)
+                return QualificationResult(row_id=row_id, passed=False, score=cast(int, None))
 
         self._progress(progress, "qualification", "start")
         qualification = self.qualifier.qualify(job, master_cv, prompts)
