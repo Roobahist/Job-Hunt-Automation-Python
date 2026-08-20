@@ -53,3 +53,32 @@ def test_fillout_ai_and_url_branches() -> None:
     assert isinstance(ai, AiContentSubmission)
     url = fillout_submission({"entryType": "url", "jobUrl": "https://x/job"}, {})
     assert isinstance(url, UrlSubmission)
+
+
+def test_fillout_semantic_keys_work_with_configured_field_ids() -> None:
+    submission = fillout_submission(
+        {"entryType": "linkedin", "linkedinJobId": "123"},
+        {
+            "entryType": "opaque-entry-id",
+            "linkedinJobId": "opaque-linkedin-id",
+        },
+    )
+    assert isinstance(submission, LinkedInSubmission)
+    assert submission.linkedin_job_id == 123
+
+
+def test_fillout_configured_ids_still_take_precedence() -> None:
+    submission = fillout_submission(
+        {
+            "entryType": "url",
+            "jobUrl": "https://semantic.example/job",
+            "opaque-entry-id": "linkedin",
+            "opaque-linkedin-id": "456",
+        },
+        {
+            "entryType": "opaque-entry-id",
+            "linkedinJobId": "opaque-linkedin-id",
+        },
+    )
+    assert isinstance(submission, LinkedInSubmission)
+    assert submission.linkedin_job_id == 456
