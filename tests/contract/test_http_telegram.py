@@ -68,6 +68,7 @@ def test_telegram_archive_document_carries_workflow_controls(tmp_path: Path) -> 
     )
     payload = route.calls[0].request.content
     assert b"application.zip" in payload
+    assert b"Designer at Example" in payload
     assert b"status%3Aapplied%3A77" in payload or b"status:applied:77" in payload
     assert b"status%3Adropped%3A77" in payload or b"status:dropped:77" in payload
     assert b"retry%3Arun-1" in payload or b"retry:run-1" in payload
@@ -96,17 +97,14 @@ def test_telegram_action_message_has_workflow_controls() -> None:
 
 
 @respx.mock
-def test_application_bundle_sends_every_artifact_and_replies_with_actions(tmp_path: Path) -> None:
+def test_application_bundle_sends_only_zip_with_caption_and_actions(tmp_path: Path) -> None:
     artifacts = []
     for name in ("application.zip", "Person_CV.pdf", "Person_CL.pdf"):
         path = tmp_path / name
         path.write_bytes(b"data")
         artifacts.append(path)
 
-    media_route = respx.post("https://api.telegram.org/botsecret/sendMediaGroup").mock(
-        return_value=httpx.Response(200, json={"ok": True, "result": [{"message_id": 20}]})
-    )
-    action_route = respx.post("https://api.telegram.org/botsecret/sendMessage").mock(
+    document_route = respx.post("https://api.telegram.org/botsecret/sendDocument").mock(
         return_value=httpx.Response(200, json={"ok": True, "result": {"message_id": 21}})
     )
 
@@ -120,13 +118,29 @@ def test_application_bundle_sends_every_artifact_and_replies_with_actions(tmp_pa
     )
 
     assert result == "21"
-    media_body = media_route.calls[0].request.content
-    for name in (b"application.zip", b"Person_CV.pdf", b"Person_CL.pdf"):
-        assert name in media_body
-    action_payload = action_route.calls[0].request.read().decode()
-    assert '"message_id":20' in action_payload or '"message_id": 20' in action_payload
-    assert "status:applied:77" in action_payload
-    assert "retry:run-1" in action_payload
+    assert len(document_route.calls) == 1
+    body = document_route.calls[0].request.content
+    assert b"application.zip" in body
+    assert b"Person_CV.pdf" not in body
+    assert b"Person_CL.pdf" not in body
+    assert b"Designer at Example" in body
+    assert b"status%3Aapplied%3A77" in body or b"status:applied:77" in body
+    assert b"status%3Adropped%3A77" in body or b"status:dropped:77" in body
+    assert b"retry%3Arun-1" in body or b"retry:run-1" in body
+
+
+def test_application_bundle_requires_exactly_one_zip(tmp_path: Path) -> None:
+    pdf = tmp_path / "Person_CV.pdf"
+    pdf.write_bytes(b"pdf")
+    with pytest.raises(ValueError, match="exactly one ZIP"):
+        TelegramNotifier("x").send_application_bundle(
+            "1",
+            [pdf],
+            caption="x",
+            job_url="https://example.com/job",
+            row_id=1,
+            run_id="run",
+        )
 
 
 def test_telegram_enforces_api_album_size(tmp_path: Path) -> None:
