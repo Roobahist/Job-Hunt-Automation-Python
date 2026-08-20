@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from job_hunt.api.app import create_app
 from job_hunt.config import Settings
+from job_hunt.errors import ErrorKind, ProviderError
 from job_hunt.run_store import RunStore
 
 
@@ -99,8 +100,16 @@ class FakeBootstrap:
 class FakeNotifier:
     def __init__(self) -> None:
         self.answers: list[tuple[str, str]] = []
+        self.fail_answers = False
 
     def answer_callback(self, callback_id: str, text: str) -> None:
+        if self.fail_answers:
+            raise ProviderError(
+                "callback acknowledgement failed",
+                ErrorKind.TRANSIENT_PROVIDER,
+                retryable=True,
+                provider="telegram",
+            )
         self.answers.append((callback_id, text))
 
 
@@ -121,6 +130,17 @@ class FakeContainer:
         self.registry = SimpleNamespace(
             get=lambda _: object(),
             bootstraps=self.bootstraps,
+        )
+
+    def telegram_route(self, chat_id: str) -> object | None:
+        tenants = {"100": "mahsa", "200": "mojtaba"}
+        tenant = tenants.get(chat_id)
+        if tenant is None:
+            return None
+        return SimpleNamespace(
+            tenant=tenant,
+            repository=self.repositories[tenant],
+            notifier=self.notifier,
         )
 
     def tenant(self, tenant: str) -> object:
@@ -205,6 +225,8 @@ def test_discovery_and_fillout_auth_form_validation() -> None:
 def test_shared_telegram_callback_routes_by_chat_id() -> None:
     FakeContainer.repositories["mahsa"].statuses.clear()
     FakeContainer.repositories["mojtaba"].statuses.clear()
+    FakeContainer.notifier.answers.clear()
+    FakeContainer.notifier.fail_answers = False
     api, _ = client()
     response = api.post(
         "/webhooks/telegram",
@@ -220,6 +242,7 @@ def test_shared_telegram_callback_routes_by_chat_id() -> None:
     assert response.status_code == 200
     assert FakeContainer.repositories["mahsa"].statuses == [(42, "applied")]
     assert FakeContainer.repositories["mojtaba"].statuses == []
+    assert FakeContainer.notifier.answers == [("cb", "Status updated")]
 
 
 def test_shared_telegram_callback_ignores_unknown_chat() -> None:
@@ -238,6 +261,26 @@ def test_shared_telegram_callback_ignores_unknown_chat() -> None:
     )
     assert response.status_code == 200
     assert FakeContainer.repositories["mahsa"].statuses == []
+
+
+def test_telegram_acknowledgement_failure_does_not_retry_action() -> None:
+    FakeContainer.repositories["mojtaba"].statuses.clear()
+    FakeContainer.notifier.fail_answers = True
+    api, _ = client()
+    response = api.post(
+        "/webhooks/telegram",
+        headers={"X-Telegram-Bot-Api-Secret-Token": "telegram-secret"},
+        json={
+            "callback_query": {
+                "id": "cb-fail",
+                "data": "status:applied:43",
+                "message": {"chat": {"id": 200}},
+            }
+        },
+    )
+    FakeContainer.notifier.fail_answers = False
+    assert response.status_code == 200
+    assert FakeContainer.repositories["mojtaba"].statuses == [(43, "applied")]
 
 
 def test_validation_error_is_structured() -> None:
