@@ -21,7 +21,7 @@ services:
     command: >-
       celery -A job_hunt.worker.celery_app worker
       --loglevel=INFO -Q fast --hostname=fast@%h
-      --concurrency=${FAST_WORKER_CONCURRENCY:-4}
+      --concurrency=${FAST_WORKER_CONCURRENCY:-3}
     volumes:
       - artifacts:/app/runs
       - ./src:/app/src:ro
@@ -38,7 +38,24 @@ services:
     command: >-
       celery -A job_hunt.worker.celery_app worker
       --loglevel=INFO -Q documents --hostname=documents@%h
-      --concurrency=${DOCUMENT_WORKER_CONCURRENCY:-2}
+      --concurrency=${DOCUMENT_WORKER_CONCURRENCY:-1}
+    volumes:
+      - artifacts:/app/runs
+      - ./src:/app/src:ro
+      - ./config:/app/config:ro
+      - ./tenants:/app/tenants:ro
+    depends_on: {redis: {condition: service_healthy}}
+    restart: unless-stopped
+
+  worker-notifications:
+    build:
+      context: .
+      target: worker
+    env_file: .env
+    command: >-
+      celery -A job_hunt.worker.celery_app worker
+      --loglevel=INFO -Q notifications --hostname=notifications@%h
+      --concurrency=${NOTIFICATION_WORKER_CONCURRENCY:-1}
     volumes:
       - artifacts:/app/runs
       - ./src:/app/src:ro
