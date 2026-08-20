@@ -59,8 +59,7 @@ def notify_documents(
     store = _store()
     identifier = UUID(run_id)
     try:
-        bootstrap = Container(settings).registry.get(tenant).bootstrap
-        notifier = TelegramNotifier(bootstrap.secret("telegram"))
+        notifier = TelegramNotifier(settings.shared_telegram_token())
         media_id = retry_transient(
             notifier.send_documents,
             chat_id,
