@@ -53,12 +53,16 @@ def test_shared_provider_settings_are_ordered_and_required() -> None:
     settings = Settings(
         apify_tokens="a1, a2,a3",
         gemini_api_keys="g1,g2",
+        telegram_bot_token="bot",
+        telegram_webhook_secret="webhook",
         gemini_content_models="models/best,second",
         gemini_repair_models="fast,cheaper",
         gemini_limits_json='{"best":{"rpm":5,"tpm":1000,"rpd":20}}',
     )
     assert settings.shared_apify_tokens() == ["a1", "a2", "a3"]
     assert settings.shared_gemini_keys() == ["g1", "g2"]
+    assert settings.shared_telegram_token() == "bot"
+    assert settings.shared_telegram_webhook_secret() == "webhook"
     assert settings.content_models() == ["best", "second"]
     assert settings.repair_models() == ["fast", "cheaper"]
     assert settings.gemini_limits()["best"] == {"rpm": 5, "tpm": 1000, "rpd": 20}
@@ -67,6 +71,10 @@ def test_shared_provider_settings_are_ordered_and_required() -> None:
         Settings(apify_tokens="").shared_apify_tokens()
     with pytest.raises(ConfigurationError, match="GEMINI_API_KEYS"):
         Settings(gemini_api_keys="").shared_gemini_keys()
+    with pytest.raises(ConfigurationError, match="TELEGRAM_BOT_TOKEN"):
+        Settings(telegram_bot_token="").shared_telegram_token()
+    with pytest.raises(ConfigurationError, match="TELEGRAM_WEBHOOK_SECRET"):
+        Settings(telegram_webhook_secret="").shared_telegram_webhook_secret()
     with pytest.raises(ConfigurationError, match="LIMITS_JSON"):
         Settings(gemini_limits_json="not-json").gemini_limits()
 
@@ -81,6 +89,5 @@ def test_registry_and_real_seed_files(monkeypatch: pytest.MonkeyPatch) -> None:
     assert set(registry) == {"mahsa", "mojtaba"}
     monkeypatch.setenv("MAHSA_BASEROW_TOKEN", "secret")
     assert registry["mahsa"].secret("baserow") == "secret"
-    assert registry["mahsa"].secret("telegram_webhook", required=False) == ""
     assert read_seed(Path("config/seeds/mahsa.csv")).tenant_key == "mahsa_azar"
     assert read_seed(Path("config/seeds/mojtaba.csv")).tenant_key == "mojtaba_kanani"
