@@ -104,7 +104,11 @@ def test_repository_create_find_reset_and_updates() -> None:
     assert repo.find(job)["id"] == 3  # type: ignore[index]
     reset = repo.reset(3, job)
     assert "CV" not in reset and "Cover Letter" not in reset and reset["Status"] == 10
-    repo.save_qualification(3, Qualification(score=20, should_apply=False, reasoning="low"), passed=False)
+    repo.save_qualification(
+        3,
+        Qualification(score=20, should_apply=False, reasoning="low"),
+        passed=False,
+    )
     assert client.updates[-1]["Status"] == 11
     repo.save_artifacts(3, {"CV": [{"name": "x"}]})
     assert client.updates[-1]["CV"][0]["name"] == "x"
@@ -116,7 +120,8 @@ def test_repository_create_find_reset_and_updates() -> None:
 def test_configuration_reads_live_prompt_contract_and_validates_fields() -> None:
     client = Client()
     repository = BaserowConfigurationRepository(client, 1)  # type: ignore[arg-type]
-    client.rows = [prompt_row(key) for key in sorted(MAHSA_PROMPT_KEYS)]
+    all_profile_keys = MAHSA_PROMPT_KEYS | MOJTABA_PROMPT_KEYS
+    client.rows = [prompt_row(key) for key in sorted(all_profile_keys)]
     client.rows.append(prompt_row("cv_summary_rewrite", version=99, status="Draft"))
     prompts = repository.prompts(2)
     summary = prompts["cv_summary_rewrite"]
@@ -144,15 +149,28 @@ def test_configuration_rejects_missing_common_or_invalid_schema() -> None:
     with pytest.raises(ConfigurationError, match="invalid Output Structure"):
         repository.prompts(2)
 
-    client.rows = [prompt_row(key) for key in sorted(COMMON_PROMPT_KEYS - {"qualification_scoring"})]
+    client.rows = [
+        prompt_row(key)
+        for key in sorted(COMMON_PROMPT_KEYS - {"qualification_scoring"})
+    ]
     with pytest.raises(ConfigurationError, match="Missing active prompts"):
         repository.prompts(2)
 
 
-def test_profile_contracts_reject_missing_profile_specific_prompts() -> None:
+def test_profile_contracts_are_independent() -> None:
     client = Client()
     repository = BaserowConfigurationRepository(client, 1)  # type: ignore[arg-type]
+
+    client.rows = [prompt_row(key) for key in sorted(MAHSA_PROMPT_KEYS)]
+    mahsa_prompts = repository.prompts(2)
+    validate_prompt_contract(mahsa_prompts, MAHSA_PROMPT_KEYS, "mahsa")
+    assert "cv_project_selection" not in MAHSA_PROMPT_KEYS
+    assert "cv_project_rewrite" not in MAHSA_PROMPT_KEYS
+    with pytest.raises(ConfigurationError, match="mojtaba"):
+        validate_prompt_contract(mahsa_prompts, MOJTABA_PROMPT_KEYS, "mojtaba")
+
     client.rows = [prompt_row(key) for key in sorted(MOJTABA_PROMPT_KEYS)]
-    prompts = repository.prompts(2)
+    mojtaba_prompts = repository.prompts(2)
+    validate_prompt_contract(mojtaba_prompts, MOJTABA_PROMPT_KEYS, "mojtaba")
     with pytest.raises(ConfigurationError, match="mahsa"):
-        validate_prompt_contract(prompts, MAHSA_PROMPT_KEYS, "mahsa")
+        validate_prompt_contract(mojtaba_prompts, MAHSA_PROMPT_KEYS, "mahsa")
