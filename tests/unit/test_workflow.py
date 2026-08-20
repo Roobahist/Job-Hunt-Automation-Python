@@ -86,14 +86,7 @@ def make_workflow(repo: Repository, result: Qualification) -> tuple[ApplicationW
 
 def application_job() -> Job:
     return assign_identity(
-        Job(
-            source="x",
-            external_id="1",
-            url="https://x/jobs/1",
-            company_name="C",
-            title="T",
-            description="D",
-        )
+        Job(source="x", external_id="1", url="https://x/jobs/1", company_name="C", title="T", description="D")
     )
 
 
@@ -145,19 +138,67 @@ def test_document_generation_is_explicit_after_qualification() -> None:
     assert result.notification_paths == ("/tmp/application.zip",)  # type: ignore[attr-defined]
 
 
+def test_progress_callback_reports_major_pipeline_boundaries() -> None:
+    repo = Repository()
+    workflow, _, _, _ = make_workflow(repo, Qualification(score=90, should_apply=True, reasoning="good"))
+    events: list[tuple[str, str]] = []
+    qualification = workflow.persist_and_qualify(
+        application_job(),
+        run_id=uuid4(),
+        master_cv={},
+        prompts={},
+        threshold=33,
+        force=False,
+        progress=lambda stage, event: events.append((stage, event)),
+    )
+    workflow.generate_documents(
+        application_job(),
+        run_id=uuid4(),
+        row_id=qualification.row_id,
+        score=qualification.score,
+        master_cv={},
+        prompts={},
+        applicant_filename="Person",
+        progress=lambda stage, event: events.append((stage, event)),
+    )
+    assert events == [
+        ("persistence", "start"),
+        ("persistence", "finish"),
+        ("qualification", "start"),
+        ("qualification", "finish"),
+        ("tailoring", "start"),
+        ("tailoring", "finish"),
+        ("rendering", "start"),
+        ("rendering", "finish"),
+        ("artifact_upload", "start"),
+        ("artifact_upload", "finish"),
+    ]
+
+
 def test_manual_drop_before_documents_skips_tailoring_rendering_and_publish() -> None:
     repo = Repository(dropped=True)
     workflow, publisher, ai, renderer = make_workflow(
         repo,
         Qualification(score=90, should_apply=True, reasoning="good"),
     )
-    result = generate(workflow, row_id=8, score=90)
-    assert not result.passed  # type: ignore[attr-defined]
-    assert not result.artifacts_published  # type: ignore[attr-defined]
-    assert result.notification_paths == ()  # type: ignore[attr-defined]
+    events: list[tuple[str, str]] = []
+    result = workflow.generate_documents(
+        application_job(),
+        run_id=uuid4(),
+        row_id=8,
+        score=90,
+        master_cv={},
+        prompts={},
+        applicant_filename="Person",
+        progress=lambda stage, event: events.append((stage, event)),
+    )
+    assert not result.passed
+    assert not result.artifacts_published
+    assert result.notification_paths == ()
     assert ai.tailor_calls == 0
     assert renderer.calls == 0
     assert publisher.calls == 0
+    assert events == []
 
 
 def test_force_does_not_override_below_threshold_drop_rule() -> None:
