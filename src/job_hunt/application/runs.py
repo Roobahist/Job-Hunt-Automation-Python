@@ -117,7 +117,7 @@ class RunCoordinator:
                 original.tenant,
                 dict(payload),
                 retry.run_id,
-                bool(replay.get("force", False)),
+                fresh or bool(replay.get("force", False)),
                 str(replay["snapshot_id"]) if replay.get("snapshot_id") else None,
                 str(replay["checkpoint_namespace"]),
             )
