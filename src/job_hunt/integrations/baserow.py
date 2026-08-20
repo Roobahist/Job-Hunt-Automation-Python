@@ -117,41 +117,27 @@ class BaserowJobRepository:
         return self.client.find_equal(self.table_id, "Link", job.url)
 
     def create(self, job: Job) -> Mapping[str, Any]:
-        return self.client.create_row(self.table_id, self._job_fields(job) | {"Status": self.status_options["new"]})
-
-    def reset(self, row_id: int, job: Job) -> Mapping[str, Any]:
-        job_fields = self._job_fields(job)
-        job_fields.pop("Link", None)
-        return self.client.update_row(
+        return self.client.create_row(
             self.table_id,
-            row_id,
-            job_fields
-            | {
-                "Score": None,
-                "Apply": False,
-                "Status": self.status_options["new"],
-            },
+            self._job_fields(job) | {"Status": self.status_options["new"]},
         )
 
+    def reset(self, row_id: int, job: Job) -> Mapping[str, Any]:
+        # Reprocessing intentionally leaves persisted job metadata, status, and existing
+        # documents untouched until fresh qualification/artifacts are available.
+        return {"id": row_id}
+
     def save_qualification(self, row_id: int, result: Qualification, *, passed: bool) -> None:
-        status = self.status_options["new"] if passed else self.status_options["dropped"]
         self.client.update_row(
             self.table_id,
             row_id,
             {
                 "Score": result.score,
                 "Apply": result.should_apply,
-                "Status": status,
             },
         )
 
-    def save_artifacts(
-        self,
-        row_id: int,
-        uploaded_files: Mapping[str, Any],
-        *,
-        job_url: str,
-    ) -> None:
+    def save_artifacts(self, row_id: int, uploaded_files: Mapping[str, Any]) -> None:
         self.client.update_row(self.table_id, row_id, dict(uploaded_files))
 
     def set_status(self, row_id: int, status_key: str) -> None:
