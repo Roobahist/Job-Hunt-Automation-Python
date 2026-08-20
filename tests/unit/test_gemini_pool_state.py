@@ -5,13 +5,14 @@ from typing import Any
 import pytest
 
 from job_hunt.domain.models import PromptDefinition
+from job_hunt.errors import ErrorKind, ProviderError
 from job_hunt.integrations.gemini_pool import LocalCapacityError, PooledGeminiStructuredClient
 
 
 class State:
     def __init__(self) -> None:
         self.counters: dict[tuple[str, str, str], int] = {}
-        self.cooldowns: set[tuple[str, str]] = set()
+        self.cooldowns: dict[tuple[str, str], int] = {}
         self.checkpoints: dict[str, dict[str, Any]] = {}
 
     def increment_window(
@@ -29,14 +30,13 @@ class State:
         return self.counters[key]
 
     def cooldown(self, scope: str, resource: str, *, seconds: float) -> None:
-        del seconds
-        self.cooldowns.add((scope, resource))
+        self.cooldowns[(scope, resource)] = max(1, int(seconds))
 
     def available(self, scope: str, resource: str) -> bool:
         return (scope, resource) not in self.cooldowns
 
     def remaining_cooldown(self, scope: str, resource: str) -> int:
-        return 1 if (scope, resource) in self.cooldowns else 0
+        return self.cooldowns.get((scope, resource), 0)
 
     def get_checkpoint(self, digest: str) -> dict[str, Any] | None:
         return self.checkpoints.get(digest)
@@ -94,3 +94,49 @@ def test_checkpoint_hit_skips_provider_call(monkeypatch: pytest.MonkeyPatch) -> 
 
     monkeypatch.setattr(client, "_pooled_structured_call", unexpected)
     assert client.generate(prompt, definition()) == {"value": "cached"}
+
+
+def test_all_cooled_candidates_defer_without_probing_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    state = State()
+    client = PooledGeminiStructuredClient(
+        ["key-1", "key-2"],
+        ["best"],
+        ["repair"],
+        state=state,  # type: ignore[arg-type]
+    )
+    for key, seconds in (("key-1", 23), ("key-2", 41)):
+        state.cooldown("gemini-candidate", client._candidate_id("best", key), seconds=seconds)
+
+    def unexpected(*_: object, **__: object) -> object:
+        raise AssertionError("a cooled Gemini candidate must not be probed")
+
+    monkeypatch.setattr(client, "_pooled_structured_call", unexpected)
+    with pytest.raises(ProviderError) as caught:
+        client.generate("prompt", definition())
+
+    assert caught.value.kind == ErrorKind.RATE_LIMIT
+    assert caught.value.retryable
+    assert caught.value.retry_after == 23
+
+
+def test_quota_exhaustion_propagates_earliest_retry_delay(monkeypatch: pytest.MonkeyPatch) -> None:
+    state = State()
+    client = PooledGeminiStructuredClient(
+        ["key-1", "key-2"],
+        ["best"],
+        ["repair"],
+        state=state,  # type: ignore[arg-type]
+    )
+
+    def exhausted(model: str, key: str, *_: object, **__: object) -> object:
+        del model
+        retry_after = 17 if key == "key-1" else 29
+        raise LocalCapacityError("local requests-per-minute budget exhausted", retry_after)
+
+    monkeypatch.setattr(client, "_pooled_structured_call", exhausted)
+    with pytest.raises(ProviderError) as caught:
+        client.generate("prompt", definition())
+
+    assert caught.value.kind == ErrorKind.RATE_LIMIT
+    assert caught.value.retryable
+    assert caught.value.retry_after == 17
