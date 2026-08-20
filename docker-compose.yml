@@ -5,7 +5,11 @@ services:
       target: api
     env_file: .env
     ports: ["127.0.0.1:8000:8000"]
-    volumes: ["artifacts:/app/runs"]
+    volumes:
+      - artifacts:/app/runs
+      - ./src:/app/src:ro
+      - ./config:/app/config:ro
+      - ./tenants:/app/tenants:ro
     depends_on: {redis: {condition: service_healthy}}
     restart: unless-stopped
 
@@ -14,7 +18,11 @@ services:
       context: .
       target: worker
     env_file: .env
-    volumes: ["artifacts:/app/runs"]
+    volumes:
+      - artifacts:/app/runs
+      - ./src:/app/src:ro
+      - ./config:/app/config:ro
+      - ./tenants:/app/tenants:ro
     depends_on: {redis: {condition: service_healthy}}
     restart: unless-stopped
 
@@ -23,6 +31,10 @@ services:
       context: .
       target: beat
     env_file: .env
+    volumes:
+      - ./src:/app/src:ro
+      - ./config:/app/config:ro
+      - ./tenants:/app/tenants:ro
     depends_on: {redis: {condition: service_healthy}}
     restart: unless-stopped
 
@@ -35,6 +47,10 @@ services:
       sh -c 'celery -A job_hunt.worker.celery_app flower --port=5555
       $${FLOWER_BASIC_AUTH:+--basic-auth=$${FLOWER_BASIC_AUTH}}'
     ports: ["127.0.0.1:5555:5555"]
+    volumes:
+      - ./src:/app/src:ro
+      - ./config:/app/config:ro
+      - ./tenants:/app/tenants:ro
     depends_on: {redis: {condition: service_healthy}}
     restart: unless-stopped
 
