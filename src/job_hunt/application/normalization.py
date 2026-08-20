@@ -60,10 +60,15 @@ def _parse_datetime(value: Any) -> datetime | None:
 
 def job_from_provider(data: Mapping[str, Any], *, source: str = "linkedin") -> Job:
     external_id = data.get("id") or data.get("jobId") or data.get("job_id")
-    url = data.get("url") or data.get("link") or data.get("jobUrl")
+    url = data.get("url") or data.get("link") or data.get("jobUrl") or data.get("inputUrl")
     company = data.get("companyName") or data.get("company") or data.get("company_name")
     title = data.get("title") or data.get("jobTitle") or data.get("job_title")
-    description = data.get("description") or data.get("jobDescription") or data.get("job_description")
+    description = (
+        data.get("description")
+        or data.get("descriptionText")
+        or data.get("jobDescription")
+        or data.get("job_description")
+    )
     published = (
         data.get("publishedAt")
         or data.get("published_at")
@@ -74,6 +79,12 @@ def job_from_provider(data: Mapping[str, Any], *, source: str = "linkedin") -> J
         or data.get("postedDate")
         or data.get("publishedDate")
     )
+    contract_type = (
+        data.get("contractType")
+        or data.get("contract_type")
+        or data.get("employmentType")
+        or data.get("employment_type")
+    )
     return assign_identity(
         Job(
             source=source,
@@ -83,7 +94,7 @@ def job_from_provider(data: Mapping[str, Any], *, source: str = "linkedin") -> J
             title=str(title or ""),
             description=str(description or ""),
             location=str(data.get("location") or "") or None,
-            contract_type=str(data.get("contractType") or data.get("contract_type") or "") or None,
+            contract_type=str(contract_type or "") or None,
             published_at=_parse_datetime(published),
         )
     )
@@ -99,7 +110,13 @@ class SubmissionNormalizer:
         raw = self.discovery.fetch_linkedin(job_id, country=country, max_concurrency=max_concurrency)
         enriched = dict(raw) | {
             "id": raw.get("id") or raw.get("jobId") or raw.get("job_id") or job_id,
-            "url": raw.get("url") or raw.get("link") or self.linkedin_template.format(jobId=job_id),
+            "url": (
+                raw.get("url")
+                or raw.get("link")
+                or raw.get("jobUrl")
+                or raw.get("inputUrl")
+                or self.linkedin_template.format(jobId=job_id)
+            ),
         }
         return job_from_provider(enriched)
 
