@@ -127,7 +127,7 @@ class BaserowJobRepository:
         # documents untouched until fresh qualification/artifacts are available.
         return {"id": row_id}
 
-    def save_qualification(self, row_id: int, result: Qualification, *, passed: bool) -> None:
+    def save_qualification(self, row_id: int, result: Qualification) -> None:
         self.client.update_row(
             self.table_id,
             row_id,
