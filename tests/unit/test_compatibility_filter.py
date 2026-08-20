@@ -160,3 +160,32 @@ def test_true_compatibility_continues_to_qualification() -> None:
     assert result.score == 90
     assert ai.qualify_calls == 1
     assert ("qualification", 90) in repo.calls
+
+
+def test_forced_submission_bypasses_compatibility_and_resets_status_new() -> None:
+    repo = Repository()
+    ai = AI()
+    blocked_client = StructuredClient(False)
+    compatibility = GeminiCompatibilityFilter(blocked_client)  # type: ignore[arg-type]
+    workflow = ApplicationWorkflow(
+        repo,
+        ai,
+        ai,
+        Renderer(),
+        Publisher(),
+        Path("runs"),
+        compatibility_filter=compatibility,
+    )
+    result = workflow.persist_and_qualify(
+        job(),
+        run_id=uuid4(),
+        master_cv={},
+        prompts={"job_compatibility_filter": prompt()},
+        threshold=33,
+        force=True,
+    )
+    assert result.passed
+    assert ai.qualify_calls == 1
+    assert blocked_client.prompts == []
+    assert ("status", "new") in repo.calls
+    assert ("status", "dropped") not in repo.calls
