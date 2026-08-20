@@ -79,6 +79,33 @@ def test_shared_provider_settings_are_ordered_and_required() -> None:
         Settings(gemini_limits_json="not-json").gemini_limits()
 
 
+def test_operational_limits_are_configurable() -> None:
+    settings = Settings(
+        gemini_request_timeout_seconds=240,
+        telegram_request_timeout_seconds=150,
+        baserow_request_timeout_seconds=90,
+        latex_compile_timeout_seconds=210,
+        job_lock_timeout_seconds=2400,
+        task_soft_time_limit_seconds=0,
+        task_time_limit_seconds=0,
+        task_max_retries=11,
+        rate_limit_fallback_seconds=75,
+        transient_base_delay_seconds=7,
+        transient_max_delay_seconds=420,
+    )
+    assert settings.gemini_request_timeout_seconds == 240
+    assert settings.telegram_request_timeout_seconds == 150
+    assert settings.baserow_request_timeout_seconds == 90
+    assert settings.latex_compile_timeout_seconds == 210
+    assert settings.job_lock_timeout_seconds == 2400
+    assert settings.task_soft_time_limit_seconds == 0
+    assert settings.task_time_limit_seconds == 0
+    assert settings.task_max_retries == 11
+    assert settings.rate_limit_fallback_seconds == 75
+    assert settings.transient_base_delay_seconds == 7
+    assert settings.transient_max_delay_seconds == 420
+
+
 def test_invalid_configuration_is_actionable() -> None:
     with pytest.raises(ConfigurationError, match="Invalid tenant configuration"):
         parse_configuration_rows([])
