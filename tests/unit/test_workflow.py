@@ -33,8 +33,14 @@ class Repository:
     def save_qualification(self, row_id: int, result: Qualification, *, passed: bool) -> None:
         self.calls.append(("qualification", passed))
 
-    def save_artifacts(self, row_id: int, uploaded_files: object) -> None:
-        self.calls.append(("artifacts", row_id))
+    def save_artifacts(
+        self,
+        row_id: int,
+        uploaded_files: object,
+        *,
+        job_url: str,
+    ) -> None:
+        self.calls.append(("artifacts", (row_id, job_url)))
 
 
 class AI:
@@ -113,6 +119,7 @@ def test_should_apply_does_not_block_documents_above_threshold() -> None:
     assert publisher.calls == 1
     assert len(result.notification_paths) == 3  # type: ignore[attr-defined]
     assert ("qualification", True) in repo.calls
+    assert ("artifacts", (8, "https://x/jobs/1")) in repo.calls
 
 
 def test_force_processes_and_existing_job_resets_first() -> None:
