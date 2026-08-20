@@ -103,9 +103,15 @@ class BaserowJobRepository:
         self.status_options = status_options
         self.contract_type_options = contract_type_options or {}
 
+    @staticmethod
+    def _display_job_id(job: Job) -> object:
+        if job.external_id:
+            return int(job.external_id) if job.external_id.isdigit() else job.external_id
+        return job.internal_id
+
     def find(self, job: Job) -> Mapping[str, Any] | None:
         if job.external_id:
-            found = self.client.find_equal(self.table_id, "Job ID", job.internal_id)
+            found = self.client.find_equal(self.table_id, "Job ID", self._display_job_id(job))
             if found:
                 return found
         return self.client.find_equal(self.table_id, "Link", job.url)
@@ -167,7 +173,7 @@ class BaserowJobRepository:
         contract_key = aliases.get(normalized_contract)
         contract_value: object = self.contract_type_options.get(contract_key, "") if contract_key else ""
         return {
-            "Job ID": job.internal_id,
+            "Job ID": self._display_job_id(job),
             "Company Name": job.company_name,
             "Title": job.title,
             "Location": job.location or "",
