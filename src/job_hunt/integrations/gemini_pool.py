@@ -16,12 +16,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 
 from job_hunt.domain.models import PromptDefinition
 from job_hunt.errors import ConfigurationError, ErrorKind, ProviderError
-from job_hunt.integrations.gemini import (
-    GeminiStructuredClient,
-    _compact,
-    _message_text,
-    _validate_json_schema,
-)
+from job_hunt.integrations.gemini import GeminiStructuredClient, _compact, _message_text, _validate_json_schema
 from job_hunt.logging import logger
 from job_hunt.state import RedisState
 
@@ -433,11 +428,7 @@ class PooledGeminiStructuredClient(GeminiStructuredClient):
         if self.state is not None:
             cached = self.state.get_checkpoint(checkpoint)
             if cached is not None:
-                logger().info(
-                    "gemini_checkpoint_hit",
-                    prompt_key=definition.key,
-                    prompt_version=definition.version,
-                )
+                logger().info("gemini_checkpoint_hit", prompt_key=definition.key, prompt_version=definition.version)
                 return _validate_json_schema(cached, definition.output_structure)
 
         candidates = self._available(self.content_models)
@@ -499,13 +490,42 @@ class PooledGeminiStructuredClient(GeminiStructuredClient):
                     )
                     return final
 
-                failures.append(
-                    f"{model_name}/{self._key_id(key)}: {parsing_error or 'Gemini returned an empty response'}"
-                )
+                failures.append(f"{model_name}/{self._key_id(key)}: {parsing_error or 'Gemini returned an empty response'}")
             except ConfigurationError:
                 raise
-            except ProviderError:
-                raise
+            except ProviderError as exc:
+                failures.append(f"{model_name}/{self._key_id(key)}: {exc}")
+                if exc.kind == ErrorKind.RATE_LIMIT:
+                    quota_failures += 1
+                    if exc.retry_after is not None and exc.retry_after > 0:
+                        quota_delays.append(max(1, int(exc.retry_after)))
+                    logger().info(
+                        "gemini_candidate_rotated",
+                        prompt_key=definition.key,
+                        model=model_name,
+                        account=self._key_id(key),
+                        reason="provider_rate_limit",
+                    )
+                    continue
+                if exc.kind == ErrorKind.AUTHENTICATION:
+                    invalid_keys.add(self._key_id(key))
+                    self._disable_key(key)
+                    logger().warning(
+                        "gemini_candidate_rotated",
+                        prompt_key=definition.key,
+                        model=model_name,
+                        account=self._key_id(key),
+                        reason="authentication",
+                    )
+                    continue
+                logger().info(
+                    "gemini_candidate_rotated",
+                    prompt_key=definition.key,
+                    model=model_name,
+                    account=self._key_id(key),
+                    reason=str(exc.kind),
+                )
+                continue
             except Exception as exc:
                 failures.append(f"{model_name}/{self._key_id(key)}: {exc}")
                 if self._is_quota_error(exc):
