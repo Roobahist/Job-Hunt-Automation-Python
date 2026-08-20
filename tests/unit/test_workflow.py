@@ -10,7 +10,7 @@ import pytest
 from job_hunt.application.workflow import ApplicationWorkflow
 from job_hunt.domain.identity import assign_identity
 from job_hunt.domain.models import Job, Qualification, TailoredContent
-from job_hunt.errors import ErrorKind, WorkflowError
+from job_hunt.errors import ErrorKind, ProviderError, WorkflowError
 
 
 class Repository:
@@ -151,3 +151,32 @@ def test_permanent_error_is_not_retried() -> None:
     workflow, _ = make_workflow(BrokenRepository(), Qualification(score=1, should_apply=False, reasoning="no"))
     with pytest.raises(WorkflowError):
         qualify(workflow)
+
+
+def test_qualification_rate_limit_escapes_immediately_for_celery_deferral() -> None:
+    class RateLimitedAI(AI):
+        def __init__(self) -> None:
+            super().__init__(Qualification(score=0, should_apply=False, reasoning="unused"))
+            self.calls = 0
+
+        def qualify(self, *_: object) -> Qualification:
+            self.calls += 1
+            raise ProviderError(
+                "local requests-per-minute budget exhausted",
+                ErrorKind.RATE_LIMIT,
+                retryable=True,
+                provider="gemini",
+                retry_after=47,
+            )
+
+    repo = Repository()
+    ai = RateLimitedAI()
+    workflow = ApplicationWorkflow(repo, ai, ai, Renderer(), Publisher(), Path("runs"))
+
+    with pytest.raises(ProviderError) as caught:
+        qualify(workflow)
+
+    assert caught.value.retry_after == 47
+    assert ai.calls == 1
+    assert ("create", application_job().internal_id) in repo.calls
+    assert all(call[0] != "qualification" for call in repo.calls)
