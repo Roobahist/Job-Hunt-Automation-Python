@@ -17,6 +17,7 @@ class WorkflowResult:
     row_id: int
     passed: bool
     artifacts_published: bool
+    score: int | None = None
     notification_paths: tuple[str, ...] = ()
 
 
@@ -69,12 +70,17 @@ class ApplicationWorkflow:
             passed=passed,
         )
         if not passed:
-            return WorkflowResult(row_id, False, False)
+            return WorkflowResult(row_id, False, False, score=qualification.score)
 
         tailored = self.tailor.tailor(job, master_cv, prompts)
         source_id = job.external_id or str(job.internal_id)
-        basename = f"{applicant_filename}-{job.company_name}-{source_id}".replace("/", "-")
-        artifacts = self.renderer.render(tailored, self.artifact_root / str(run_id), basename)
+        archive_basename = f"{applicant_filename}-{job.company_name}-{source_id}".replace("/", "-")
+        artifacts = self.renderer.render(
+            tailored,
+            self.artifact_root / str(run_id),
+            archive_basename,
+            applicant_filename=applicant_filename,
+        )
         uploaded = retry_transient(self.publisher.publish, artifacts)
         retry_transient(self.repository.save_artifacts, row_id, uploaded, job_url=job.url)
         log.info("job_documents_ready", stage="publish", row_id=row_id)
@@ -82,5 +88,6 @@ class ApplicationWorkflow:
             row_id,
             True,
             True,
-            tuple(str(path) for path in artifacts.notification_paths()),
+            score=qualification.score,
+            notification_paths=tuple(str(path) for path in artifacts.notification_paths()),
         )
