@@ -42,7 +42,7 @@ fi
 
 docker compose run --rm --no-deps api job-hunt config validate --live
 
-docker compose up -d --no-build --force-recreate api worker beat flower
+docker compose up -d --no-build --force-recreate api worker-fast worker-documents beat flower
 
 docker compose ps
 wait_for_http "API live" "http://127.0.0.1:8000/health/live"
