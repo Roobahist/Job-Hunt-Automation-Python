@@ -102,6 +102,7 @@ def job_from_provider(data: Mapping[str, Any], *, source: str = "linkedin") -> J
             location=str(data.get("location") or "") or None,
             contract_type=str(contract_type or "") or None,
             published_at=_parse_datetime(published),
+            provider_data=dict(data),
         )
     )
 
