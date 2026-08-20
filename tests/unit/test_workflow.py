@@ -86,7 +86,14 @@ def make_workflow(repo: Repository, result: Qualification) -> tuple[ApplicationW
 
 def application_job() -> Job:
     return assign_identity(
-        Job(source="x", external_id="1", url="https://x/jobs/1", company_name="C", title="T", description="D")
+        Job(
+            source="x",
+            external_id="1",
+            url="https://x/jobs/1",
+            company_name="C",
+            title="T",
+            description="D",
+        )
     )
 
 
@@ -199,6 +206,46 @@ def test_manual_drop_before_documents_skips_tailoring_rendering_and_publish() ->
     assert renderer.calls == 0
     assert publisher.calls == 0
     assert events == []
+
+
+def test_manual_drop_after_tailoring_stops_before_rendering() -> None:
+    repo = Repository()
+
+    class DroppingAI(AI):
+        def tailor(self, *_: object) -> TailoredContent:
+            result = super().tailor()
+            repo.dropped = True
+            return result
+
+    publisher = Publisher()
+    ai = DroppingAI(Qualification(score=90, should_apply=True, reasoning="good"))
+    renderer = Renderer()
+    workflow = ApplicationWorkflow(repo, ai, ai, renderer, publisher, Path("runs"))
+    result = generate(workflow, row_id=8, score=90)
+    assert not result.passed  # type: ignore[attr-defined]
+    assert ai.tailor_calls == 1
+    assert renderer.calls == 0
+    assert publisher.calls == 0
+
+
+def test_manual_drop_after_rendering_stops_before_upload() -> None:
+    repo = Repository()
+
+    class DroppingRenderer(Renderer):
+        def render(self, *_: object, **__: object) -> Any:
+            result = super().render()
+            repo.dropped = True
+            return result
+
+    publisher = Publisher()
+    ai = AI(Qualification(score=90, should_apply=True, reasoning="good"))
+    renderer = DroppingRenderer()
+    workflow = ApplicationWorkflow(repo, ai, ai, renderer, publisher, Path("runs"))
+    result = generate(workflow, row_id=8, score=90)
+    assert not result.passed  # type: ignore[attr-defined]
+    assert ai.tailor_calls == 1
+    assert renderer.calls == 1
+    assert publisher.calls == 0
 
 
 def test_force_does_not_override_below_threshold_drop_rule() -> None:
