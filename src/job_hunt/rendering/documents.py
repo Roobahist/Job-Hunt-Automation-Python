@@ -24,10 +24,17 @@ class TenantDocumentRenderer:
         self.cover_letter_template = cover_letter_template
         self.compiler = compiler or PdfLatexCompiler()
 
-    def render(self, content: TailoredContent, output_directory: Path, basename: str) -> ArtifactBundle:
+    def render(
+        self,
+        content: TailoredContent,
+        output_directory: Path,
+        basename: str,
+        *,
+        applicant_filename: str,
+    ) -> ArtifactBundle:
         output_directory.mkdir(parents=True, exist_ok=False)
-        cv_json = output_directory / f"{basename}-CV.json"
-        cover_json = output_directory / f"{basename}-Cover-Letter.json"
+        cv_json = output_directory / f"{applicant_filename}_CV.json"
+        cover_json = output_directory / f"{applicant_filename}_CL.json"
         cv_tex = cv_json.with_suffix(".tex")
         cover_tex = cover_json.with_suffix(".tex")
         cv_json.write_text(json.dumps(content.cv, indent=2, ensure_ascii=False), encoding="utf-8")
