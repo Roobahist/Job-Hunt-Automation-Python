@@ -6,6 +6,7 @@ from typing import Any
 
 from redis import Redis
 
+from job_hunt.application.compatibility import GeminiCompatibilityFilter
 from job_hunt.application.normalization import SubmissionNormalizer
 from job_hunt.application.workflow import ApplicationWorkflow
 from job_hunt.config import Settings, TenantRuntimeConfig, load_registry
@@ -146,6 +147,7 @@ class Container:
             checkpoint_ttl_seconds=self.settings.llm_checkpoint_ttl_seconds,
             limits=self.settings.gemini_limits(),
         )
+        compatibility_filter = GeminiCompatibilityFilter(structured_client)
 
         ai: GeminiWorkflowAI
         if bootstrap.renderer == "mahsa":
@@ -180,6 +182,7 @@ class Container:
             context.renderer,
             BaserowArtifactPublisher(baserow),
             self.settings.artifact_root,
+            compatibility_filter=compatibility_filter,
         )
         normalizer = SubmissionNormalizer(discovery, ai, config.linkedin_job_url_template)
         return TenantServices(
