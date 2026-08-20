@@ -8,6 +8,7 @@ from typing import Any
 from job_hunt.config import TenantBootstrap
 from job_hunt.errors import ConfigurationError
 from job_hunt.rendering.documents import TenantDocumentRenderer
+from job_hunt.rendering.latex import PdfLatexCompiler
 from job_hunt.rendering.profiles import (
     CoverLetterRenderer,
     CvRenderer,
@@ -26,9 +27,16 @@ class TenantContext:
 
 
 class TenantRegistry:
-    def __init__(self, bootstraps: dict[str, TenantBootstrap], project_root: Path = Path(".")) -> None:
+    def __init__(
+        self,
+        bootstraps: dict[str, TenantBootstrap],
+        project_root: Path = Path("."),
+        *,
+        latex_compile_timeout_seconds: int = 180,
+    ) -> None:
         self.bootstraps = bootstraps
         self.project_root = project_root
+        self.latex_compile_timeout_seconds = latex_compile_timeout_seconds
 
     def get(self, key: str) -> TenantContext:
         try:
@@ -54,5 +62,6 @@ class TenantRegistry:
             cover,
             root / "templates/cv_template.tex",
             root / "templates/cover_letter_template.tex",
+            compiler=PdfLatexCompiler(timeout_seconds=self.latex_compile_timeout_seconds),
         )
         return TenantContext(bootstrap, master_cv, renderer)
