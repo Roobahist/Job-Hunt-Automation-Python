@@ -50,6 +50,14 @@ class TenantServices:
         }
 
 
+@dataclass(slots=True)
+class TelegramRoute:
+    tenant: str
+    config: TenantRuntimeConfig
+    repository: BaserowJobRepository
+    notifier: TelegramNotifier
+
+
 class Container:
     def __init__(self, settings: Settings | None = None, project_root: Path = Path(".")) -> None:
         self.settings = settings or Settings()
@@ -57,6 +65,25 @@ class Container:
         self.registry = TenantRegistry(load_registry(self.settings.registry_path), project_root)
         self.redis = Redis.from_url(self.settings.redis_url, decode_responses=True)
         self.state = RedisState(self.redis)
+
+    def telegram_route(self, chat_id: str) -> TelegramRoute | None:
+        notifier = TelegramNotifier(self.settings.shared_telegram_token())
+        for tenant, bootstrap in self.registry.bootstraps.items():
+            if not bootstrap.enabled:
+                continue
+            baserow = BaserowClient(bootstrap.secret("baserow"), bootstrap.baserow_base_url)
+            config_repository = BaserowConfigurationRepository(baserow, bootstrap.config_table_id)
+            config = config_repository.load()
+            if str(config.telegram_chat_id) != chat_id:
+                continue
+            repository = BaserowJobRepository(
+                baserow,
+                config.baserow_table_ids["jobs"],
+                config.status_option_ids,
+                config.contract_type_option_ids,
+            )
+            return TelegramRoute(tenant, config, repository, notifier)
+        return None
 
     def tenant(
         self,
