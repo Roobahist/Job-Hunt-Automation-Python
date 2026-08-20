@@ -92,6 +92,7 @@ def test_operational_limits_are_configurable() -> None:
         rate_limit_fallback_seconds=75,
         transient_base_delay_seconds=7,
         transient_max_delay_seconds=420,
+        provider_quota_cooldown_seconds=71,
     )
     assert settings.gemini_request_timeout_seconds == 240
     assert settings.telegram_request_timeout_seconds == 150
@@ -104,6 +105,8 @@ def test_operational_limits_are_configurable() -> None:
     assert settings.rate_limit_fallback_seconds == 75
     assert settings.transient_base_delay_seconds == 7
     assert settings.transient_max_delay_seconds == 420
+    assert settings.provider_quota_cooldown_seconds == 71
+    assert Settings().provider_quota_cooldown_seconds == 65
 
 
 def test_invalid_configuration_is_actionable() -> None:
