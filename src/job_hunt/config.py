@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     discovery_snapshot_ttl_seconds: int = Field(default=7200, ge=300)
     llm_checkpoint_ttl_seconds: int = Field(default=604800, ge=300)
     llm_parallelism: int = Field(default=3, ge=1, le=8)
+    scheduler_timezone: str = "America/Edmonton"
 
     # Operational timing is environment-configurable. A task time limit of zero disables
     # Celery's global deadline so long document jobs are not killed mid-generation.
