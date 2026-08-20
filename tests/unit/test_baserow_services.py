@@ -45,6 +45,9 @@ class Client:
     def find_equal(self, _: int, field: str, value: object) -> dict[str, Any] | None:
         return next((row for row in self.rows if row.get(field) == value), None)
 
+    def get_row(self, _: int, row_id: int) -> dict[str, Any]:
+        return next(row for row in self.rows if row.get("id") == row_id)
+
     def create_row(self, _: int, values: dict[str, Any]) -> dict[str, Any]:
         return {"id": 3, **values}
 
@@ -91,7 +94,7 @@ def prompt_row(key: str, *, version: float = 1, status: str = "Active") -> dict[
     }
 
 
-def test_repository_create_find_and_narrow_updates() -> None:
+def test_repository_create_find_status_and_narrow_updates() -> None:
     client = Client()
     repo = BaserowJobRepository(
         client,
@@ -106,29 +109,22 @@ def test_repository_create_find_and_narrow_updates() -> None:
     assert created["Date"] == "2026-08-19"
     assert created["Link"] == job.url
 
-    client.rows = [{"id": 3, "Job ID": 4452378707, "Link": job.url}]
+    client.rows = [{"id": 3, "Job ID": 4452378707, "Link": job.url, "Status": {"id": 11, "value": "Dropped"}}]
     assert repo.find(job)["id"] == 3  # type: ignore[index]
+    assert repo.has_status(3, "dropped")
+    assert not repo.has_status(3, "applied")
 
     updates_before_reset = len(client.updates)
     reset = repo.reset(3, job)
     assert reset == {"id": 3}
     assert len(client.updates) == updates_before_reset
 
-    repo.save_qualification(
-        3,
-        Qualification(score=20, should_apply=False, reasoning="low"),
-    )
+    repo.save_qualification(3, Qualification(score=20, should_apply=False, reasoning="low"))
     assert client.updates[-1] == {"Score": 20, "Apply": False}
     assert "Link" not in client.updates[-1]
     assert "Status" not in client.updates[-1]
 
-    repo.save_artifacts(
-        3,
-        {
-            "CV": [{"name": "cv.pdf"}],
-            "Cover Letter": [{"name": "cl.pdf"}],
-        },
-    )
+    repo.save_artifacts(3, {"CV": [{"name": "cv.pdf"}], "Cover Letter": [{"name": "cl.pdf"}]})
     assert set(client.updates[-1]) == {"CV", "Cover Letter"}
     assert "Link" not in client.updates[-1]
     assert "Status" not in client.updates[-1]
