@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 from uuid import UUID
 
 from celery import Celery  # type: ignore[import-untyped]
@@ -86,34 +86,25 @@ def _retry_countdown(exc: WorkflowError, retries: int) -> int:
     return max(1, min(_TRANSIENT_MAX_DELAY_SECONDS, exponential))
 
 
-def _log_terminal_failure(event: str, exc: Exception, **context: object) -> None:
-    if isinstance(exc, WorkflowError):
-        logger().error(
-            event,
-            **context,
-            error_type=type(exc).__name__,
-            error_kind=exc.kind,
-            error_message=str(exc),
-            retryable=exc.retryable,
-        )
-        return
-    logger().exception(event, **context, error_type=type(exc).__name__)
+def _retry_plan(task: Any, exc: Exception) -> tuple[int, int] | None:
+    if not isinstance(exc, WorkflowError) or not exc.retryable:
+        return None
+    retries = int(getattr(task.request, "retries", 0))
+    if retries >= _TASK_MAX_RETRIES:
+        return None
+    return retries, _retry_countdown(exc, retries)
 
 
-def _defer_retryable_task(
+def _defer_task(
     task: Any,
-    exc: Exception,
+    exc: WorkflowError,
     *,
     tenant: str,
     run_id: str,
     stage: str,
-) -> None:
-    if not isinstance(exc, WorkflowError) or not exc.retryable:
-        return
-    retries = int(getattr(task.request, "retries", 0))
-    if retries >= _TASK_MAX_RETRIES:
-        return
-    countdown = _retry_countdown(exc, retries)
+    retries: int,
+    countdown: int,
+) -> NoReturn:
     logger().warning(
         "task_deferred",
         tenant=tenant,
@@ -126,6 +117,20 @@ def _defer_retryable_task(
         max_retries=_TASK_MAX_RETRIES,
     )
     raise task.retry(exc=exc, countdown=countdown, max_retries=_TASK_MAX_RETRIES)
+
+
+def _log_terminal_failure(event: str, exc: Exception, **context: object) -> None:
+    if isinstance(exc, WorkflowError):
+        logger().error(
+            event,
+            **context,
+            error_type=type(exc).__name__,
+            error_kind=exc.kind,
+            error_message=str(exc),
+            retryable=exc.retryable,
+        )
+        return
+    logger().exception(event, **context, error_type=type(exc).__name__)
 
 
 @celery_app.task(
@@ -171,24 +176,34 @@ def notify_documents(
         )
         return {"state": "sent", "message_id": action_id}
     except Exception as exc:
-        if isinstance(exc, WorkflowError) and exc.retryable:
-            retries = int(getattr(self.request, "retries", 0))
-            if retries < _TASK_MAX_RETRIES:
-                countdown = _retry_countdown(exc, retries)
-                store.update(
-                    identifier,
-                    notification={
-                        "state": "deferred",
-                        "error": str(exc),
-                        "retry_in_seconds": countdown,
-                    },
-                )
-                _defer_retryable_task(self, exc, tenant=tenant, run_id=run_id, stage="notification")
-        store.update(
-            identifier,
-            notification={"state": "failed", "error": str(exc)},
+        plan = _retry_plan(self, exc)
+        if plan is not None and isinstance(exc, WorkflowError):
+            retries, countdown = plan
+            store.update(
+                identifier,
+                notification={
+                    "state": "deferred",
+                    "error": str(exc),
+                    "retry_in_seconds": countdown,
+                },
+            )
+            _defer_task(
+                self,
+                exc,
+                tenant=tenant,
+                run_id=run_id,
+                stage="notification",
+                retries=retries,
+                countdown=countdown,
+            )
+        store.update(identifier, notification={"state": "failed", "error": str(exc)})
+        _log_terminal_failure(
+            "notification_failed",
+            exc,
+            tenant=tenant,
+            run_id=run_id,
+            stage="notification",
         )
-        _log_terminal_failure("notification_failed", exc, tenant=tenant, run_id=run_id, stage="notification")
         raise
 
 
@@ -210,7 +225,13 @@ def generate_documents(
 ) -> dict[str, Any]:
     store = _store()
     identifier = UUID(run_id)
-    store.update(identifier, state=RunState.RUNNING, stage="documents", task_id=self.request.id, error=None)
+    store.update(
+        identifier,
+        state=RunState.RUNNING,
+        stage="documents",
+        task_id=self.request.id,
+        error=None,
+    )
     try:
         snapshot = _state().get_snapshot(snapshot_id) if snapshot_id else None
         services = Container(settings).tenant(
@@ -251,28 +272,41 @@ def generate_documents(
             "published": result.artifacts_published,
         }
     except Exception as exc:
-        if isinstance(exc, WorkflowError) and exc.retryable:
-            retries = int(getattr(self.request, "retries", 0))
-            if retries < _TASK_MAX_RETRIES:
-                countdown = _retry_countdown(exc, retries)
-                store.update(
-                    identifier,
-                    state=RunState.RUNNING,
-                    stage="documents_deferred",
-                    error={
-                        "type": type(exc).__name__,
-                        "message": str(exc),
-                        "retry_in_seconds": countdown,
-                    },
-                )
-                _defer_retryable_task(self, exc, tenant=tenant, run_id=run_id, stage="documents")
+        plan = _retry_plan(self, exc)
+        if plan is not None and isinstance(exc, WorkflowError):
+            retries, countdown = plan
+            store.update(
+                identifier,
+                state=RunState.RUNNING,
+                stage="documents_deferred",
+                error={
+                    "type": type(exc).__name__,
+                    "message": str(exc),
+                    "retry_in_seconds": countdown,
+                },
+            )
+            _defer_task(
+                self,
+                exc,
+                tenant=tenant,
+                run_id=run_id,
+                stage="documents",
+                retries=retries,
+                countdown=countdown,
+            )
         store.update(
             identifier,
             state=RunState.FAILED,
             stage="failed",
             error={"type": type(exc).__name__, "message": str(exc)},
         )
-        _log_terminal_failure("document_generation_failed", exc, tenant=tenant, run_id=run_id, stage="documents")
+        _log_terminal_failure(
+            "document_generation_failed",
+            exc,
+            tenant=tenant,
+            run_id=run_id,
+            stage="documents",
+        )
         raise
 
 
@@ -294,7 +328,13 @@ def process_submission(
     store = _store()
     identifier = UUID(run_id)
     redis = store.redis
-    store.update(identifier, state=RunState.RUNNING, stage="normalization", task_id=self.request.id, error=None)
+    store.update(
+        identifier,
+        state=RunState.RUNNING,
+        stage="normalization",
+        task_id=self.request.id,
+        error=None,
+    )
     try:
         snapshot = _state().get_snapshot(snapshot_id) if snapshot_id else None
         services = Container(settings).tenant(
@@ -354,21 +394,28 @@ def process_submission(
             "published": False,
         }
     except Exception as exc:
-        if isinstance(exc, WorkflowError) and exc.retryable:
-            retries = int(getattr(self.request, "retries", 0))
-            if retries < _TASK_MAX_RETRIES:
-                countdown = _retry_countdown(exc, retries)
-                store.update(
-                    identifier,
-                    state=RunState.RUNNING,
-                    stage="qualification_deferred",
-                    error={
-                        "type": type(exc).__name__,
-                        "message": str(exc),
-                        "retry_in_seconds": countdown,
-                    },
-                )
-                _defer_retryable_task(self, exc, tenant=tenant, run_id=run_id, stage="qualification")
+        plan = _retry_plan(self, exc)
+        if plan is not None and isinstance(exc, WorkflowError):
+            retries, countdown = plan
+            store.update(
+                identifier,
+                state=RunState.RUNNING,
+                stage="qualification_deferred",
+                error={
+                    "type": type(exc).__name__,
+                    "message": str(exc),
+                    "retry_in_seconds": countdown,
+                },
+            )
+            _defer_task(
+                self,
+                exc,
+                tenant=tenant,
+                run_id=run_id,
+                stage="qualification",
+                retries=retries,
+                countdown=countdown,
+            )
         store.update(
             identifier,
             state=RunState.FAILED,
@@ -395,7 +442,11 @@ def discover_tenant(tenant: str, run_id: str) -> dict[str, int]:
         criteria = list(services.baserow.iter_rows(services.config.baserow_table_ids["searchCriteria"]))
         urls = [build_search_url(services.config.linkedin_base_search_url, row) for row in criteria]
         rows = services.discovery.discover(urls, max_items=services.config.linkedin_max_items)
-        jobs = normalize_discovery(rows, services.config.company_exclusions, services.config.title_exclusions)
+        jobs = normalize_discovery(
+            rows,
+            services.config.company_exclusions,
+            services.config.title_exclusions,
+        )
         for job in jobs:
             child = RunStatus(tenant=tenant, kind="scheduled-job")
             checkpoint_namespace = str(child.run_id)
@@ -410,7 +461,7 @@ def discover_tenant(tenant: str, run_id: str) -> dict[str, int]:
                 "job_url": job.url,
                 "location": job.location,
                 "contract_type": job.contract_type,
-                "published_at": (job.published_at.isoformat() if job.published_at else None),
+                "published_at": job.published_at.isoformat() if job.published_at else None,
             }
             store.save_request(
                 child.run_id,
@@ -446,7 +497,13 @@ def discover_tenant(tenant: str, run_id: str) -> dict[str, int]:
             stage="failed",
             error={"type": type(exc).__name__, "message": str(exc)},
         )
-        _log_terminal_failure("discovery_failed", exc, tenant=tenant, run_id=run_id, stage="discovery")
+        _log_terminal_failure(
+            "discovery_failed",
+            exc,
+            tenant=tenant,
+            run_id=run_id,
+            stage="discovery",
+        )
         raise
 
 
