@@ -143,8 +143,15 @@ class BaserowJobRepository:
             },
         )
 
-    def save_artifacts(self, row_id: int, uploaded_files: Mapping[str, Any]) -> None:
+    def save_artifacts(
+        self,
+        row_id: int,
+        uploaded_files: Mapping[str, Any],
+        *,
+        job_url: str,
+    ) -> None:
         values = dict(uploaded_files)
+        values["Link"] = job_url
         if "toApply" in self.status_options:
             values["Status"] = self.status_options["toApply"]
         self.client.update_row(self.table_id, row_id, values)
