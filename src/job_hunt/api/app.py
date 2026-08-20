@@ -9,6 +9,7 @@ from uuid import UUID
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from pydantic import ValidationError
 from redis import Redis
 
 from job_hunt.application.normalization import fillout_submission
@@ -44,13 +45,24 @@ def create_app(
     app = FastAPI(title="Job Hunt Automation", version="0.2.0")
 
     @app.exception_handler(RequestValidationError)
-    async def validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:
+    async def request_validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:
         return JSONResponse(
             status_code=422,
             content={
                 "error": "validation_error",
                 "message": "Request validation failed",
                 "details": exc.errors(),
+            },
+        )
+
+    @app.exception_handler(ValidationError)
+    async def model_validation_error(_: Request, exc: ValidationError) -> JSONResponse:
+        return JSONResponse(
+            status_code=422,
+            content={
+                "error": "validation_error",
+                "message": "Submitted values are incomplete or invalid",
+                "details": exc.errors(include_url=False),
             },
         )
 
