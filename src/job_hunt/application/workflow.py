@@ -82,7 +82,7 @@ class ApplicationWorkflow:
             applicant_filename=applicant_filename,
         )
         uploaded = retry_transient(self.publisher.publish, artifacts)
-        retry_transient(self.repository.save_artifacts, row_id, uploaded, job_url=job.url)
+        retry_transient(self.repository.save_artifacts, row_id, uploaded)
         log.info("job_documents_ready", stage="publish", row_id=row_id)
         return WorkflowResult(
             row_id,
