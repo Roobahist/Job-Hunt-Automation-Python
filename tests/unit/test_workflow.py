@@ -248,12 +248,14 @@ def test_manual_drop_after_rendering_stops_before_upload() -> None:
     assert publisher.calls == 0
 
 
-def test_force_does_not_override_below_threshold_drop_rule() -> None:
-    repo = Repository(existing=True)
+def test_force_resets_new_and_overrides_below_threshold_drop_rule() -> None:
+    repo = Repository(existing=True, dropped=True)
     workflow, publisher, _, _ = make_workflow(repo, Qualification(score=1, should_apply=False, reasoning="no"))
     result = qualify(workflow, force=True)
-    assert not result.passed  # type: ignore[attr-defined]
-    assert ("status", "dropped") in repo.calls
+    assert result.passed  # type: ignore[attr-defined]
+    assert ("status", "new") in repo.calls
+    assert ("status", "dropped") not in repo.calls
+    assert ("qualification", 1) in repo.calls
     assert publisher.calls == 0
 
 
