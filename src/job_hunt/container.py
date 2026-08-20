@@ -140,7 +140,7 @@ class Container:
             self.settings.shared_gemini_keys(),
             self.settings.content_models(),
             self.settings.repair_models(),
-            quota_cooldown_seconds=self.settings.provider_quota_cooldown_seconds,
+            quota_cooldown_seconds=self.settings.gemini_quota_cooldown_seconds,
             request_timeout_seconds=self.settings.gemini_request_timeout_seconds,
             state=self.state.checkpoints(checkpoint_namespace),
             checkpoint_ttl_seconds=self.settings.llm_checkpoint_ttl_seconds,
