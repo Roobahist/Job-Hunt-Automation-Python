@@ -196,7 +196,7 @@ def test_discovery_and_fillout_auth_form_validation() -> None:
     payload["formId"] = "form-1"
     accepted = api.post("/webhooks/fillout/mahsa", json=payload, headers={"Authorization": "Bearer webhook-secret"})
     assert accepted.status_code == 202
-    assert queue.calls[-1][4] is False
+    assert queue.calls[-1][4] is True
 
 
 def test_fillout_invalid_values_return_structured_validation_error() -> None:
