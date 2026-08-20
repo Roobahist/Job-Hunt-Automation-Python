@@ -23,28 +23,33 @@ from job_hunt.state import RedisState
 settings = Settings()
 configure_logging(json_logs=settings.environment != "development")
 celery_app = Celery("job_hunt", broker=settings.redis_url, backend=settings.redis_url)
-celery_app.conf.update(
-    task_acks_late=True,
-    task_reject_on_worker_lost=True,
-    worker_prefetch_multiplier=1,
-    result_expires=settings.run_ttl_seconds,
-    worker_send_task_events=True,
-    task_send_sent_event=True,
-    beat_schedule={"dispatch-due-tenants": {"task": "job_hunt.dispatch_due_tenants", "schedule": 3600.0}},
-    task_routes={
+celery_config: dict[str, object] = {
+    "task_acks_late": True,
+    "task_reject_on_worker_lost": True,
+    "worker_prefetch_multiplier": 1,
+    "result_expires": settings.run_ttl_seconds,
+    "worker_send_task_events": True,
+    "task_send_sent_event": True,
+    "beat_schedule": {"dispatch-due-tenants": {"task": "job_hunt.dispatch_due_tenants", "schedule": 3600.0}},
+    "task_routes": {
         "job_hunt.discover_tenant": {"queue": "fast"},
         "job_hunt.dispatch_due_tenants": {"queue": "fast"},
         "job_hunt.process_submission": {"queue": "fast"},
         "job_hunt.generate_documents": {"queue": "documents"},
         "job_hunt.notify_documents": {"queue": "notifications"},
     },
-    task_default_queue="fast",
-)
+    "task_default_queue": "fast",
+}
+if settings.task_soft_time_limit_seconds > 0:
+    celery_config["task_soft_time_limit"] = settings.task_soft_time_limit_seconds
+if settings.task_time_limit_seconds > 0:
+    celery_config["task_time_limit"] = settings.task_time_limit_seconds
+celery_app.conf.update(**celery_config)
 
-_TASK_MAX_RETRIES = 8
-_RATE_LIMIT_FALLBACK_SECONDS = 65
-_TRANSIENT_BASE_DELAY_SECONDS = 5
-_TRANSIENT_MAX_DELAY_SECONDS = 300
+_TASK_MAX_RETRIES = settings.task_max_retries
+_RATE_LIMIT_FALLBACK_SECONDS = settings.rate_limit_fallback_seconds
+_TRANSIENT_BASE_DELAY_SECONDS = settings.transient_base_delay_seconds
+_TRANSIENT_MAX_DELAY_SECONDS = settings.transient_max_delay_seconds
 
 
 def _redis() -> Redis:
@@ -152,7 +157,10 @@ def notify_documents(
     store = _store()
     identifier = UUID(run_id)
     try:
-        notifier = TelegramNotifier(settings.shared_telegram_token())
+        notifier = TelegramNotifier(
+            settings.shared_telegram_token(),
+            timeout_seconds=settings.telegram_request_timeout_seconds,
+        )
         artifacts = [Path(path) for path in paths]
         if not artifacts:
             raise ValueError("No notification artifacts were provided")
@@ -351,8 +359,8 @@ def process_submission(
 
         lock = redis.lock(
             f"job-hunt:lock:{tenant}:{job.identity}",
-            timeout=1800,
-            blocking_timeout=1800,
+            timeout=settings.job_lock_timeout_seconds,
+            blocking_timeout=settings.job_lock_timeout_seconds,
         )
         if not lock.acquire(blocking=True):
             raise TimeoutError("Timed out waiting for an in-progress run of the same job")
