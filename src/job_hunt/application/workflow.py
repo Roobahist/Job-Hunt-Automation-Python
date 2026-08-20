@@ -21,6 +21,13 @@ class WorkflowResult:
     notification_paths: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True, slots=True)
+class QualificationResult:
+    row_id: int
+    passed: bool
+    score: int
+
+
 class ApplicationWorkflow:
     def __init__(
         self,
@@ -38,7 +45,7 @@ class ApplicationWorkflow:
         self.publisher = publisher
         self.artifact_root = artifact_root
 
-    def process(
+    def persist_and_qualify(
         self,
         job: Job,
         *,
@@ -47,8 +54,7 @@ class ApplicationWorkflow:
         prompts: Mapping[str, PromptDefinition],
         threshold: int,
         force: bool,
-        applicant_filename: str,
-    ) -> WorkflowResult:
+    ) -> QualificationResult:
         log = logger().bind(run_id=str(run_id), job_identity=job.identity)
         existing = retry_transient(self.repository.find, job)
         row = (
@@ -69,9 +75,20 @@ class ApplicationWorkflow:
             should_apply=qualification.should_apply,
             passed=passed,
         )
-        if not passed:
-            return WorkflowResult(row_id, False, False, score=qualification.score)
+        return QualificationResult(row_id=row_id, passed=passed, score=qualification.score)
 
+    def generate_documents(
+        self,
+        job: Job,
+        *,
+        run_id: UUID,
+        row_id: int,
+        score: int,
+        master_cv: Mapping[str, Any],
+        prompts: Mapping[str, PromptDefinition],
+        applicant_filename: str,
+    ) -> WorkflowResult:
+        log = logger().bind(run_id=str(run_id), job_identity=job.identity)
         tailored = self.tailor.tailor(job, master_cv, prompts)
         source_id = job.external_id or str(job.internal_id)
         archive_basename = f"{applicant_filename}-{job.company_name}-{source_id}".replace("/", "-")
@@ -85,9 +102,45 @@ class ApplicationWorkflow:
         retry_transient(self.repository.save_artifacts, row_id, uploaded)
         log.info("job_documents_ready", stage="publish", row_id=row_id)
         return WorkflowResult(
-            row_id,
-            True,
-            True,
-            score=qualification.score,
+            row_id=row_id,
+            passed=True,
+            artifacts_published=True,
+            score=score,
             notification_paths=tuple(str(path) for path in artifacts.notification_paths()),
+        )
+
+    def process(
+        self,
+        job: Job,
+        *,
+        run_id: UUID,
+        master_cv: Mapping[str, Any],
+        prompts: Mapping[str, PromptDefinition],
+        threshold: int,
+        force: bool,
+        applicant_filename: str,
+    ) -> WorkflowResult:
+        qualification = self.persist_and_qualify(
+            job,
+            run_id=run_id,
+            master_cv=master_cv,
+            prompts=prompts,
+            threshold=threshold,
+            force=force,
+        )
+        if not qualification.passed:
+            return WorkflowResult(
+                row_id=qualification.row_id,
+                passed=False,
+                artifacts_published=False,
+                score=qualification.score,
+            )
+        return self.generate_documents(
+            job,
+            run_id=run_id,
+            row_id=qualification.row_id,
+            score=qualification.score,
+            master_cv=master_cv,
+            prompts=prompts,
+            applicant_filename=applicant_filename,
         )
