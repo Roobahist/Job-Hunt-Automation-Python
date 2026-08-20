@@ -61,6 +61,7 @@ class PooledGeminiStructuredClient(GeminiStructuredClient):
         repair_models: Sequence[str],
         *,
         quota_cooldown_seconds: int = 3600,
+        request_timeout_seconds: int = 180,
         state: RedisState | None = None,
         checkpoint_ttl_seconds: int = 604800,
         limits: Mapping[str, Mapping[str, int]] | None = None,
@@ -69,6 +70,7 @@ class PooledGeminiStructuredClient(GeminiStructuredClient):
         self.content_models = [model.removeprefix("models/") for model in content_models if model]
         self.repair_models = [model.removeprefix("models/") for model in repair_models if model]
         self.quota_cooldown_seconds = quota_cooldown_seconds
+        self.request_timeout_seconds = request_timeout_seconds
         self.state = state
         self.checkpoint_ttl_seconds = checkpoint_ttl_seconds
         self.limits = {model.removeprefix("models/"): dict(values) for model, values in (limits or {}).items()}
@@ -278,13 +280,12 @@ class PooledGeminiStructuredClient(GeminiStructuredClient):
         with self._lock:
             self._invalid_key_until[key_id] = time.monotonic() + self.quota_cooldown_seconds
 
-    @staticmethod
-    def _model_for_candidate(model_name: str, key: str, temperature: float) -> ChatGoogleGenerativeAI:
+    def _model_for_candidate(self, model_name: str, key: str, temperature: float) -> ChatGoogleGenerativeAI:
         kwargs: dict[str, Any] = {
             "model": model_name,
             "api_key": key,
             "max_retries": 0,
-            "timeout": 60.0,
+            "timeout": float(self.request_timeout_seconds),
         }
         if model_name not in {"gemini-3.6-flash", "gemini-3.5-flash-lite"}:
             kwargs["temperature"] = temperature
