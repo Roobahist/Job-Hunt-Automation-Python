@@ -22,7 +22,7 @@ FROM deps AS worker-deps
 USER root
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends texlive-latex-base texlive-latex-extra texlive-fonts-recommended texlive-fonts-extra \
+    && apt-get install -y --no-install-recommends texlive-latex-base texlive-latex-extra texlive-fonts-recommended texlive-fonts-extra tex-gyre \
     && rm -rf /var/lib/apt/lists/*
 
 FROM worker-deps AS worker
