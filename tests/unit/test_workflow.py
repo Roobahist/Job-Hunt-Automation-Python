@@ -85,15 +85,39 @@ def make_workflow(repo: Repository, result: Qualification) -> tuple[ApplicationW
 
 
 def application_job() -> Job:
-    return assign_identity(Job(source="x", external_id="1", url="https://x/jobs/1", company_name="C", title="T", description="D"))
+    return assign_identity(
+        Job(
+            source="x",
+            external_id="1",
+            url="https://x/jobs/1",
+            company_name="C",
+            title="T",
+            description="D",
+        )
+    )
 
 
 def qualify(workflow: ApplicationWorkflow, *, force: bool = False) -> object:
-    return workflow.persist_and_qualify(application_job(), run_id=uuid4(), master_cv={}, prompts={}, threshold=33, force=force)
+    return workflow.persist_and_qualify(
+        application_job(),
+        run_id=uuid4(),
+        master_cv={},
+        prompts={},
+        threshold=33,
+        force=force,
+    )
 
 
 def generate(workflow: ApplicationWorkflow, *, row_id: int, score: int) -> object:
-    return workflow.generate_documents(application_job(), run_id=uuid4(), row_id=row_id, score=score, master_cv={}, prompts={}, applicant_filename="Person")
+    return workflow.generate_documents(
+        application_job(),
+        run_id=uuid4(),
+        row_id=row_id,
+        score=score,
+        master_cv={},
+        prompts={},
+        applicant_filename="Person",
+    )
 
 
 def test_below_threshold_marks_row_dropped_and_stops_at_qualification_boundary() -> None:
@@ -110,7 +134,10 @@ def test_below_threshold_marks_row_dropped_and_stops_at_qualification_boundary()
 
 def test_document_generation_is_explicit_after_qualification() -> None:
     repo = Repository()
-    workflow, publisher, _, _ = make_workflow(repo, Qualification(score=90, should_apply=False, reasoning="metadata only"))
+    workflow, publisher, _, _ = make_workflow(
+        repo,
+        Qualification(score=90, should_apply=False, reasoning="metadata only"),
+    )
     qualification = qualify(workflow)
     result = generate(workflow, row_id=qualification.row_id, score=qualification.score)  # type: ignore[attr-defined]
     assert result.passed  # type: ignore[attr-defined]
@@ -120,7 +147,10 @@ def test_document_generation_is_explicit_after_qualification() -> None:
 
 def test_manual_drop_before_documents_skips_tailoring_rendering_and_publish() -> None:
     repo = Repository(dropped=True)
-    workflow, publisher, ai, renderer = make_workflow(repo, Qualification(score=90, should_apply=True, reasoning="good"))
+    workflow, publisher, ai, renderer = make_workflow(
+        repo,
+        Qualification(score=90, should_apply=True, reasoning="good"),
+    )
     result = generate(workflow, row_id=8, score=90)
     assert not result.passed  # type: ignore[attr-defined]
     assert not result.artifacts_published  # type: ignore[attr-defined]
@@ -130,12 +160,12 @@ def test_manual_drop_before_documents_skips_tailoring_rendering_and_publish() ->
     assert publisher.calls == 0
 
 
-def test_force_qualifies_existing_job_without_automatic_drop() -> None:
+def test_force_does_not_override_below_threshold_drop_rule() -> None:
     repo = Repository(existing=True)
     workflow, publisher, _, _ = make_workflow(repo, Qualification(score=1, should_apply=False, reasoning="no"))
     result = qualify(workflow, force=True)
-    assert result.passed  # type: ignore[attr-defined]
-    assert ("status", "dropped") not in repo.calls
+    assert not result.passed  # type: ignore[attr-defined]
+    assert ("status", "dropped") in repo.calls
     assert publisher.calls == 0
 
 
@@ -144,7 +174,10 @@ def test_permanent_error_is_not_retried() -> None:
         def find(self, job: Job) -> None:
             raise WorkflowError("bad", ErrorKind.VALIDATION)
 
-    workflow, _, _, _ = make_workflow(BrokenRepository(), Qualification(score=1, should_apply=False, reasoning="no"))
+    workflow, _, _, _ = make_workflow(
+        BrokenRepository(),
+        Qualification(score=1, should_apply=False, reasoning="no"),
+    )
     with pytest.raises(WorkflowError):
         qualify(workflow)
 
@@ -157,7 +190,13 @@ def test_qualification_rate_limit_escapes_immediately_for_celery_deferral() -> N
 
         def qualify(self, *_: object) -> Qualification:
             self.calls += 1
-            raise ProviderError("local requests-per-minute budget exhausted", ErrorKind.RATE_LIMIT, retryable=True, provider="gemini", retry_after=47)
+            raise ProviderError(
+                "local requests-per-minute budget exhausted",
+                ErrorKind.RATE_LIMIT,
+                retryable=True,
+                provider="gemini",
+                retry_after=47,
+            )
 
     repo = Repository()
     ai = RateLimitedAI()
