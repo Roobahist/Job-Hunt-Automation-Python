@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hmac
+import logging
 from collections.abc import Callable
 from typing import Annotated
 from uuid import UUID
@@ -13,13 +14,15 @@ from redis import Redis
 from job_hunt.application.normalization import fillout_submission
 from job_hunt.application.runs import Queue, RunCoordinator
 from job_hunt.config import Settings
-from job_hunt.container import Container, TenantServices
+from job_hunt.container import Container, TelegramRoute
 from job_hunt.domain.models import EnqueueResponse, JobSubmission, RetryResponse, RunStatus
-from job_hunt.errors import ConfigurationError, WorkflowError
+from job_hunt.errors import ConfigurationError, ProviderError, WorkflowError
 from job_hunt.logging import configure_logging
 from job_hunt.queueing import CeleryQueue
 from job_hunt.run_store import RunStore
 from job_hunt.security import verify_bearer
+
+logger = logging.getLogger(__name__)
 
 
 def create_app(
@@ -37,6 +40,7 @@ def create_app(
     task_queue = queue or CeleryQueue()
     container = container_factory or (lambda: Container(configured))
     coordinator = RunCoordinator(run_store, task_queue, lambda tenant: container().registry.get(tenant))
+    telegram_routes: dict[str, TelegramRoute] = {}
     app = FastAPI(title="Job Hunt Automation", version="0.2.0")
 
     @app.exception_handler(RequestValidationError)
@@ -117,15 +121,14 @@ def create_app(
             force=False,
         )
 
-    def telegram_services(chat_id: str) -> tuple[str, TenantServices] | None:
-        instance = container()
-        for tenant, bootstrap in instance.registry.bootstraps.items():
-            if not bootstrap.enabled:
-                continue
-            services = instance.tenant(tenant)
-            if str(services.config.telegram_chat_id) == chat_id:
-                return tenant, services
-        return None
+    def telegram_route(chat_id: str) -> TelegramRoute | None:
+        cached = telegram_routes.get(chat_id)
+        if cached is not None:
+            return cached
+        routed = container().telegram_route(chat_id)
+        if routed is not None:
+            telegram_routes[chat_id] = routed
+        return routed
 
     @app.post("/webhooks/telegram")
     def telegram_webhook(
@@ -144,29 +147,38 @@ def create_app(
         message = callback.get("message")
         chat = message.get("chat") if isinstance(message, dict) else None
         chat_id = str(chat.get("id")) if isinstance(chat, dict) and chat.get("id") is not None else ""
-        routed = telegram_services(chat_id) if chat_id else None
+        routed = telegram_route(chat_id) if chat_id else None
         if routed is None:
             return {"ok": True}
-        tenant, services = routed
         callback_id = str(callback.get("id") or "")
         data = str(callback.get("data") or "")
         response_text = "Action ignored"
         try:
             if data.startswith("status:"):
                 _, status_key, raw_row_id = data.split(":", 2)
-                services.repository.set_status(int(raw_row_id), status_key)
+                routed.repository.set_status(int(raw_row_id), status_key)
                 response_text = "Status updated"
             elif data.startswith("retry:"):
                 run_id = UUID(data.split(":", 1)[1])
                 run = run_store.get(run_id)
-                if run is None or run.tenant != tenant:
+                if run is None or run.tenant != routed.tenant:
                     raise ValueError("Run does not belong to Telegram chat tenant")
                 coordinator.retry(run_id, fresh=True)
                 response_text = "Regeneration queued"
         except (KeyError, ValueError):
             response_text = "Action could not be applied"
         if callback_id:
-            services.notifier.answer_callback(callback_id, response_text)
+            try:
+                routed.notifier.answer_callback(callback_id, response_text)
+            except ProviderError as exc:
+                logger.warning(
+                    "Telegram callback acknowledgement failed",
+                    extra={
+                        "tenant": routed.tenant,
+                        "chat_id": chat_id,
+                        "error": str(exc),
+                    },
+                )
         return {"ok": True}
 
     @app.post(
