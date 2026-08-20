@@ -62,16 +62,33 @@ class Container:
     def __init__(self, settings: Settings | None = None, project_root: Path = Path(".")) -> None:
         self.settings = settings or Settings()
         self.project_root = project_root
-        self.registry = TenantRegistry(load_registry(self.settings.registry_path), project_root)
+        self.registry = TenantRegistry(
+            load_registry(self.settings.registry_path),
+            project_root,
+            latex_compile_timeout_seconds=self.settings.latex_compile_timeout_seconds,
+        )
         self.redis = Redis.from_url(self.settings.redis_url, decode_responses=True)
         self.state = RedisState(self.redis)
 
+    def _baserow(self, token: str, base_url: str) -> BaserowClient:
+        return BaserowClient(
+            token,
+            base_url,
+            timeout_seconds=self.settings.baserow_request_timeout_seconds,
+        )
+
+    def _telegram(self) -> TelegramNotifier:
+        return TelegramNotifier(
+            self.settings.shared_telegram_token(),
+            timeout_seconds=self.settings.telegram_request_timeout_seconds,
+        )
+
     def telegram_route(self, chat_id: str) -> TelegramRoute | None:
-        notifier = TelegramNotifier(self.settings.shared_telegram_token())
+        notifier = self._telegram()
         for tenant, bootstrap in self.registry.bootstraps.items():
             if not bootstrap.enabled:
                 continue
-            baserow = BaserowClient(bootstrap.secret("baserow"), bootstrap.baserow_base_url)
+            baserow = self._baserow(bootstrap.secret("baserow"), bootstrap.baserow_base_url)
             config_repository = BaserowConfigurationRepository(baserow, bootstrap.config_table_id)
             config = config_repository.load()
             if str(config.telegram_chat_id) != chat_id:
@@ -93,7 +110,7 @@ class Container:
     ) -> TenantServices:
         context = self.registry.get(key)
         bootstrap = context.bootstrap
-        baserow = BaserowClient(bootstrap.secret("baserow"), bootstrap.baserow_base_url)
+        baserow = self._baserow(bootstrap.secret("baserow"), bootstrap.baserow_base_url)
         config_repository = BaserowConfigurationRepository(baserow, bootstrap.config_table_id)
 
         if snapshot is None:
@@ -124,6 +141,7 @@ class Container:
             self.settings.content_models(),
             self.settings.repair_models(),
             quota_cooldown_seconds=self.settings.provider_quota_cooldown_seconds,
+            request_timeout_seconds=self.settings.gemini_request_timeout_seconds,
             state=self.state.checkpoints(checkpoint_namespace),
             checkpoint_ttl_seconds=self.settings.llm_checkpoint_ttl_seconds,
             limits=self.settings.gemini_limits(),
@@ -174,5 +192,5 @@ class Container:
             normalizer,
             workflow,
             discovery,
-            TelegramNotifier(self.settings.shared_telegram_token()),
+            self._telegram(),
         )
