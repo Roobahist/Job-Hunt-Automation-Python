@@ -217,9 +217,25 @@ def test_discovery_and_fillout_auth_form_validation() -> None:
         == 400
     )
     payload["formId"] = "form-1"
-    accepted = api.post("/webhooks/fillout/mahsa", json=payload, headers={"Authorization": "Bearer webhook-secret"})
+    accepted = api.post(
+        "/webhooks/fillout/mahsa",
+        json=payload,
+        headers={"Authorization": "Bearer webhook-secret"},
+    )
     assert accepted.status_code == 202
     assert queue.calls[-1][4] is False
+
+
+def test_fillout_invalid_values_return_structured_validation_error() -> None:
+    api, _ = client()
+    response = api.post(
+        "/webhooks/fillout/mojtaba",
+        json={"formId": "form-1", "entryType": "url", "jobUrl": ""},
+        headers={"Authorization": "Bearer webhook-secret"},
+    )
+    assert response.status_code == 422
+    assert response.json()["error"] == "validation_error"
+    assert response.json()["message"] == "Submitted values are incomplete or invalid"
 
 
 def test_shared_telegram_callback_routes_by_chat_id() -> None:
