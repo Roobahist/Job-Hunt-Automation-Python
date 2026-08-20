@@ -120,10 +120,12 @@ class BaserowJobRepository:
         return self.client.create_row(self.table_id, self._job_fields(job) | {"Status": self.status_options["new"]})
 
     def reset(self, row_id: int, job: Job) -> Mapping[str, Any]:
+        job_fields = self._job_fields(job)
+        job_fields.pop("Link", None)
         return self.client.update_row(
             self.table_id,
             row_id,
-            self._job_fields(job)
+            job_fields
             | {
                 "Score": None,
                 "Apply": False,
@@ -150,11 +152,7 @@ class BaserowJobRepository:
         *,
         job_url: str,
     ) -> None:
-        values = dict(uploaded_files)
-        values["Link"] = job_url
-        if "toApply" in self.status_options:
-            values["Status"] = self.status_options["toApply"]
-        self.client.update_row(self.table_id, row_id, values)
+        self.client.update_row(self.table_id, row_id, dict(uploaded_files))
 
     def set_status(self, row_id: int, status_key: str) -> None:
         if status_key not in self.status_options:
