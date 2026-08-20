@@ -37,9 +37,7 @@
 \usepackage{tabularx}
 \usepackage{fontawesome5}
 \usepackage[scale=0.90,lf]{FiraMono}
-% Prefer TeX Gyre Heros when available. The production worker may use a
-% reduced TeX installation, so fall back to Helvetica without failing PDF generation.
-\IfFileExists{tgheros.sty}{\usepackage{tgheros}}{\usepackage[scaled]{helvet}}
+\usepackage{tgheros}
 \usepackage[T1]{fontenc}
 
 % For searchable PDF text when compiling with pdfLaTeX, uncomment if available.
@@ -405,7 +403,7 @@
 \renewcommand\labelitemii{$\vcenter{\hbox{\tiny$\bullet$}}$}
 
 % =========================================================
-% DOCUMENT - generated content
+% DOCUMENT — generated content
 % =========================================================
 
 \color{text-grey}
