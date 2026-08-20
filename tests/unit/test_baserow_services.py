@@ -117,7 +117,6 @@ def test_repository_create_find_and_narrow_updates() -> None:
     repo.save_qualification(
         3,
         Qualification(score=20, should_apply=False, reasoning="low"),
-        passed=False,
     )
     assert client.updates[-1] == {"Score": 20, "Apply": False}
     assert "Link" not in client.updates[-1]
