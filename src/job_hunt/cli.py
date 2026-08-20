@@ -86,7 +86,12 @@ def render(
 ) -> None:
     context = Container(_settings()).registry.get(tenant)
     content = TailoredContent.model_validate_json(input_file.read_text(encoding="utf-8"))
-    result = context.renderer.render(content, output_directory, basename)
+    result = context.renderer.render(
+        content,
+        output_directory,
+        basename,
+        applicant_filename=basename,
+    )
     typer.echo(result.model_dump_json(indent=2))
 
 
