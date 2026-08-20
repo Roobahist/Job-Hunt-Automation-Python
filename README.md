@@ -78,7 +78,7 @@ Generated CV and cover-letter PDFs upload directly to Baserow. JSON and TeX sour
 
 Reprocessing never clears an existing working CV or cover letter before a replacement succeeds. After new documents are persisted, the Baserow row moves to `To Apply` when that status is configured.
 
-Telegram delivery is a separate Celery task. A Telegram outage cannot turn completed document generation into a failed application run or trigger another set of Gemini calls. Notifications include optional controls for opening the job, marking it Applied, skipping it, or queuing regeneration when a Telegram webhook is configured.
+Telegram delivery is a separate Celery task. One application-wide bot serves all tenants, while each tenant keeps its own `telegram_chat_id` in Baserow. Callback actions arrive at the single `/webhooks/telegram` endpoint and are routed to the matching tenant by the incoming chat ID. A Telegram outage cannot turn completed document generation into a failed application run or trigger another set of Gemini calls.
 
 ## Observability
 
@@ -92,12 +92,14 @@ Set `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` to enable Langfuse tracing. 
 2. Run `uv sync --extra dev` and copy `.env.example` to `.env`.
 3. Import the tenant configuration seed into a Baserow Configuration table and put its ID in `config/users.toml`.
 4. Import the matching prompt seed into the tenant Prompts table.
-5. Fill the shared Apify/Gemini pools and tenant-specific Baserow, Telegram, and Fillout secrets.
+5. Fill the shared Apify/Gemini pools, the shared Telegram bot token/webhook secret, and each tenant's Baserow and Fillout secrets.
 6. Run `uv run job-hunt config validate`; use `--live` after provider credentials are configured.
 7. Start the stack with `docker compose up --build -d`.
 8. Run `uv run ruff check .`, `uv run mypy`, and `uv run pytest` locally. GitHub Actions runs the same quality checks automatically.
 
 FastAPI documentation is available at `http://localhost:8000/docs`.
+
+For the production VPS, use the tracked nginx configuration in `deploy/nginx/job-hunt-automation.conf` and `bash scripts/deploy-vps.sh` after the VPS-specific `.env`, DNS, and TLS certificate are configured.
 
 ## Operator examples
 
