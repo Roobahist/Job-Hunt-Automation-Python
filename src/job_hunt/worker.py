@@ -60,15 +60,19 @@ def notify_documents(
     identifier = UUID(run_id)
     try:
         notifier = TelegramNotifier(settings.shared_telegram_token())
-        media_id = retry_transient(
-            notifier.send_documents,
-            chat_id,
-            [Path(path) for path in paths],
-            caption,
-        )
+        artifacts = [Path(path) for path in paths]
+        if not artifacts:
+            raise ValueError("No notification artifacts were provided")
+
+        media_id: str | None = None
+        pdfs = artifacts[1:]
+        if len(pdfs) >= 2:
+            media_id = retry_transient(notifier.send_documents, chat_id, pdfs, "")
+
         action_id = retry_transient(
-            notifier.send_application_actions,
+            notifier.send_document_with_actions,
             chat_id,
+            artifacts[0],
             caption=caption,
             job_url=job_url,
             row_id=row_id,
@@ -109,6 +113,8 @@ def process_submission(
 ) -> dict[str, Any]:
     store = _store()
     identifier = UUID(run_id)
+    redis = store.redis
+    claim_key: str | None = None
     store.update(identifier, state=RunState.RUNNING, stage="normalization", task_id=self.request.id)
     try:
         snapshot = _state().get_snapshot(snapshot_id) if snapshot_id else None
@@ -123,7 +129,12 @@ def process_submission(
             country=services.config.apify_proxy_country,
             max_concurrency=services.config.apify_max_concurrency,
         )
-        redis = store.redis
+
+        claim_key = f"job-hunt:submission:{tenant}:{job.internal_id}"
+        if not force and not redis.set(claim_key, run_id, nx=True, ex=86_400):
+            store.update(identifier, state=RunState.SKIPPED, stage="duplicate")
+            return {"state": "skipped", "reason": "duplicate submission"}
+
         lock = redis.lock(f"job-hunt:lock:{tenant}:{job.identity}", timeout=1800, blocking_timeout=1)
         if not lock.acquire(blocking=True):
             store.update(identifier, state=RunState.SKIPPED, stage="duplicate")
@@ -166,6 +177,8 @@ def process_submission(
             "published": result.artifacts_published,
         }
     except Exception as exc:
+        if claim_key and redis.get(claim_key) == run_id:
+            redis.delete(claim_key)
         logger().exception(
             "job_failed",
             tenant=tenant,
