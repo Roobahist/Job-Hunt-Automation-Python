@@ -76,7 +76,7 @@ class ApplicationWorkflow:
         basename = f"{applicant_filename}-{job.company_name}-{source_id}".replace("/", "-")
         artifacts = self.renderer.render(tailored, self.artifact_root / str(run_id), basename)
         uploaded = retry_transient(self.publisher.publish, artifacts)
-        retry_transient(self.repository.save_artifacts, row_id, uploaded)
+        retry_transient(self.repository.save_artifacts, row_id, uploaded, job_url=job.url)
         log.info("job_documents_ready", stage="publish", row_id=row_id)
         return WorkflowResult(
             row_id,
