@@ -71,6 +71,21 @@ def test_processing_message_starts_as_placeholder_and_can_be_skipped() -> None:
 
 
 @respx.mock
+def test_dropped_job_does_not_create_late_processing_placeholder() -> None:
+    route = respx.post("https://api.telegram.org/botsecret/sendDocument").mock(
+        return_value=httpx.Response(200, json={"ok": True, "result": {"message_id": 31}})
+    )
+    message_id = TelegramNotifier("secret").send_processing_message(
+        "42",
+        caption="Status: ⛔ Dropped",
+        job_url="https://example.com/job",
+        row_id=77,
+    )
+    assert message_id == ""
+    assert len(route.calls) == 0
+
+
+@respx.mock
 def test_processing_message_updates_caption_in_place() -> None:
     route = respx.post("https://api.telegram.org/botsecret/editMessageCaption").mock(
         return_value=httpx.Response(200, json={"ok": True, "result": {"message_id": 31}})
@@ -87,6 +102,27 @@ def test_processing_message_updates_caption_in_place() -> None:
     assert payload["message_id"] == 31
     assert payload["caption"] == "Status: qualification"
     assert payload["reply_markup"]["inline_keyboard"][1][0]["text"] == "Skip Processing"
+
+
+@respx.mock
+def test_dropped_processing_message_is_deleted_instead_of_edited() -> None:
+    delete_route = respx.post("https://api.telegram.org/botsecret/deleteMessage").mock(
+        return_value=httpx.Response(200, json={"ok": True, "result": True})
+    )
+    edit_route = respx.post("https://api.telegram.org/botsecret/editMessageCaption").mock(
+        return_value=httpx.Response(200, json={"ok": True, "result": {"message_id": 31}})
+    )
+    result = TelegramNotifier("secret").edit_processing_message(
+        "42",
+        "31",
+        caption="Status: ⛔ Dropped manually",
+        job_url="https://example.com/job",
+        row_id=None,
+    )
+    assert result == "31"
+    assert len(delete_route.calls) == 1
+    assert len(edit_route.calls) == 0
+    assert _request_json(delete_route.calls[0].request) == {"chat_id": "42", "message_id": 31}
 
 
 @respx.mock
