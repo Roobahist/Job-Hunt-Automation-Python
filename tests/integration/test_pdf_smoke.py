@@ -46,6 +46,11 @@ def test_real_templates_compile_to_pdf(
             "paragraphs": ["First paragraph.", "Second paragraph.", "Third paragraph."],
         },
     )
-    result = renderer.render(content, tmp_path / tenant, tenant)
+    result = renderer.render(
+        content,
+        tmp_path / tenant,
+        tenant,
+        applicant_filename="Applicant",
+    )
     assert result.cv_pdf.stat().st_size > 1000
     assert result.cover_letter_pdf.stat().st_size > 1000
