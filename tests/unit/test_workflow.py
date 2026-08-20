@@ -30,8 +30,8 @@ class Repository:
         self.calls.append(("reset", row_id))
         return {"id": row_id}
 
-    def save_qualification(self, row_id: int, result: Qualification, *, passed: bool) -> None:
-        self.calls.append(("qualification", passed))
+    def save_qualification(self, row_id: int, result: Qualification) -> None:
+        self.calls.append(("qualification", result.score))
 
     def save_artifacts(self, row_id: int, uploaded_files: object) -> None:
         self.calls.append(("artifacts", row_id))
@@ -103,7 +103,7 @@ def test_below_threshold_stops_expensive_side_effects() -> None:
     assert not result.passed  # type: ignore[attr-defined]
     assert result.score == 32  # type: ignore[attr-defined]
     assert publisher.calls == 0
-    assert ("qualification", False) in repo.calls
+    assert ("qualification", 32) in repo.calls
 
 
 def test_should_apply_does_not_block_documents_above_threshold() -> None:
@@ -114,7 +114,7 @@ def test_should_apply_does_not_block_documents_above_threshold() -> None:
     assert result.score == 90  # type: ignore[attr-defined]
     assert publisher.calls == 1
     assert len(result.notification_paths) == 3  # type: ignore[attr-defined]
-    assert ("qualification", True) in repo.calls
+    assert ("qualification", 90) in repo.calls
     assert ("artifacts", 8) in repo.calls
 
 
