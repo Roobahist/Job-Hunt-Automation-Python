@@ -37,6 +37,20 @@ class Settings(BaseSettings):
     llm_checkpoint_ttl_seconds: int = Field(default=604800, ge=300)
     llm_parallelism: int = Field(default=3, ge=1, le=8)
 
+    # Operational timing is environment-configurable. A task time limit of zero disables
+    # Celery's global deadline so long document jobs are not killed mid-generation.
+    gemini_request_timeout_seconds: int = Field(default=180, ge=1)
+    telegram_request_timeout_seconds: int = Field(default=120, ge=1)
+    baserow_request_timeout_seconds: int = Field(default=60, ge=1)
+    latex_compile_timeout_seconds: int = Field(default=180, ge=1)
+    job_lock_timeout_seconds: int = Field(default=1800, ge=60)
+    task_soft_time_limit_seconds: int = Field(default=0, ge=0)
+    task_time_limit_seconds: int = Field(default=0, ge=0)
+    task_max_retries: int = Field(default=8, ge=0)
+    rate_limit_fallback_seconds: int = Field(default=65, ge=1)
+    transient_base_delay_seconds: int = Field(default=5, ge=1)
+    transient_max_delay_seconds: int = Field(default=300, ge=1)
+
     # Provider capacity is shared by every tenant. Each configured key belongs to a separate
     # free-tier account, while all tenants consume the same ordered account pool.
     apify_tokens: str = ""
