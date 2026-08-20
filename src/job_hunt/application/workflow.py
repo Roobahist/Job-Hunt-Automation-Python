@@ -65,7 +65,9 @@ class ApplicationWorkflow:
         row_id = int(row["id"])
         log.info("job_persisted", stage="persist", row_id=row_id, reprocessed=bool(existing))
 
-        qualification = retry_transient(self.qualifier.qualify, job, master_cv, prompts)
+        # LLM capacity errors are intentionally allowed to escape to Celery. Sleeping here
+        # would occupy a fast worker and recreate head-of-line blocking during provider cooldowns.
+        qualification = self.qualifier.qualify(job, master_cv, prompts)
         passed = qualification.passes(threshold, force=force)
         retry_transient(self.repository.save_qualification, row_id, qualification)
         log.info(
