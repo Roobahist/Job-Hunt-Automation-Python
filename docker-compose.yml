@@ -13,6 +13,23 @@ services:
     depends_on: {redis: {condition: service_healthy}}
     restart: unless-stopped
 
+  test:
+    build:
+      context: .
+      target: api
+    env_file: .env
+    command: uv run --frozen --extra dev pytest -q
+    volumes:
+      - ./src:/app/src:ro
+      - ./tests:/app/tests:ro
+      - ./config:/app/config:ro
+      - ./tenants:/app/tenants:ro
+      - ./pyproject.toml:/app/pyproject.toml:ro
+      - ./uv.lock:/app/uv.lock:ro
+    depends_on: {redis: {condition: service_healthy}}
+    profiles: ["tools"]
+    restart: "no"
+
   worker-fast:
     build:
       context: .
