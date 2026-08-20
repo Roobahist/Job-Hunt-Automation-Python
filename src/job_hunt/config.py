@@ -41,6 +41,8 @@ class Settings(BaseSettings):
     # free-tier account, while all tenants consume the same ordered account pool.
     apify_tokens: str = ""
     gemini_api_keys: str = ""
+    telegram_bot_token: str = ""
+    telegram_webhook_secret: str = ""
     gemini_content_models: str = (
         "gemini-3.6-flash,gemini-3.5-flash,gemini-3-flash-preview,gemini-2.5-flash,"
         "gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-2.5-flash-lite"
@@ -64,6 +66,16 @@ class Settings(BaseSettings):
         if not keys:
             raise ConfigurationError("JOB_HUNT_GEMINI_API_KEYS must contain at least one API key")
         return keys
+
+    def shared_telegram_token(self) -> str:
+        if not self.telegram_bot_token:
+            raise ConfigurationError("JOB_HUNT_TELEGRAM_BOT_TOKEN must be set")
+        return self.telegram_bot_token
+
+    def shared_telegram_webhook_secret(self) -> str:
+        if not self.telegram_webhook_secret:
+            raise ConfigurationError("JOB_HUNT_TELEGRAM_WEBHOOK_SECRET must be set")
+        return self.telegram_webhook_secret
 
     def content_models(self) -> list[str]:
         models = [model.removeprefix("models/") for model in self._split_csv(self.gemini_content_models)]
@@ -105,9 +117,7 @@ class Settings(BaseSettings):
 
 class SecretAliases(BaseModel):
     baserow: str
-    telegram: str
     fillout: str
-    telegram_webhook: str | None = None
 
 
 class TenantBootstrap(BaseModel):
@@ -170,9 +180,7 @@ def load_registry(path: Path) -> dict[str, TenantBootstrap]:
     for key, value in raw.items():
         aliases = SecretAliases(
             baserow=value["baserow_token_env"],
-            telegram=value["telegram_token_env"],
             fillout=value["fillout_secret_env"],
-            telegram_webhook=value.get("telegram_webhook_secret_env"),
         )
         result[key] = TenantBootstrap(
             key=key,
