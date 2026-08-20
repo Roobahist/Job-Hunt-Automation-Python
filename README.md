@@ -76,7 +76,7 @@ Independent tailoring branches run concurrently within the configured `JOB_HUNT_
 
 Generated CV and cover-letter PDFs upload directly to Baserow. JSON and TeX sources remain in the local ZIP bundle, eliminating the previous Cloudinary transport hop.
 
-Reprocessing never clears an existing working CV or cover letter before a replacement succeeds. After new documents are persisted, the Baserow row moves to `To Apply` when that status is configured.
+Reprocessing never clears an existing working CV or cover letter before a replacement succeeds. Document generation does not change a `New` row to another workflow status. Jobs below the qualification threshold are marked `Dropped`, and manual `Dropped` status also prevents queued document generation from starting.
 
 Telegram delivery is a separate Celery task. One application-wide bot serves all tenants, while each tenant keeps its own `telegram_chat_id` in Baserow. Callback actions arrive at the single `/webhooks/telegram` endpoint and are routed to the matching tenant by the incoming chat ID. A Telegram outage cannot turn completed document generation into a failed application run or trigger another set of Gemini calls.
 
@@ -99,7 +99,7 @@ Set `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` to enable Langfuse tracing. 
 
 FastAPI documentation is available at `http://localhost:8000/docs`.
 
-For the production VPS, use the tracked nginx configuration in `deploy/nginx/job-hunt-automation.conf` and `bash scripts/deploy-vps.sh` after the VPS-specific `.env`, DNS, and TLS certificate are configured.
+For the production VPS, use the tracked nginx configuration in `deploy/nginx/job-hunt-automation.conf` and `bash scripts/deploy-vps.sh` after the VPS-specific `.env`, DNS, and TLS certificate are configured. Run `bash scripts/test-vps.sh` to execute tests against the current VPS checkout. The dedicated Compose test service mounts the current source and test files so stale tests baked into an older application image cannot be executed accidentally.
 
 ## Operator examples
 
