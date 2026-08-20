@@ -95,7 +95,10 @@ def fillout_submission(payload: Mapping[str, Any], field_ids: Mapping[str, str])
                 flattened[str(question_id)] = question.get("value")
 
     def value(name: str) -> Any:
-        return flattened.get(field_ids.get(name, name))
+        configured_id = field_ids.get(name)
+        if configured_id and configured_id in flattened:
+            return flattened[configured_id]
+        return flattened.get(name)
 
     entry = str(value("entryType") or "").strip().lower().replace(" ", "_")
     if entry == EntryType.LINKEDIN:
