@@ -65,11 +65,11 @@ class ApplicationWorkflow:
         row_id = int(row["id"])
         log.info("job_persisted", stage="persist", row_id=row_id, reprocessed=bool(existing))
 
-        # LLM capacity errors are intentionally allowed to escape to Celery. Sleeping here
-        # would occupy a fast worker and recreate head-of-line blocking during provider cooldowns.
         qualification = self.qualifier.qualify(job, master_cv, prompts)
         passed = qualification.passes(threshold, force=force)
         retry_transient(self.repository.save_qualification, row_id, qualification)
+        if qualification.score < threshold and not force:
+            retry_transient(self.repository.set_status, row_id, "dropped")
         log.info(
             "job_qualified",
             stage="qualification",
@@ -91,6 +91,10 @@ class ApplicationWorkflow:
         applicant_filename: str,
     ) -> WorkflowResult:
         log = logger().bind(run_id=str(run_id), job_identity=job.identity)
+        if retry_transient(self.repository.has_status, row_id, "dropped"):
+            log.info("job_documents_skipped", stage="documents", row_id=row_id, reason="status_dropped")
+            return WorkflowResult(row_id=row_id, passed=False, artifacts_published=False, score=score)
+
         tailored = self.tailor.tailor(job, master_cv, prompts)
         source_id = job.external_id or str(job.internal_id)
         archive_basename = f"{applicant_filename}-{job.company_name}-{source_id}".replace("/", "-")
