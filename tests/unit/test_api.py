@@ -68,17 +68,7 @@ class FakeQueue:
         snapshot_id: str | None = None,
         checkpoint_namespace: str | None = None,
     ) -> str:
-        self.calls.append(
-            (
-                "submission",
-                tenant,
-                payload,
-                run_id,
-                force,
-                snapshot_id,
-                checkpoint_namespace,
-            )
-        )
+        self.calls.append(("submission", tenant, payload, run_id, force, snapshot_id, checkpoint_namespace))
         return "task-1"
 
     def discovery(self, tenant: str, run_id: UUID) -> str:
@@ -100,6 +90,7 @@ class FakeBootstrap:
 class FakeNotifier:
     def __init__(self) -> None:
         self.answers: list[tuple[str, str]] = []
+        self.edits: list[tuple[str, str, str, str, int | None]] = []
         self.fail_answers = False
 
     def answer_callback(self, callback_id: str, text: str) -> None:
@@ -112,6 +103,18 @@ class FakeNotifier:
             )
         self.answers.append((callback_id, text))
 
+    def edit_processing_message(
+        self,
+        chat_id: str,
+        message_id: str,
+        *,
+        caption: str,
+        job_url: str,
+        row_id: int | None = None,
+    ) -> str:
+        self.edits.append((chat_id, message_id, caption, job_url, row_id))
+        return message_id
+
 
 class FakeRepository:
     def __init__(self) -> None:
@@ -123,41 +126,24 @@ class FakeRepository:
 
 class FakeContainer:
     notifier: ClassVar[FakeNotifier] = FakeNotifier()
-    repositories: ClassVar[dict[str, FakeRepository]] = {
-        "mahsa": FakeRepository(),
-        "mojtaba": FakeRepository(),
-    }
-    bootstraps: ClassVar[dict[str, FakeBootstrap]] = {
-        "mahsa": FakeBootstrap(),
-        "mojtaba": FakeBootstrap(),
-    }
+    repositories: ClassVar[dict[str, FakeRepository]] = {"mahsa": FakeRepository(), "mojtaba": FakeRepository()}
+    bootstraps: ClassVar[dict[str, FakeBootstrap]] = {"mahsa": FakeBootstrap(), "mojtaba": FakeBootstrap()}
 
     def __init__(self) -> None:
-        self.registry = SimpleNamespace(
-            get=lambda _: object(),
-            bootstraps=self.bootstraps,
-        )
+        self.registry = SimpleNamespace(get=lambda _: object(), bootstraps=self.bootstraps)
 
     def telegram_route(self, chat_id: str) -> object | None:
         tenants = {"100": "mahsa", "200": "mojtaba"}
         tenant = tenants.get(chat_id)
         if tenant is None:
             return None
-        return SimpleNamespace(
-            tenant=tenant,
-            repository=self.repositories[tenant],
-            notifier=self.notifier,
-        )
+        return SimpleNamespace(tenant=tenant, repository=self.repositories[tenant], notifier=self.notifier)
 
     def tenant(self, tenant: str) -> object:
         chat_ids = {"mahsa": "100", "mojtaba": "200"}
         return SimpleNamespace(
             context=SimpleNamespace(bootstrap=self.bootstraps[tenant]),
-            config=SimpleNamespace(
-                fillout_form_id="form-1",
-                fillout_field_ids={},
-                telegram_chat_id=chat_ids[tenant],
-            ),
+            config=SimpleNamespace(fillout_form_id="form-1", fillout_field_ids={}, telegram_chat_id=chat_ids[tenant]),
             notifier=self.notifier,
             repository=self.repositories[tenant],
         )
@@ -192,20 +178,12 @@ def test_submit_status_and_retry() -> None:
     response = api.post(
         "/v1/tenants/mahsa/jobs?force=true",
         headers=auth(),
-        json={
-            "entry_type": "external",
-            "company_name": "C",
-            "job_title": "T",
-            "job_description": "D",
-            "job_url": "https://example.com/j",
-        },
+        json={"entry_type": "external", "company_name": "C", "job_title": "T", "job_description": "D", "job_url": "https://example.com/j"},
     )
     assert response.status_code == 202
     run_id = response.json()["run_id"]
-    status_response = api.get(f"/v1/runs/{run_id}", headers=auth())
-    assert status_response.json()["task_id"] == "task-1"
-    retry = api.post(f"/v1/runs/{run_id}/retry", headers=auth())
-    assert retry.status_code == 202
+    assert api.get(f"/v1/runs/{run_id}", headers=auth()).json()["task_id"] == "task-1"
+    assert api.post(f"/v1/runs/{run_id}/retry", headers=auth()).status_code == 202
     assert queue.calls[0][4] is True
 
 
@@ -214,20 +192,9 @@ def test_discovery_and_fillout_auth_form_validation() -> None:
     assert api.post("/v1/tenants/mojtaba/discoveries", headers=auth()).status_code == 202
     assert queue.calls[-1][0] == "discovery"
     payload = {"formId": "wrong", "entryType": "linkedin", "linkedinJobId": 1}
-    assert (
-        api.post(
-            "/webhooks/fillout/mahsa",
-            json=payload,
-            headers={"Authorization": "Bearer webhook-secret"},
-        ).status_code
-        == 400
-    )
+    assert api.post("/webhooks/fillout/mahsa", json=payload, headers={"Authorization": "Bearer webhook-secret"}).status_code == 400
     payload["formId"] = "form-1"
-    accepted = api.post(
-        "/webhooks/fillout/mahsa",
-        json=payload,
-        headers={"Authorization": "Bearer webhook-secret"},
-    )
+    accepted = api.post("/webhooks/fillout/mahsa", json=payload, headers={"Authorization": "Bearer webhook-secret"})
     assert accepted.status_code == 202
     assert queue.calls[-1][4] is False
 
@@ -248,23 +215,53 @@ def test_shared_telegram_callback_routes_by_chat_id() -> None:
     FakeContainer.repositories["mahsa"].statuses.clear()
     FakeContainer.repositories["mojtaba"].statuses.clear()
     FakeContainer.notifier.answers.clear()
+    FakeContainer.notifier.edits.clear()
     FakeContainer.notifier.fail_answers = False
+    api, _ = client()
+    response = api.post(
+        "/webhooks/telegram",
+        headers={"X-Telegram-Bot-Api-Secret-Token": "telegram-secret"},
+        json={"callback_query": {"id": "cb", "data": "status:applied:42", "message": {"chat": {"id": 100}}}},
+    )
+    assert response.status_code == 200
+    assert FakeContainer.repositories["mahsa"].statuses == [(42, "applied")]
+    assert FakeContainer.repositories["mojtaba"].statuses == []
+    assert FakeContainer.notifier.answers == [("cb", "Status updated")]
+
+
+def test_skip_processing_updates_same_telegram_message_to_dropped() -> None:
+    FakeContainer.repositories["mojtaba"].statuses.clear()
+    FakeContainer.notifier.answers.clear()
+    FakeContainer.notifier.edits.clear()
     api, _ = client()
     response = api.post(
         "/webhooks/telegram",
         headers={"X-Telegram-Bot-Api-Secret-Token": "telegram-secret"},
         json={
             "callback_query": {
-                "id": "cb",
-                "data": "status:applied:42",
-                "message": {"chat": {"id": 100}},
+                "id": "cb-drop",
+                "data": "status:dropped:77",
+                "message": {
+                    "message_id": 555,
+                    "chat": {"id": 200},
+                    "caption": "Designer\n\nStatus: ⏳ Waiting to retry\n▶ Qualification: started 2:41:37 PM\nRetry in: 300s",
+                    "reply_markup": {"inline_keyboard": [[{"text": "Open Job", "url": "https://example.com/job"}]]},
+                },
             }
         },
     )
     assert response.status_code == 200
-    assert FakeContainer.repositories["mahsa"].statuses == [(42, "applied")]
-    assert FakeContainer.repositories["mojtaba"].statuses == []
-    assert FakeContainer.notifier.answers == [("cb", "Status updated")]
+    assert FakeContainer.repositories["mojtaba"].statuses == [(77, "dropped")]
+    assert len(FakeContainer.notifier.edits) == 1
+    chat_id, message_id, caption, job_url, row_id = FakeContainer.notifier.edits[0]
+    assert chat_id == "200"
+    assert message_id == "555"
+    assert "Status: ⛔ Dropped manually" in caption
+    assert "■ Qualification: stopped manually" in caption
+    assert "Retry in:" not in caption
+    assert job_url == "https://example.com/job"
+    assert row_id is None
+    assert FakeContainer.notifier.answers == [("cb-drop", "Status updated")]
 
 
 def test_shared_telegram_callback_ignores_unknown_chat() -> None:
@@ -273,13 +270,7 @@ def test_shared_telegram_callback_ignores_unknown_chat() -> None:
     response = api.post(
         "/webhooks/telegram",
         headers={"X-Telegram-Bot-Api-Secret-Token": "telegram-secret"},
-        json={
-            "callback_query": {
-                "id": "cb",
-                "data": "status:applied:42",
-                "message": {"chat": {"id": 999}},
-            }
-        },
+        json={"callback_query": {"id": "cb", "data": "status:applied:42", "message": {"chat": {"id": 999}}}},
     )
     assert response.status_code == 200
     assert FakeContainer.repositories["mahsa"].statuses == []
@@ -292,13 +283,7 @@ def test_telegram_acknowledgement_failure_does_not_retry_action() -> None:
     response = api.post(
         "/webhooks/telegram",
         headers={"X-Telegram-Bot-Api-Secret-Token": "telegram-secret"},
-        json={
-            "callback_query": {
-                "id": "cb-fail",
-                "data": "status:applied:43",
-                "message": {"chat": {"id": 200}},
-            }
-        },
+        json={"callback_query": {"id": "cb-fail", "data": "status:applied:43", "message": {"chat": {"id": 200}}}},
     )
     FakeContainer.notifier.fail_answers = False
     assert response.status_code == 200
