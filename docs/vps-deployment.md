@@ -3,12 +3,12 @@
 This repository does not connect to or modify the VPS automatically. Deploy only after local and CI checks pass.
 
 1. Install Docker Engine and Docker Compose and clone the repository.
-2. Create `.env` from `.env.example`. Use independent long operator, Fillout, and Telegram webhook secrets and restrict file permissions.
+2. Create `.env` from `.env.example`. Use independent long operator and Fillout secrets, plus one shared Telegram webhook secret, and restrict file permissions.
 3. Update `config/users.toml` with the real Baserow Configuration table IDs. Keep provider credentials in `.env` or a VPS secret manager.
 4. Run `docker compose build`, then `docker compose run --rm api job-hunt config validate --live`.
 5. Start the stack with `docker compose up -d` and confirm `/health/ready` succeeds.
-6. Put TLS/reverse proxying in front of FastAPI port 8000. Redis must remain private. Flower port 5555 should remain private or be protected with `FLOWER_BASIC_AUTH` and the reverse proxy.
-7. Configure Fillout webhooks after readiness succeeds. If Telegram callback buttons are enabled, register `/webhooks/telegram/<tenant>` with Telegram and use the matching secret token.
+6. Put TLS/reverse proxying in front of FastAPI port 8000. Docker Compose binds FastAPI and Flower to localhost. Redis remains Docker-internal.
+7. Configure Fillout webhooks after readiness succeeds. Register the single shared Telegram bot webhook at `/webhooks/telegram` using `JOB_HUNT_TELEGRAM_WEBHOOK_SECRET` as Telegram's secret token. Tenant callback routing uses each Baserow configuration's `telegram_chat_id`.
 8. Configure Docker log rotation. Back up Redis because it now contains run replay data, discovery snapshots, provider state, and LLM checkpoints. Baserow remains the durable document/business store.
 9. Watch Flower, structured logs, and optionally Langfuse during the first discovery and manual submissions.
 
