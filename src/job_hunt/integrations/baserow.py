@@ -17,11 +17,13 @@ class BaserowClient:
         token: str,
         base_url: str = "https://api.baserow.io",
         client: httpx.Client | None = None,
+        *,
+        timeout_seconds: int = 60,
     ) -> None:
         self._client = client or httpx.Client(
             base_url=base_url.rstrip("/"),
             headers={"Authorization": f"Token {token}"},
-            timeout=30,
+            timeout=timeout_seconds,
         )
 
     def _request(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
@@ -123,8 +125,6 @@ class BaserowJobRepository:
         )
 
     def reset(self, row_id: int, job: Job) -> Mapping[str, Any]:
-        # Reprocessing intentionally leaves persisted job metadata, status, and existing
-        # documents untouched until fresh qualification/artifacts are available.
         return {"id": row_id}
 
     def save_qualification(self, row_id: int, result: Qualification) -> None:
