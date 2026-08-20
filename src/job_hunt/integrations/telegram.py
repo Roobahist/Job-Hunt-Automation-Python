@@ -51,6 +51,95 @@ class TelegramNotifier:
             ]
         }
 
+    @staticmethod
+    def _processing_actions(job_url: str, row_id: int | None) -> dict[str, object]:
+        rows: list[list[dict[str, object]]] = [[{"text": "Open Job", "url": job_url}]]
+        if row_id is not None:
+            rows.append([{"text": "Skip Processing", "callback_data": f"status:dropped:{row_id}"}])
+        return {"inline_keyboard": rows}
+
+    @staticmethod
+    def _message_id(payload: dict[str, object], error_message: str) -> str:
+        result = payload.get("result")
+        if not isinstance(result, dict) or "message_id" not in result:
+            raise ProviderError(
+                error_message,
+                ErrorKind.MALFORMED_PROVIDER_RESPONSE,
+                provider="telegram",
+            )
+        return str(result["message_id"])
+
+    def send_processing_message(
+        self,
+        chat_id: str,
+        *,
+        caption: str,
+        job_url: str,
+        row_id: int | None = None,
+    ) -> str:
+        placeholder = (
+            b"Job processing is in progress. This placeholder will be replaced by the application ZIP when complete.\n"
+        )
+        payload = self._post(
+            "/sendDocument",
+            data={
+                "chat_id": chat_id,
+                "caption": caption[:1024],
+                "reply_markup": json.dumps(self._processing_actions(job_url, row_id)),
+            },
+            files={"document": ("processing.txt", placeholder, "text/plain")},
+        )
+        return self._message_id(payload, "Telegram returned no processing message")
+
+    def edit_processing_message(
+        self,
+        chat_id: str,
+        message_id: str,
+        *,
+        caption: str,
+        job_url: str,
+        row_id: int | None = None,
+    ) -> str:
+        payload = self._post(
+            "/editMessageCaption",
+            json={
+                "chat_id": chat_id,
+                "message_id": int(message_id),
+                "caption": caption[:1024],
+                "reply_markup": self._processing_actions(job_url, row_id),
+            },
+        )
+        return self._message_id(payload, "Telegram returned no edited processing message")
+
+    def finalize_processing_message(
+        self,
+        chat_id: str,
+        message_id: str,
+        document: Path,
+        *,
+        caption: str,
+        job_url: str,
+        row_id: int,
+        run_id: str,
+    ) -> str:
+        media = {
+            "type": "document",
+            "media": "attach://document",
+            "caption": caption[:1024],
+        }
+        with document.open("rb") as handle:
+            payload = self._post(
+                "/editMessageMedia",
+                data={
+                    "chat_id": chat_id,
+                    "message_id": message_id,
+                    "media": json.dumps(media),
+                    "reply_markup": json.dumps(self._actions(job_url, row_id, run_id)),
+                },
+                files={"document": (document.name, handle, "application/zip")},
+            )
+        return self._message_id(payload, "Telegram returned no finalized application message")
+
     def send_documents(self, chat_id: str, artifacts: Iterable[Path], caption: str) -> str:
         paths = list(artifacts)
         if not 2 <= len(paths) <= 10:
@@ -106,14 +195,7 @@ class TelegramNotifier:
                 },
                 files={"document": (document.name, handle, "application/octet-stream")},
             )
-        result = payload.get("result")
-        if not isinstance(result, dict):
-            raise ProviderError(
-                "Telegram returned no document message",
-                ErrorKind.MALFORMED_PROVIDER_RESPONSE,
-                provider="telegram",
-            )
-        return str(result["message_id"])
+        return self._message_id(payload, "Telegram returned no document message")
 
     def send_application_actions(
         self,
@@ -134,14 +216,7 @@ class TelegramNotifier:
         if reply_to_message_id is not None:
             payload["reply_parameters"] = {"message_id": int(reply_to_message_id)}
         response = self._post("/sendMessage", json=payload)
-        result = response.get("result")
-        if not isinstance(result, dict):
-            raise ProviderError(
-                "Telegram returned no action message",
-                ErrorKind.MALFORMED_PROVIDER_RESPONSE,
-                provider="telegram",
-            )
-        return str(result["message_id"])
+        return self._message_id(response, "Telegram returned no action message")
 
     def send_application_bundle(
         self,
