@@ -108,39 +108,3 @@ class ApplicationWorkflow:
             score=score,
             notification_paths=tuple(str(path) for path in artifacts.notification_paths()),
         )
-
-    def process(
-        self,
-        job: Job,
-        *,
-        run_id: UUID,
-        master_cv: Mapping[str, Any],
-        prompts: Mapping[str, PromptDefinition],
-        threshold: int,
-        force: bool,
-        applicant_filename: str,
-    ) -> WorkflowResult:
-        qualification = self.persist_and_qualify(
-            job,
-            run_id=run_id,
-            master_cv=master_cv,
-            prompts=prompts,
-            threshold=threshold,
-            force=force,
-        )
-        if not qualification.passed:
-            return WorkflowResult(
-                row_id=qualification.row_id,
-                passed=False,
-                artifacts_published=False,
-                score=qualification.score,
-            )
-        return self.generate_documents(
-            job,
-            run_id=run_id,
-            row_id=qualification.row_id,
-            score=qualification.score,
-            master_cv=master_cv,
-            prompts=prompts,
-            applicant_filename=applicant_filename,
-        )

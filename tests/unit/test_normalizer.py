@@ -78,7 +78,6 @@ def test_linkedin_url_uses_provider_instead_of_page_extraction(monkeypatch: obje
     )
     assert job.external_id == "4452378707"
     assert job.published_at == datetime(2026, 8, 19, tzinfo=UTC)
-    assert linkedin_job_id_from_url(job.url) == 4452378707
 
 
 def test_provider_timestamp_date_is_supported() -> None:

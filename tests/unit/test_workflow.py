@@ -84,48 +84,63 @@ def application_job() -> Job:
     )
 
 
-def process(workflow: ApplicationWorkflow, *, force: bool = False) -> object:
-    return workflow.process(
+def qualify(workflow: ApplicationWorkflow, *, force: bool = False) -> object:
+    return workflow.persist_and_qualify(
         application_job(),
         run_id=uuid4(),
         master_cv={},
         prompts={},
         threshold=33,
         force=force,
+    )
+
+
+def generate(workflow: ApplicationWorkflow, *, row_id: int, score: int) -> object:
+    return workflow.generate_documents(
+        application_job(),
+        run_id=uuid4(),
+        row_id=row_id,
+        score=score,
+        master_cv={},
+        prompts={},
         applicant_filename="Person",
     )
 
 
-def test_below_threshold_stops_expensive_side_effects() -> None:
+def test_below_threshold_stops_at_qualification_boundary() -> None:
     repo = Repository()
     workflow, publisher = make_workflow(repo, Qualification(score=32, should_apply=True, reasoning="low"))
-    result = process(workflow)
+    result = qualify(workflow)
     assert not result.passed  # type: ignore[attr-defined]
     assert result.score == 32  # type: ignore[attr-defined]
     assert publisher.calls == 0
     assert ("qualification", 32) in repo.calls
+    assert all(call[0] != "artifacts" for call in repo.calls)
 
 
-def test_should_apply_does_not_block_documents_above_threshold() -> None:
+def test_document_generation_is_explicit_after_qualification() -> None:
     repo = Repository()
     workflow, publisher = make_workflow(repo, Qualification(score=90, should_apply=False, reasoning="metadata only"))
-    result = process(workflow)
+    qualification = qualify(workflow)
+    assert qualification.passed  # type: ignore[attr-defined]
+    assert publisher.calls == 0
+
+    result = generate(workflow, row_id=qualification.row_id, score=qualification.score)  # type: ignore[attr-defined]
     assert result.passed  # type: ignore[attr-defined]
     assert result.score == 90  # type: ignore[attr-defined]
     assert publisher.calls == 1
     assert len(result.notification_paths) == 3  # type: ignore[attr-defined]
-    assert ("qualification", 90) in repo.calls
     assert ("artifacts", 8) in repo.calls
 
 
-def test_force_processes_existing_job_without_rewriting_metadata() -> None:
+def test_force_qualifies_existing_job_without_rewriting_metadata() -> None:
     repo = Repository(existing=True)
     workflow, publisher = make_workflow(repo, Qualification(score=1, should_apply=False, reasoning="no"))
-    result = process(workflow, force=True)
+    result = qualify(workflow, force=True)
     assert result.passed  # type: ignore[attr-defined]
     assert result.score == 1  # type: ignore[attr-defined]
     assert ("reset", 7) in repo.calls
-    assert publisher.calls == 1
+    assert publisher.calls == 0
 
 
 def test_permanent_error_is_not_retried() -> None:
@@ -135,4 +150,4 @@ def test_permanent_error_is_not_retried() -> None:
 
     workflow, _ = make_workflow(BrokenRepository(), Qualification(score=1, should_apply=False, reasoning="no"))
     with pytest.raises(WorkflowError):
-        process(workflow)
+        qualify(workflow)

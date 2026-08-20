@@ -114,17 +114,18 @@ class TelegramNotifier:
         job_url: str,
         row_id: int,
         run_id: str,
+        reply_to_message_id: str | None = None,
     ) -> str:
-        payload = self._post(
-            "/sendMessage",
-            json={
-                "chat_id": chat_id,
-                "text": caption,
-                "reply_markup": self._actions(job_url, row_id, run_id),
-                "disable_web_page_preview": True,
-            },
-        )
-        result = payload.get("result")
+        payload: dict[str, object] = {
+            "chat_id": chat_id,
+            "text": caption,
+            "reply_markup": self._actions(job_url, row_id, run_id),
+            "disable_web_page_preview": True,
+        }
+        if reply_to_message_id is not None:
+            payload["reply_parameters"] = {"message_id": int(reply_to_message_id)}
+        response = self._post("/sendMessage", json=payload)
+        result = response.get("result")
         if not isinstance(result, dict):
             raise ProviderError(
                 "Telegram returned no action message",
@@ -132,6 +133,38 @@ class TelegramNotifier:
                 provider="telegram",
             )
         return str(result["message_id"])
+
+    def send_application_bundle(
+        self,
+        chat_id: str,
+        artifacts: Iterable[Path],
+        *,
+        caption: str,
+        job_url: str,
+        row_id: int,
+        run_id: str,
+    ) -> str:
+        paths = list(artifacts)
+        if not paths:
+            raise ValueError("At least one application artifact is required")
+        if len(paths) == 1:
+            return self.send_document_with_actions(
+                chat_id,
+                paths[0],
+                caption=caption,
+                job_url=job_url,
+                row_id=row_id,
+                run_id=run_id,
+            )
+        media_message_id = self.send_documents(chat_id, paths, caption)
+        return self.send_application_actions(
+            chat_id,
+            caption="Application actions",
+            job_url=job_url,
+            row_id=row_id,
+            run_id=run_id,
+            reply_to_message_id=media_message_id,
+        )
 
     def answer_callback(self, callback_query_id: str, text: str) -> None:
         self._post(

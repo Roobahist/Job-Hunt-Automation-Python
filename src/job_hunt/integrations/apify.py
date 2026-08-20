@@ -93,11 +93,7 @@ class ApifyProvider:
 
         now = time.monotonic()
         with self._lock:
-            available = [
-                token
-                for token in self.tokens
-                if self._unavailable_until.get(self._token_id(token), 0) <= now
-            ]
+            available = [token for token in self.tokens if self._unavailable_until.get(self._token_id(token), 0) <= now]
             if available:
                 return available
             return [
@@ -137,9 +133,7 @@ class ApifyProvider:
         failures: list[str] = []
         for token in self._available_tokens():
             try:
-                yield from self._run_with_client(
-                    ApifyClient(token), actor_id, run_input, max_items
-                )
+                yield from self._run_with_client(ApifyClient(token), actor_id, run_input, max_items)
                 return
             except ProviderError:
                 raise
@@ -167,11 +161,7 @@ class ApifyProvider:
         return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
 
     def discover(self, urls: Sequence[str], *, max_items: int) -> Iterable[Mapping[str, Any]]:
-        requests = [
-            {"url": url.strip()}
-            for url in urls
-            if isinstance(url, str) and self._valid_http_url(url)
-        ]
+        requests = [{"url": url.strip()} for url in urls if isinstance(url, str) and self._valid_http_url(url)]
         if not requests:
             raise ProviderError(
                 "No valid LinkedIn search URLs were generated",
@@ -180,9 +170,7 @@ class ApifyProvider:
             )
         return self._run(self.search_actor_id, {"startUrls": requests}, max_items=max_items)
 
-    def fetch_linkedin(
-        self, job_id: int, *, country: str, max_concurrency: int
-    ) -> Mapping[str, Any]:
+    def fetch_linkedin(self, job_id: int, *, country: str, max_concurrency: int) -> Mapping[str, Any]:
         job_url = f"https://www.linkedin.com/jobs/view/{job_id}"
         items = list(
             self._run(
@@ -199,7 +187,5 @@ class ApifyProvider:
             )
         )
         if not items:
-            raise ProviderError(
-                "LinkedIn job was not found", ErrorKind.BUSINESS, provider="apify"
-            )
+            raise ProviderError("LinkedIn job was not found", ErrorKind.BUSINESS, provider="apify")
         return items[0]

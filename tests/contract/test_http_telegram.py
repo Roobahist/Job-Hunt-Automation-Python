@@ -95,6 +95,40 @@ def test_telegram_action_message_has_workflow_controls() -> None:
     assert "retry:run-1" in payload
 
 
+@respx.mock
+def test_application_bundle_sends_every_artifact_and_replies_with_actions(tmp_path: Path) -> None:
+    artifacts = []
+    for name in ("application.zip", "Person_CV.pdf", "Person_CL.pdf"):
+        path = tmp_path / name
+        path.write_bytes(b"data")
+        artifacts.append(path)
+
+    media_route = respx.post("https://api.telegram.org/botsecret/sendMediaGroup").mock(
+        return_value=httpx.Response(200, json={"ok": True, "result": [{"message_id": 20}]})
+    )
+    action_route = respx.post("https://api.telegram.org/botsecret/sendMessage").mock(
+        return_value=httpx.Response(200, json={"ok": True, "result": {"message_id": 21}})
+    )
+
+    result = TelegramNotifier("secret").send_application_bundle(
+        "42",
+        artifacts,
+        caption="Designer at Example",
+        job_url="https://example.com/job",
+        row_id=77,
+        run_id="run-1",
+    )
+
+    assert result == "21"
+    media_body = media_route.calls[0].request.content
+    for name in (b"application.zip", b"Person_CV.pdf", b"Person_CL.pdf"):
+        assert name in media_body
+    action_payload = action_route.calls[0].request.read().decode()
+    assert '"message_id":20' in action_payload or '"message_id": 20' in action_payload
+    assert "status:applied:77" in action_payload
+    assert "retry:run-1" in action_payload
+
+
 def test_telegram_enforces_api_album_size(tmp_path: Path) -> None:
     one = tmp_path / "one"
     one.write_text("x")

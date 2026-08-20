@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, ClassVar
 from uuid import UUID
 
 from fastapi.testclient import TestClient
@@ -122,9 +122,15 @@ class FakeRepository:
 
 
 class FakeContainer:
-    notifier = FakeNotifier()
-    repositories = {"mahsa": FakeRepository(), "mojtaba": FakeRepository()}
-    bootstraps = {"mahsa": FakeBootstrap(), "mojtaba": FakeBootstrap()}
+    notifier: ClassVar[FakeNotifier] = FakeNotifier()
+    repositories: ClassVar[dict[str, FakeRepository]] = {
+        "mahsa": FakeRepository(),
+        "mojtaba": FakeRepository(),
+    }
+    bootstraps: ClassVar[dict[str, FakeBootstrap]] = {
+        "mahsa": FakeBootstrap(),
+        "mojtaba": FakeBootstrap(),
+    }
 
     def __init__(self) -> None:
         self.registry = SimpleNamespace(
