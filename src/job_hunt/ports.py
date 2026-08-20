@@ -23,6 +23,10 @@ class JobRepository(Protocol):
     def has_status(self, row_id: int, status_key: str) -> bool: ...
 
 
+class CompatibilityFilter(Protocol):
+    def compatible(self, job: Job, prompts: Mapping[str, PromptDefinition]) -> bool: ...
+
+
 class Qualifier(Protocol):
     def qualify(
         self,
