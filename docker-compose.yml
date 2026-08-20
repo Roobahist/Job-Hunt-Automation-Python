@@ -4,7 +4,7 @@ services:
       context: .
       target: api
     env_file: .env
-    ports: ["8000:8000"]
+    ports: ["127.0.0.1:8000:8000"]
     volumes: ["artifacts:/app/runs"]
     depends_on: {redis: {condition: service_healthy}}
     restart: unless-stopped
@@ -34,7 +34,7 @@ services:
     command: >-
       sh -c 'celery -A job_hunt.worker.celery_app flower --port=5555
       $${FLOWER_BASIC_AUTH:+--basic-auth=$${FLOWER_BASIC_AUTH}}'
-    ports: ["5555:5555"]
+    ports: ["127.0.0.1:5555:5555"]
     depends_on: {redis: {condition: service_healthy}}
     restart: unless-stopped
 
