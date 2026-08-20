@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import httpx
@@ -9,6 +10,10 @@ import respx
 from job_hunt.errors import ErrorKind, ProviderError
 from job_hunt.integrations.http import raise_provider_error, retry_after_seconds
 from job_hunt.integrations.telegram import TelegramNotifier
+
+
+def _request_json(request: httpx.Request) -> dict[str, object]:
+    return json.loads(request.content.decode("utf-8"))
 
 
 def test_http_error_classification_and_retry_after() -> None:
@@ -78,7 +83,7 @@ def test_processing_message_updates_caption_in_place() -> None:
         row_id=77,
     )
     assert result == "31"
-    payload = route.calls[0].request.json()
+    payload = _request_json(route.calls[0].request)
     assert payload["message_id"] == 31
     assert payload["caption"] == "Status: qualification"
     assert payload["reply_markup"]["inline_keyboard"][1][0]["text"] == "Skip Processing"
@@ -120,7 +125,7 @@ def test_late_complete_progress_refresh_preserves_final_keyboard() -> None:
         job_url="https://example.com/job",
         row_id=77,
     )
-    payload = route.calls[0].request.json()
+    payload = _request_json(route.calls[0].request)
     assert "reply_markup" not in payload
 
 
