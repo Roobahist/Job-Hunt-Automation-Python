@@ -65,6 +65,7 @@ class Job(BaseModel):
     published_at: datetime | None = None
     identity: str = ""
     internal_id: int = 0
+    provider_data: dict[str, Any] = Field(default_factory=dict, exclude=True)
 
     @model_validator(mode="after")
     def require_content(self) -> Job:
