@@ -148,10 +148,7 @@ def create_app(
         x_telegram_bot_api_secret_token: Annotated[str | None, Header()] = None,
     ) -> dict[str, bool]:
         expected = configured.shared_telegram_webhook_secret()
-        if (
-            not x_telegram_bot_api_secret_token
-            or not hmac.compare_digest(expected, x_telegram_bot_api_secret_token)
-        ):
+        if not x_telegram_bot_api_secret_token or not hmac.compare_digest(expected, x_telegram_bot_api_secret_token):
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid Telegram webhook secret")
         callback = payload.get("callback_query")
         if not isinstance(callback, dict):
