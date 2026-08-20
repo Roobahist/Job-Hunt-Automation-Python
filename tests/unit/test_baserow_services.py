@@ -114,8 +114,9 @@ def test_repository_create_find_reset_and_updates() -> None:
         passed=False,
     )
     assert client.updates[-1]["Status"] == 11
-    repo.save_artifacts(3, {"CV": [{"name": "x"}]})
+    repo.save_artifacts(3, {"CV": [{"name": "x"}]}, job_url=job.url)
     assert client.updates[-1]["CV"][0]["name"] == "x"
+    assert client.updates[-1]["Link"] == job.url
     assert client.updates[-1]["Status"] == 12
     repo.set_status(3, "applied")
     assert client.updates[-1]["Status"] == 13
