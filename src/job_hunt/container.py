@@ -147,5 +147,5 @@ class Container:
             normalizer,
             workflow,
             discovery,
-            TelegramNotifier(bootstrap.secret("telegram")),
+            TelegramNotifier(self.settings.shared_telegram_token()),
         )
