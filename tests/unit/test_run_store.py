@@ -62,3 +62,30 @@ def test_run_store_status_and_replay() -> None:
     store.save_request(status.run_id, {"force": True})
     assert store.get_request(status.run_id) == {"force": True}
     assert store.get(uuid4()) is None
+
+
+def test_notification_merge_preserves_message_and_stage_history() -> None:
+    store = RunStore(FakeRedis())  # type: ignore[arg-type]
+    status = RunStatus(tenant="mojtaba", kind="scheduled-job")
+    store.save(status)
+    store.merge_notification(
+        status.run_id,
+        message_id="31",
+        processing_state="processing",
+        timeline={"persistence": {"started_at": "2026-08-20T18:00:00+00:00"}},
+    )
+    updated = store.merge_notification(
+        status.run_id,
+        current_stage="qualification",
+        timeline={
+            "persistence": {"completed_at": "2026-08-20T18:00:02+00:00", "duration_seconds": 2.0},
+            "qualification": {"started_at": "2026-08-20T18:00:02+00:00"},
+        },
+    )
+    assert updated.notification is not None
+    assert updated.notification["message_id"] == "31"
+    timeline = updated.notification["timeline"]
+    assert isinstance(timeline, dict)
+    assert timeline["persistence"]["started_at"] == "2026-08-20T18:00:00+00:00"  # type: ignore[index]
+    assert timeline["persistence"]["duration_seconds"] == 2.0  # type: ignore[index]
+    assert timeline["qualification"]["started_at"] == "2026-08-20T18:00:02+00:00"  # type: ignore[index]
