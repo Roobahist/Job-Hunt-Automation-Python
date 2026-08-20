@@ -46,7 +46,14 @@ class Tailor(Protocol):
 
 
 class DocumentRenderer(Protocol):
-    def render(self, content: TailoredContent, output_directory: Path, basename: str) -> ArtifactBundle: ...
+    def render(
+        self,
+        content: TailoredContent,
+        output_directory: Path,
+        basename: str,
+        *,
+        applicant_filename: str,
+    ) -> ArtifactBundle: ...
 
 
 class ArtifactPublisher(Protocol):
