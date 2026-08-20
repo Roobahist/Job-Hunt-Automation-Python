@@ -32,11 +32,17 @@ def linkedin_job_id_from_url(url: str) -> int | None:
     return int(match.group(1)) if match else None
 
 
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
 def _parse_datetime(value: Any) -> datetime | None:
     if value in {None, ""}:
         return None
     if isinstance(value, datetime):
-        return value
+        return _as_utc(value)
     if isinstance(value, (int, float)):
         timestamp = float(value)
         if timestamp > 10_000_000_000:
@@ -48,7 +54,7 @@ def _parse_datetime(value: Any) -> datetime | None:
     if text.isdigit():
         return _parse_datetime(int(text))
     try:
-        return datetime.fromisoformat(text.replace("Z", "+00:00"))
+        return _as_utc(datetime.fromisoformat(text.replace("Z", "+00:00")))
     except ValueError:
         for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%b %d, %Y", "%B %d, %Y"):
             try:
