@@ -12,6 +12,7 @@ from job_hunt.ports import ArtifactPublisher, DocumentRenderer, JobRepository, Q
 from job_hunt.retry import retry_transient
 
 ProgressCallback = Callable[[str, str], None]
+PersistedCallback = Callable[[int], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,6 +70,7 @@ class ApplicationWorkflow:
         threshold: int,
         force: bool,
         progress: ProgressCallback | None = None,
+        persisted: PersistedCallback | None = None,
     ) -> QualificationResult:
         log = logger().bind(run_id=str(run_id), job_identity=job.identity)
         self._progress(progress, "persistence", "start")
@@ -79,6 +81,8 @@ class ApplicationWorkflow:
             else retry_transient(self.repository.create, job)
         )
         row_id = int(row["id"])
+        if persisted is not None:
+            persisted(row_id)
         self._progress(progress, "persistence", "finish")
         log.info("job_persisted", stage="persist", row_id=row_id, reprocessed=bool(existing))
 
