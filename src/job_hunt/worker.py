@@ -113,6 +113,75 @@ def notify_documents(
         raise self.retry(exc=exc, countdown=min(60, 2 ** int(self.request.retries))) from exc
 
 
+@celery_app.task(name="job_hunt.generate_documents", bind=True)  # type: ignore[untyped-decorator]
+def generate_documents(
+    self: Any,
+    tenant: str,
+    job_data: dict[str, Any],
+    run_id: str,
+    row_id: int,
+    score: int,
+    snapshot_id: str | None = None,
+    checkpoint_namespace: str | None = None,
+) -> dict[str, Any]:
+    store = _store()
+    identifier = UUID(run_id)
+    store.update(identifier, state=RunState.RUNNING, stage="documents", task_id=self.request.id)
+    try:
+        snapshot = _state().get_snapshot(snapshot_id) if snapshot_id else None
+        services = Container(settings).tenant(
+            tenant,
+            snapshot=snapshot,
+            checkpoint_namespace=checkpoint_namespace or run_id,
+        )
+        job = Job.model_validate(job_data)
+        result = services.workflow.generate_documents(
+            job,
+            run_id=identifier,
+            row_id=row_id,
+            score=score,
+            master_cv=services.context.master_cv,
+            prompts=services.prompts,
+            applicant_filename=services.config.applicant_filename,
+        )
+        store.update(
+            identifier,
+            state=RunState.SUCCEEDED,
+            stage="complete",
+            notification={"state": "queued"} if result.notification_paths else None,
+        )
+        if result.notification_paths:
+            notify_documents.delay(
+                tenant,
+                run_id,
+                list(result.notification_paths),
+                _notification_caption(job, result.score),
+                services.config.telegram_chat_id,
+                result.row_id,
+                job.url,
+            )
+        return {
+            "state": RunState.SUCCEEDED,
+            "row_id": result.row_id,
+            "published": result.artifacts_published,
+        }
+    except Exception as exc:
+        logger().exception(
+            "document_generation_failed",
+            tenant=tenant,
+            run_id=run_id,
+            stage="documents",
+            error_type=type(exc).__name__,
+        )
+        store.update(
+            identifier,
+            state=RunState.FAILED,
+            stage="failed",
+            error={"type": type(exc).__name__, "message": str(exc)},
+        )
+        raise
+
+
 @celery_app.task(name="job_hunt.process_submission", bind=True)  # type: ignore[untyped-decorator]
 def process_submission(
     self: Any,
@@ -149,41 +218,41 @@ def process_submission(
         if not lock.acquire(blocking=True):
             raise TimeoutError("Timed out waiting for an in-progress run of the same job")
         try:
-            store.update(identifier, stage="workflow")
-            result = services.workflow.process(
+            store.update(identifier, stage="qualification")
+            qualification = services.workflow.persist_and_qualify(
                 job,
                 run_id=identifier,
                 master_cv=services.context.master_cv,
                 prompts=services.prompts,
                 threshold=services.config.qualification_threshold,
                 force=force,
-                applicant_filename=services.config.applicant_filename,
             )
         finally:
             if lock.owned():
                 lock.release()
 
-        final_state = RunState.SUCCEEDED if result.passed else RunState.SKIPPED
-        store.update(
-            identifier,
-            state=final_state,
-            stage="complete",
-            notification={"state": "queued"} if result.notification_paths else None,
+        if not qualification.passed:
+            store.update(identifier, state=RunState.SKIPPED, stage="complete")
+            return {
+                "state": RunState.SKIPPED,
+                "row_id": qualification.row_id,
+                "published": False,
+            }
+
+        store.update(identifier, state=RunState.RUNNING, stage="documents_queued")
+        generate_documents.delay(
+            tenant,
+            job.model_dump(mode="json"),
+            run_id,
+            qualification.row_id,
+            qualification.score,
+            snapshot_id,
+            checkpoint_namespace or run_id,
         )
-        if result.notification_paths:
-            notify_documents.delay(
-                tenant,
-                run_id,
-                list(result.notification_paths),
-                _notification_caption(job, result.score),
-                services.config.telegram_chat_id,
-                result.row_id,
-                job.url,
-            )
         return {
-            "state": final_state,
-            "row_id": result.row_id,
-            "published": result.artifacts_published,
+            "state": "documents_queued",
+            "row_id": qualification.row_id,
+            "published": False,
         }
     except Exception as exc:
         logger().exception(
