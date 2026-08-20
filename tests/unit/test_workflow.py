@@ -50,8 +50,7 @@ class AI:
 
 class Renderer:
     def render(self, *_: object, **__: object) -> Any:
-        paths = [Path("/tmp/application.zip"), Path("/tmp/cv.pdf"), Path("/tmp/cl.pdf")]
-        return SimpleNamespace(notification_paths=lambda: paths)
+        return SimpleNamespace(notification_paths=lambda: [Path("/tmp/application.zip")])
 
 
 class Publisher:
@@ -129,7 +128,7 @@ def test_document_generation_is_explicit_after_qualification() -> None:
     assert result.passed  # type: ignore[attr-defined]
     assert result.score == 90  # type: ignore[attr-defined]
     assert publisher.calls == 1
-    assert len(result.notification_paths) == 3  # type: ignore[attr-defined]
+    assert result.notification_paths == ("/tmp/application.zip",)  # type: ignore[attr-defined]
     assert ("artifacts", 8) in repo.calls
 
 
