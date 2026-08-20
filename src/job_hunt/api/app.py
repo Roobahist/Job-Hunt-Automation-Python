@@ -26,6 +26,39 @@ from job_hunt.security import verify_bearer
 logger = logging.getLogger(__name__)
 
 
+def _telegram_message_job_url(message: dict[str, object]) -> str:
+    markup = message.get("reply_markup")
+    keyboard = markup.get("inline_keyboard") if isinstance(markup, dict) else None
+    if not isinstance(keyboard, list):
+        return ""
+    for row in keyboard:
+        if not isinstance(row, list):
+            continue
+        for button in row:
+            if isinstance(button, dict) and isinstance(button.get("url"), str):
+                return str(button["url"])
+    return ""
+
+
+def _dropped_processing_caption(caption: str) -> str:
+    lines: list[str] = []
+    found_status = False
+    for line in caption.splitlines():
+        if line.startswith("Status:"):
+            lines.append("Status: ⛔ Dropped manually")
+            found_status = True
+        elif line.startswith("Retry in:"):
+            continue
+        elif line.startswith("▶ "):
+            stage = line[2:].split(":", 1)[0].strip()
+            lines.append(f"■ {stage}: stopped manually")
+        else:
+            lines.append(line)
+    if not found_status:
+        lines.extend(["", "Status: ⛔ Dropped manually"])
+    return "\n".join(lines)[:1024]
+
+
 def create_app(
     *,
     settings: Settings | None = None,
@@ -165,8 +198,32 @@ def create_app(
         try:
             if data.startswith("status:"):
                 _, status_key, raw_row_id = data.split(":", 2)
-                routed.repository.set_status(int(raw_row_id), status_key)
+                row_id = int(raw_row_id)
+                routed.repository.set_status(row_id, status_key)
                 response_text = "Status updated"
+                if status_key == "dropped" and isinstance(message, dict):
+                    message_id = message.get("message_id")
+                    caption = message.get("caption")
+                    job_url = _telegram_message_job_url(message)
+                    if message_id is not None and isinstance(caption, str) and job_url:
+                        try:
+                            routed.notifier.edit_processing_message(
+                                chat_id,
+                                str(message_id),
+                                caption=_dropped_processing_caption(caption),
+                                job_url=job_url,
+                                row_id=None,
+                            )
+                        except ProviderError as exc:
+                            logger.warning(
+                                "Telegram dropped-state message update failed",
+                                extra={
+                                    "tenant": routed.tenant,
+                                    "chat_id": chat_id,
+                                    "row_id": row_id,
+                                    "error": str(exc),
+                                },
+                            )
             elif data.startswith("retry:"):
                 run_id = UUID(data.split(":", 1)[1])
                 run = run_store.get(run_id)
