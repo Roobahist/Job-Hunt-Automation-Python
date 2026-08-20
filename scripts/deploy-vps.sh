@@ -28,7 +28,7 @@ after=$(git rev-parse HEAD)
 needs_build=false
 if [[ "$before" != "$after" ]]; then
     if git diff --name-only "$before" "$after" -- \
-        Dockerfile pyproject.toml uv.lock | grep -q .; then
+        Dockerfile docker-compose.yml pyproject.toml uv.lock | grep -q .; then
         needs_build=true
     fi
 fi
@@ -42,7 +42,7 @@ fi
 
 docker compose run --rm --no-deps api job-hunt config validate --live
 
-docker compose up -d --no-build --force-recreate \
+docker compose up -d --no-build --force-recreate --remove-orphans \
     api worker-fast worker-documents worker-notifications beat flower
 
 docker compose ps
