@@ -169,10 +169,7 @@ def test_configuration_rejects_missing_common_or_invalid_schema() -> None:
     with pytest.raises(ConfigurationError, match="invalid Output Structure"):
         repository.prompts(2)
 
-    client.rows = [
-        prompt_row(key)
-        for key in sorted(COMMON_PROMPT_KEYS - {"qualification_scoring"})
-    ]
+    client.rows = [prompt_row(key) for key in sorted(COMMON_PROMPT_KEYS - {"qualification_scoring"})]
     with pytest.raises(ConfigurationError, match="Missing active prompts"):
         repository.prompts(2)
 
