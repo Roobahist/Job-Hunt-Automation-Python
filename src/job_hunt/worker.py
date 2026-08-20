@@ -12,7 +12,7 @@ from redis import Redis
 from job_hunt.application.discovery import build_search_url, normalize_discovery
 from job_hunt.config import Settings, load_registry
 from job_hunt.container import Container
-from job_hunt.domain.models import JobSubmission, RunState, RunStatus
+from job_hunt.domain.models import Job, JobSubmission, RunState, RunStatus
 from job_hunt.integrations.telegram import TelegramNotifier
 from job_hunt.logging import configure_logging, logger
 from job_hunt.retry import retry_transient
@@ -45,6 +45,24 @@ def _state() -> RedisState:
     return RedisState(_redis())
 
 
+def _notification_caption(job: Job, score: int | None) -> str:
+    published = job.published_at.strftime("%B %d, %Y") if job.published_at else "Not specified"
+    job_id = job.external_id or str(job.internal_id)
+    match_score = f"{score}/100" if score is not None else "Not available"
+    return "\n".join(
+        [
+            job.title,
+            f"🏢 {job.company_name}",
+            "",
+            f"📍 Location: {job.location or 'Not specified'}",
+            f"💼 Contract: {job.contract_type or 'Not specified'}",
+            f"🎯 Match score: {match_score}",
+            f"🆔 Job ID: {job_id}",
+            f"🗓 Published: {published}",
+        ]
+    )
+
+
 @celery_app.task(name="job_hunt.notify_documents", bind=True, max_retries=3)  # type: ignore[untyped-decorator]
 def notify_documents(
     self: Any,
@@ -64,9 +82,6 @@ def notify_documents(
         if not artifacts:
             raise ValueError("No notification artifacts were provided")
 
-        # Telegram supports only one document attachment on a message that carries
-        # an inline keyboard. The archive contains the CV, cover letter, and source
-        # files, so sending it is the only way to keep one job in one Telegram message.
         action_id = retry_transient(
             notifier.send_document_with_actions,
             chat_id,
@@ -160,7 +175,7 @@ def process_submission(
                 tenant,
                 run_id,
                 list(result.notification_paths),
-                f"{job.title} at {job.company_name}",
+                _notification_caption(job, result.score),
                 services.config.telegram_chat_id,
                 result.row_id,
                 job.url,
