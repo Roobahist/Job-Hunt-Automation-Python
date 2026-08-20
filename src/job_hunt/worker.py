@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 from typing import Any, NoReturn
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from celery import Celery  # type: ignore[import-untyped]
+from celery.schedules import crontab  # type: ignore[import-untyped]
 from pydantic import TypeAdapter
 from redis import Redis
 
@@ -30,7 +32,14 @@ celery_config: dict[str, object] = {
     "result_expires": settings.run_ttl_seconds,
     "worker_send_task_events": True,
     "task_send_sent_event": True,
-    "beat_schedule": {"dispatch-due-tenants": {"task": "job_hunt.dispatch_due_tenants", "schedule": 3600.0}},
+    "timezone": settings.scheduler_timezone,
+    "enable_utc": True,
+    "beat_schedule": {
+        "dispatch-due-tenants": {
+            "task": "job_hunt.dispatch_due_tenants",
+            "schedule": crontab(minute=0),
+        }
+    },
     "task_routes": {
         "job_hunt.discover_tenant": {"queue": "fast"},
         "job_hunt.dispatch_due_tenants": {"queue": "fast"},
@@ -136,6 +145,13 @@ def _log_terminal_failure(event: str, exc: Exception, **context: object) -> None
         )
         return
     logger().exception(event, **context, error_type=type(exc).__name__)
+
+
+def _automatic_discovery_slot(now: datetime, interval_hours: int) -> str | None:
+    local = now.astimezone(ZoneInfo(settings.scheduler_timezone))
+    if local.minute != 0 or local.hour % interval_hours != 0:
+        return None
+    return local.strftime("%Y-%m-%dT%H%z")
 
 
 @celery_app.task(
@@ -520,22 +536,32 @@ def dispatch_due_tenants() -> dict[str, int]:
     redis = _redis()
     queued = 0
     failed = 0
+    local_now = datetime.now(ZoneInfo(settings.scheduler_timezone)).replace(minute=0, second=0, microsecond=0)
     for key, bootstrap in load_registry(settings.registry_path).items():
         if not bootstrap.enabled:
             continue
         try:
             services = Container(settings).tenant(key)
-            due_key = f"job-hunt:last-discovery:{key}"
-            last = redis.get(due_key)
-            interval = services.config.linkedin_schedule_interval_hours * 3600
-            now = int(datetime.now(UTC).timestamp())
-            if last and now - int(str(last)) < interval:
+            interval_hours = services.config.linkedin_schedule_interval_hours
+            slot = _automatic_discovery_slot(local_now, interval_hours)
+            if slot is None:
                 continue
-            redis.set(due_key, now)
+            due_key = f"job-hunt:last-auto-discovery-slot:{key}"
+            if redis.get(due_key) == slot:
+                continue
+            redis.set(due_key, slot)
             run = RunStatus(tenant=key, kind="discovery")
             _store().save(run)
             discover_tenant.delay(key, str(run.run_id))
             queued += 1
+            logger().info(
+                "automatic_discovery_queued",
+                tenant=key,
+                run_id=str(run.run_id),
+                schedule_timezone=settings.scheduler_timezone,
+                schedule_slot=slot,
+                interval_hours=interval_hours,
+            )
         except Exception as exc:
             failed += 1
             _log_terminal_failure("tenant_dispatch_failed", exc, tenant=key, stage="dispatch")
