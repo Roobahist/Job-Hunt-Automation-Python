@@ -114,7 +114,6 @@ def process_submission(
     store = _store()
     identifier = UUID(run_id)
     redis = store.redis
-    claim_key: str | None = None
     store.update(identifier, state=RunState.RUNNING, stage="normalization", task_id=self.request.id)
     try:
         snapshot = _state().get_snapshot(snapshot_id) if snapshot_id else None
@@ -130,15 +129,13 @@ def process_submission(
             max_concurrency=services.config.apify_max_concurrency,
         )
 
-        claim_key = f"job-hunt:submission:{tenant}:{job.internal_id}"
-        if not force and not redis.set(claim_key, run_id, nx=True, ex=86_400):
-            store.update(identifier, state=RunState.SKIPPED, stage="duplicate")
-            return {"state": "skipped", "reason": "duplicate submission"}
-
-        lock = redis.lock(f"job-hunt:lock:{tenant}:{job.identity}", timeout=1800, blocking_timeout=1)
+        lock = redis.lock(
+            f"job-hunt:lock:{tenant}:{job.identity}",
+            timeout=1800,
+            blocking_timeout=1800,
+        )
         if not lock.acquire(blocking=True):
-            store.update(identifier, state=RunState.SKIPPED, stage="duplicate")
-            return {"state": "skipped", "reason": "duplicate in progress"}
+            raise TimeoutError("Timed out waiting for an in-progress run of the same job")
         try:
             store.update(identifier, stage="workflow")
             result = services.workflow.process(
@@ -177,8 +174,6 @@ def process_submission(
             "published": result.artifacts_published,
         }
     except Exception as exc:
-        if claim_key and redis.get(claim_key) == run_id:
-            redis.delete(claim_key)
         logger().exception(
             "job_failed",
             tenant=tenant,
