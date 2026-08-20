@@ -64,7 +64,8 @@ class Settings(BaseSettings):
     )
     gemini_repair_models: str = "gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-2.5-flash-lite"
     gemini_limits_json: str = json.dumps(_DEFAULT_GEMINI_LIMITS, separators=(",", ":"))
-    provider_quota_cooldown_seconds: int = Field(default=65, ge=1)
+    provider_quota_cooldown_seconds: int = Field(default=3600, ge=1)
+    gemini_quota_cooldown_seconds: int = Field(default=65, ge=1)
 
     @staticmethod
     def _split_csv(value: str) -> list[str]:
