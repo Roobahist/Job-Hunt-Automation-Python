@@ -13,8 +13,17 @@ from job_hunt.integrations.http import raise_provider_error
 
 
 class TelegramNotifier:
-    def __init__(self, token: str, client: httpx.Client | None = None) -> None:
-        self._client = client or httpx.Client(base_url=f"https://api.telegram.org/bot{token}", timeout=60)
+    def __init__(
+        self,
+        token: str,
+        client: httpx.Client | None = None,
+        *,
+        timeout_seconds: int = 120,
+    ) -> None:
+        self._client = client or httpx.Client(
+            base_url=f"https://api.telegram.org/bot{token}",
+            timeout=timeout_seconds,
+        )
 
     def _post(self, path: str, **kwargs: Any) -> dict[str, object]:
         try:
