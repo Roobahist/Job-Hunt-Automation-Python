@@ -153,26 +153,16 @@ class TelegramNotifier:
         row_id: int,
         run_id: str,
     ) -> str:
-        paths = list(artifacts)
-        if not paths:
-            raise ValueError("At least one application artifact is required")
-        if len(paths) == 1:
-            return self.send_document_with_actions(
-                chat_id,
-                paths[0],
-                caption=caption,
-                job_url=job_url,
-                row_id=row_id,
-                run_id=run_id,
-            )
-        media_message_id = self.send_documents(chat_id, paths, caption)
-        return self.send_application_actions(
+        archives = [path for path in artifacts if path.suffix.casefold() == ".zip"]
+        if len(archives) != 1:
+            raise ValueError("Application notification requires exactly one ZIP archive")
+        return self.send_document_with_actions(
             chat_id,
-            caption="Application actions",
+            archives[0],
+            caption=caption,
             job_url=job_url,
             row_id=row_id,
             run_id=run_id,
-            reply_to_message_id=media_message_id,
         )
 
     def answer_callback(self, callback_query_id: str, text: str) -> None:
