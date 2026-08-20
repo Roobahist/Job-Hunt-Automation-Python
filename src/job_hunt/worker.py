@@ -13,6 +13,7 @@ from job_hunt.application.discovery import build_search_url, normalize_discovery
 from job_hunt.config import Settings, load_registry
 from job_hunt.container import Container
 from job_hunt.domain.models import Job, JobSubmission, RunState, RunStatus
+from job_hunt.errors import ErrorKind, WorkflowError
 from job_hunt.integrations.telegram import TelegramNotifier
 from job_hunt.logging import configure_logging, logger
 from job_hunt.retry import retry_transient
@@ -39,6 +40,11 @@ celery_app.conf.update(
     },
     task_default_queue="fast",
 )
+
+_TASK_MAX_RETRIES = 8
+_RATE_LIMIT_FALLBACK_SECONDS = 65
+_TRANSIENT_BASE_DELAY_SECONDS = 5
+_TRANSIENT_MAX_DELAY_SECONDS = 300
 
 
 def _redis() -> Redis:
@@ -71,7 +77,63 @@ def _notification_caption(job: Job, score: int | None) -> str:
     )
 
 
-@celery_app.task(name="job_hunt.notify_documents", bind=True, max_retries=3)  # type: ignore[untyped-decorator]
+def _retry_countdown(exc: WorkflowError, retries: int) -> int:
+    if exc.retry_after is not None and exc.retry_after > 0:
+        return max(1, min(_TRANSIENT_MAX_DELAY_SECONDS, int(exc.retry_after)))
+    if exc.kind == ErrorKind.RATE_LIMIT:
+        return _RATE_LIMIT_FALLBACK_SECONDS
+    exponential = _TRANSIENT_BASE_DELAY_SECONDS * (2**retries)
+    return max(1, min(_TRANSIENT_MAX_DELAY_SECONDS, exponential))
+
+
+def _log_terminal_failure(event: str, exc: Exception, **context: object) -> None:
+    if isinstance(exc, WorkflowError):
+        logger().error(
+            event,
+            **context,
+            error_type=type(exc).__name__,
+            error_kind=exc.kind,
+            error_message=str(exc),
+            retryable=exc.retryable,
+        )
+        return
+    logger().exception(event, **context, error_type=type(exc).__name__)
+
+
+def _defer_retryable_task(
+    task: Any,
+    exc: Exception,
+    *,
+    tenant: str,
+    run_id: str,
+    stage: str,
+) -> None:
+    if not isinstance(exc, WorkflowError) or not exc.retryable:
+        return
+    retries = int(getattr(task.request, "retries", 0))
+    if retries >= _TASK_MAX_RETRIES:
+        return
+    countdown = _retry_countdown(exc, retries)
+    logger().warning(
+        "task_deferred",
+        tenant=tenant,
+        run_id=run_id,
+        stage=stage,
+        error_kind=exc.kind,
+        reason=str(exc),
+        retry_in_seconds=countdown,
+        retry_number=retries + 1,
+        max_retries=_TASK_MAX_RETRIES,
+    )
+    raise task.retry(exc=exc, countdown=countdown, max_retries=_TASK_MAX_RETRIES)
+
+
+@celery_app.task(
+    name="job_hunt.notify_documents",
+    bind=True,
+    max_retries=_TASK_MAX_RETRIES,
+    throws=(WorkflowError,),
+)  # type: ignore[untyped-decorator]
 def notify_documents(
     self: Any,
     tenant: str,
@@ -109,20 +171,33 @@ def notify_documents(
         )
         return {"state": "sent", "message_id": action_id}
     except Exception as exc:
+        if isinstance(exc, WorkflowError) and exc.retryable:
+            retries = int(getattr(self.request, "retries", 0))
+            if retries < _TASK_MAX_RETRIES:
+                countdown = _retry_countdown(exc, retries)
+                store.update(
+                    identifier,
+                    notification={
+                        "state": "deferred",
+                        "error": str(exc),
+                        "retry_in_seconds": countdown,
+                    },
+                )
+                _defer_retryable_task(self, exc, tenant=tenant, run_id=run_id, stage="notification")
         store.update(
             identifier,
             notification={"state": "failed", "error": str(exc)},
         )
-        logger().exception(
-            "notification_failed",
-            tenant=tenant,
-            run_id=run_id,
-            error_type=type(exc).__name__,
-        )
-        raise self.retry(exc=exc, countdown=min(60, 2 ** int(self.request.retries))) from exc
+        _log_terminal_failure("notification_failed", exc, tenant=tenant, run_id=run_id, stage="notification")
+        raise
 
 
-@celery_app.task(name="job_hunt.generate_documents", bind=True)  # type: ignore[untyped-decorator]
+@celery_app.task(
+    name="job_hunt.generate_documents",
+    bind=True,
+    max_retries=_TASK_MAX_RETRIES,
+    throws=(WorkflowError,),
+)  # type: ignore[untyped-decorator]
 def generate_documents(
     self: Any,
     tenant: str,
@@ -135,7 +210,7 @@ def generate_documents(
 ) -> dict[str, Any]:
     store = _store()
     identifier = UUID(run_id)
-    store.update(identifier, state=RunState.RUNNING, stage="documents", task_id=self.request.id)
+    store.update(identifier, state=RunState.RUNNING, stage="documents", task_id=self.request.id, error=None)
     try:
         snapshot = _state().get_snapshot(snapshot_id) if snapshot_id else None
         services = Container(settings).tenant(
@@ -158,6 +233,7 @@ def generate_documents(
             state=RunState.SUCCEEDED,
             stage="complete",
             notification={"state": "queued"} if result.notification_paths else None,
+            error=None,
         )
         if result.notification_paths:
             notify_documents.delay(
@@ -175,23 +251,37 @@ def generate_documents(
             "published": result.artifacts_published,
         }
     except Exception as exc:
-        logger().exception(
-            "document_generation_failed",
-            tenant=tenant,
-            run_id=run_id,
-            stage="documents",
-            error_type=type(exc).__name__,
-        )
+        if isinstance(exc, WorkflowError) and exc.retryable:
+            retries = int(getattr(self.request, "retries", 0))
+            if retries < _TASK_MAX_RETRIES:
+                countdown = _retry_countdown(exc, retries)
+                store.update(
+                    identifier,
+                    state=RunState.RUNNING,
+                    stage="documents_deferred",
+                    error={
+                        "type": type(exc).__name__,
+                        "message": str(exc),
+                        "retry_in_seconds": countdown,
+                    },
+                )
+                _defer_retryable_task(self, exc, tenant=tenant, run_id=run_id, stage="documents")
         store.update(
             identifier,
             state=RunState.FAILED,
             stage="failed",
             error={"type": type(exc).__name__, "message": str(exc)},
         )
+        _log_terminal_failure("document_generation_failed", exc, tenant=tenant, run_id=run_id, stage="documents")
         raise
 
 
-@celery_app.task(name="job_hunt.process_submission", bind=True)  # type: ignore[untyped-decorator]
+@celery_app.task(
+    name="job_hunt.process_submission",
+    bind=True,
+    max_retries=_TASK_MAX_RETRIES,
+    throws=(WorkflowError,),
+)  # type: ignore[untyped-decorator]
 def process_submission(
     self: Any,
     tenant: str,
@@ -204,7 +294,7 @@ def process_submission(
     store = _store()
     identifier = UUID(run_id)
     redis = store.redis
-    store.update(identifier, state=RunState.RUNNING, stage="normalization", task_id=self.request.id)
+    store.update(identifier, state=RunState.RUNNING, stage="normalization", task_id=self.request.id, error=None)
     try:
         snapshot = _state().get_snapshot(snapshot_id) if snapshot_id else None
         services = Container(settings).tenant(
@@ -241,14 +331,14 @@ def process_submission(
                 lock.release()
 
         if not qualification.passed:
-            store.update(identifier, state=RunState.SKIPPED, stage="complete")
+            store.update(identifier, state=RunState.SKIPPED, stage="complete", error=None)
             return {
                 "state": RunState.SKIPPED,
                 "row_id": qualification.row_id,
                 "published": False,
             }
 
-        store.update(identifier, state=RunState.RUNNING, stage="documents_queued")
+        store.update(identifier, state=RunState.RUNNING, stage="documents_queued", error=None)
         generate_documents.delay(
             tenant,
             job.model_dump(mode="json"),
@@ -264,28 +354,37 @@ def process_submission(
             "published": False,
         }
     except Exception as exc:
-        logger().exception(
-            "job_failed",
-            tenant=tenant,
-            run_id=run_id,
-            stage="worker",
-            error_type=type(exc).__name__,
-        )
+        if isinstance(exc, WorkflowError) and exc.retryable:
+            retries = int(getattr(self.request, "retries", 0))
+            if retries < _TASK_MAX_RETRIES:
+                countdown = _retry_countdown(exc, retries)
+                store.update(
+                    identifier,
+                    state=RunState.RUNNING,
+                    stage="qualification_deferred",
+                    error={
+                        "type": type(exc).__name__,
+                        "message": str(exc),
+                        "retry_in_seconds": countdown,
+                    },
+                )
+                _defer_retryable_task(self, exc, tenant=tenant, run_id=run_id, stage="qualification")
         store.update(
             identifier,
             state=RunState.FAILED,
             stage="failed",
             error={"type": type(exc).__name__, "message": str(exc)},
         )
+        _log_terminal_failure("job_failed", exc, tenant=tenant, run_id=run_id, stage="worker")
         raise
 
 
-@celery_app.task(name="job_hunt.discover_tenant")  # type: ignore[untyped-decorator]
+@celery_app.task(name="job_hunt.discover_tenant", throws=(WorkflowError,))  # type: ignore[untyped-decorator]
 def discover_tenant(tenant: str, run_id: str) -> dict[str, int]:
     store = _store()
     identifier = UUID(run_id)
     try:
-        store.update(identifier, state=RunState.RUNNING, stage="discovery")
+        store.update(identifier, state=RunState.RUNNING, stage="discovery", error=None)
         services = Container(settings).tenant(tenant)
         snapshot_id = run_id
         _state().set_snapshot(
@@ -337,25 +436,21 @@ def discover_tenant(tenant: str, run_id: str) -> dict[str, int]:
             state=RunState.SUCCEEDED,
             stage="dispatched",
             counts={"queued": len(jobs)},
+            error=None,
         )
         return {"queued": len(jobs)}
     except Exception as exc:
-        logger().exception(
-            "discovery_failed",
-            tenant=tenant,
-            run_id=run_id,
-            error_type=type(exc).__name__,
-        )
         store.update(
             identifier,
             state=RunState.FAILED,
             stage="failed",
             error={"type": type(exc).__name__, "message": str(exc)},
         )
+        _log_terminal_failure("discovery_failed", exc, tenant=tenant, run_id=run_id, stage="discovery")
         raise
 
 
-@celery_app.task(name="job_hunt.dispatch_due_tenants")  # type: ignore[untyped-decorator]
+@celery_app.task(name="job_hunt.dispatch_due_tenants", throws=(WorkflowError,))  # type: ignore[untyped-decorator]
 def dispatch_due_tenants() -> dict[str, int]:
     redis = _redis()
     queued = 0
@@ -378,5 +473,5 @@ def dispatch_due_tenants() -> dict[str, int]:
             queued += 1
         except Exception as exc:
             failed += 1
-            logger().exception("tenant_dispatch_failed", tenant=key, error_type=type(exc).__name__)
+            _log_terminal_failure("tenant_dispatch_failed", exc, tenant=key, stage="dispatch")
     return {"queued": queued, "failed": failed}
