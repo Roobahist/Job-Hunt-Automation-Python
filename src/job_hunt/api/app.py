@@ -13,7 +13,7 @@ from redis import Redis
 from job_hunt.application.normalization import fillout_submission
 from job_hunt.application.runs import Queue, RunCoordinator
 from job_hunt.config import Settings
-from job_hunt.container import Container
+from job_hunt.container import Container, TenantServices
 from job_hunt.domain.models import EnqueueResponse, JobSubmission, RetryResponse, RunStatus
 from job_hunt.errors import ConfigurationError, WorkflowError
 from job_hunt.logging import configure_logging
@@ -117,23 +117,37 @@ def create_app(
             force=False,
         )
 
-    @app.post("/webhooks/telegram/{tenant}")
+    def telegram_services(chat_id: str) -> tuple[str, TenantServices] | None:
+        instance = container()
+        for tenant, bootstrap in instance.registry.bootstraps.items():
+            if not bootstrap.enabled:
+                continue
+            services = instance.tenant(tenant)
+            if str(services.config.telegram_chat_id) == chat_id:
+                return tenant, services
+        return None
+
+    @app.post("/webhooks/telegram")
     def telegram_webhook(
-        tenant: str,
         payload: dict[str, object],
         x_telegram_bot_api_secret_token: Annotated[str | None, Header()] = None,
     ) -> dict[str, bool]:
-        services = container().tenant(tenant)
-        expected = services.context.bootstrap.secret("telegram_webhook", required=False)
+        expected = configured.shared_telegram_webhook_secret()
         if (
-            not expected
-            or not x_telegram_bot_api_secret_token
+            not x_telegram_bot_api_secret_token
             or not hmac.compare_digest(expected, x_telegram_bot_api_secret_token)
         ):
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid Telegram webhook secret")
         callback = payload.get("callback_query")
         if not isinstance(callback, dict):
             return {"ok": True}
+        message = callback.get("message")
+        chat = message.get("chat") if isinstance(message, dict) else None
+        chat_id = str(chat.get("id")) if isinstance(chat, dict) and chat.get("id") is not None else ""
+        routed = telegram_services(chat_id) if chat_id else None
+        if routed is None:
+            return {"ok": True}
+        tenant, services = routed
         callback_id = str(callback.get("id") or "")
         data = str(callback.get("data") or "")
         response_text = "Action ignored"
@@ -143,7 +157,11 @@ def create_app(
                 services.repository.set_status(int(raw_row_id), status_key)
                 response_text = "Status updated"
             elif data.startswith("retry:"):
-                coordinator.retry(UUID(data.split(":", 1)[1]), fresh=True)
+                run_id = UUID(data.split(":", 1)[1])
+                run = run_store.get(run_id)
+                if run is None or run.tenant != tenant:
+                    raise ValueError("Run does not belong to Telegram chat tenant")
+                coordinator.retry(run_id, fresh=True)
                 response_text = "Regeneration queued"
         except (KeyError, ValueError):
             response_text = "Action could not be applied"
