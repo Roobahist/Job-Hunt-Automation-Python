@@ -86,8 +86,10 @@ class FakeQueue:
 
 
 class FakeBootstrap:
+    enabled = True
+
     def secret(self, name: str, *, required: bool = True) -> str:
-        values = {"fillout": "webhook-secret", "telegram_webhook": "telegram-secret"}
+        values = {"fillout": "webhook-secret"}
         value = values.get(name, "")
         if required and not value:
             raise KeyError(name)
@@ -112,24 +114,38 @@ class FakeRepository:
 
 class FakeContainer:
     notifier = FakeNotifier()
-    repository = FakeRepository()
+    repositories = {"mahsa": FakeRepository(), "mojtaba": FakeRepository()}
+    bootstraps = {"mahsa": FakeBootstrap(), "mojtaba": FakeBootstrap()}
 
     def __init__(self) -> None:
-        self.registry = SimpleNamespace(get=lambda _: object())
+        self.registry = SimpleNamespace(
+            get=lambda _: object(),
+            bootstraps=self.bootstraps,
+        )
 
-    def tenant(self, _: str) -> object:
+    def tenant(self, tenant: str) -> object:
+        chat_ids = {"mahsa": "100", "mojtaba": "200"}
         return SimpleNamespace(
-            context=SimpleNamespace(bootstrap=FakeBootstrap()),
-            config=SimpleNamespace(fillout_form_id="form-1", fillout_field_ids={}),
+            context=SimpleNamespace(bootstrap=self.bootstraps[tenant]),
+            config=SimpleNamespace(
+                fillout_form_id="form-1",
+                fillout_field_ids={},
+                telegram_chat_id=chat_ids[tenant],
+            ),
             notifier=self.notifier,
-            repository=self.repository,
+            repository=self.repositories[tenant],
         )
 
 
 def client() -> tuple[TestClient, FakeQueue]:
     queue = FakeQueue()
     store = RunStore(FakeRedis())  # type: ignore[arg-type]
-    settings = Settings(operator_token="operator", redis_url="redis://unused")
+    settings = Settings(
+        operator_token="operator",
+        redis_url="redis://unused",
+        telegram_bot_token="bot-token",
+        telegram_webhook_secret="telegram-secret",
+    )
     app = create_app(settings=settings, queue=queue, store=store, container_factory=FakeContainer)
     return TestClient(app), queue
 
@@ -186,16 +202,42 @@ def test_discovery_and_fillout_auth_form_validation() -> None:
     assert queue.calls[-1][4] is False
 
 
-def test_telegram_callback_updates_status() -> None:
-    FakeContainer.repository.statuses.clear()
+def test_shared_telegram_callback_routes_by_chat_id() -> None:
+    FakeContainer.repositories["mahsa"].statuses.clear()
+    FakeContainer.repositories["mojtaba"].statuses.clear()
     api, _ = client()
     response = api.post(
-        "/webhooks/telegram/mahsa",
+        "/webhooks/telegram",
         headers={"X-Telegram-Bot-Api-Secret-Token": "telegram-secret"},
-        json={"callback_query": {"id": "cb", "data": "status:applied:42"}},
+        json={
+            "callback_query": {
+                "id": "cb",
+                "data": "status:applied:42",
+                "message": {"chat": {"id": 100}},
+            }
+        },
     )
     assert response.status_code == 200
-    assert FakeContainer.repository.statuses == [(42, "applied")]
+    assert FakeContainer.repositories["mahsa"].statuses == [(42, "applied")]
+    assert FakeContainer.repositories["mojtaba"].statuses == []
+
+
+def test_shared_telegram_callback_ignores_unknown_chat() -> None:
+    FakeContainer.repositories["mahsa"].statuses.clear()
+    api, _ = client()
+    response = api.post(
+        "/webhooks/telegram",
+        headers={"X-Telegram-Bot-Api-Secret-Token": "telegram-secret"},
+        json={
+            "callback_query": {
+                "id": "cb",
+                "data": "status:applied:42",
+                "message": {"chat": {"id": 999}},
+            }
+        },
+    )
+    assert response.status_code == 200
+    assert FakeContainer.repositories["mahsa"].statuses == []
 
 
 def test_validation_error_is_structured() -> None:
