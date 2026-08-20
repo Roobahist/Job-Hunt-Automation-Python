@@ -55,7 +55,7 @@ class AI:
 
 
 class Renderer:
-    def render(self, *_: object) -> Any:
+    def render(self, *_: object, **__: object) -> Any:
         paths = [Path("/tmp/application.zip"), Path("/tmp/cv.pdf"), Path("/tmp/cl.pdf")]
         return SimpleNamespace(notification_paths=lambda: paths)
 
@@ -107,6 +107,7 @@ def test_below_threshold_stops_expensive_side_effects() -> None:
     workflow, publisher = make_workflow(repo, Qualification(score=32, should_apply=True, reasoning="low"))
     result = process(workflow)
     assert not result.passed  # type: ignore[attr-defined]
+    assert result.score == 32  # type: ignore[attr-defined]
     assert publisher.calls == 0
     assert ("qualification", False) in repo.calls
 
@@ -116,6 +117,7 @@ def test_should_apply_does_not_block_documents_above_threshold() -> None:
     workflow, publisher = make_workflow(repo, Qualification(score=90, should_apply=False, reasoning="metadata only"))
     result = process(workflow)
     assert result.passed  # type: ignore[attr-defined]
+    assert result.score == 90  # type: ignore[attr-defined]
     assert publisher.calls == 1
     assert len(result.notification_paths) == 3  # type: ignore[attr-defined]
     assert ("qualification", True) in repo.calls
@@ -127,6 +129,7 @@ def test_force_processes_and_existing_job_resets_first() -> None:
     workflow, publisher = make_workflow(repo, Qualification(score=1, should_apply=False, reasoning="no"))
     result = process(workflow, force=True)
     assert result.passed  # type: ignore[attr-defined]
+    assert result.score == 1  # type: ignore[attr-defined]
     assert ("reset", 7) in repo.calls
     assert publisher.calls == 1
 
