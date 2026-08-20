@@ -52,6 +52,13 @@ class ApplicationWorkflow:
         if callback is not None:
             callback(stage, event)
 
+    def _dropped(self, row_id: int) -> bool:
+        return bool(retry_transient(self.repository.has_status, row_id, "dropped"))
+
+    @staticmethod
+    def _skipped(row_id: int, score: int) -> WorkflowResult:
+        return WorkflowResult(row_id=row_id, passed=False, artifacts_published=False, score=score)
+
     def persist_and_qualify(
         self,
         job: Job,
@@ -105,13 +112,16 @@ class ApplicationWorkflow:
         progress: ProgressCallback | None = None,
     ) -> WorkflowResult:
         log = logger().bind(run_id=str(run_id), job_identity=job.identity)
-        if retry_transient(self.repository.has_status, row_id, "dropped"):
+        if self._dropped(row_id):
             log.info("job_documents_skipped", stage="documents", row_id=row_id, reason="status_dropped")
-            return WorkflowResult(row_id=row_id, passed=False, artifacts_published=False, score=score)
+            return self._skipped(row_id, score)
 
         self._progress(progress, "tailoring", "start")
         tailored = self.tailor.tailor(job, master_cv, prompts)
         self._progress(progress, "tailoring", "finish")
+        if self._dropped(row_id):
+            log.info("job_documents_skipped", stage="post_tailoring", row_id=row_id, reason="status_dropped")
+            return self._skipped(row_id, score)
 
         source_id = job.external_id or str(job.internal_id)
         archive_basename = f"{applicant_filename}-{job.company_name}-{source_id}".replace("/", "-")
@@ -123,6 +133,9 @@ class ApplicationWorkflow:
             applicant_filename=applicant_filename,
         )
         self._progress(progress, "rendering", "finish")
+        if self._dropped(row_id):
+            log.info("job_documents_skipped", stage="post_rendering", row_id=row_id, reason="status_dropped")
+            return self._skipped(row_id, score)
 
         self._progress(progress, "artifact_upload", "start")
         uploaded = retry_transient(self.publisher.publish, artifacts)
