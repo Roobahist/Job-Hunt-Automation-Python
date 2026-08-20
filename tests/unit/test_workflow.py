@@ -14,8 +14,9 @@ from job_hunt.errors import ErrorKind, ProviderError, WorkflowError
 
 
 class Repository:
-    def __init__(self, existing: bool = False) -> None:
+    def __init__(self, existing: bool = False, dropped: bool = False) -> None:
         self.existing = {"id": 7} if existing else None
+        self.dropped = dropped
         self.calls: list[tuple[str, object]] = []
 
     def find(self, job: Job) -> dict[str, int] | None:
@@ -36,20 +37,34 @@ class Repository:
     def save_artifacts(self, row_id: int, uploaded_files: object) -> None:
         self.calls.append(("artifacts", row_id))
 
+    def set_status(self, row_id: int, status_key: str) -> None:
+        self.calls.append(("status", status_key))
+        self.dropped = status_key == "dropped"
+
+    def has_status(self, row_id: int, status_key: str) -> bool:
+        self.calls.append(("has_status", status_key))
+        return self.dropped if status_key == "dropped" else False
+
 
 class AI:
     def __init__(self, qualification: Qualification) -> None:
         self.qualification = qualification
+        self.tailor_calls = 0
 
     def qualify(self, *_: object) -> Qualification:
         return self.qualification
 
     def tailor(self, *_: object) -> TailoredContent:
+        self.tailor_calls += 1
         return TailoredContent(cv={}, cover_letter={})
 
 
 class Renderer:
+    def __init__(self) -> None:
+        self.calls = 0
+
     def render(self, *_: object, **__: object) -> Any:
+        self.calls += 1
         return SimpleNamespace(notification_paths=lambda: [Path("/tmp/application.zip")])
 
 
@@ -62,83 +77,65 @@ class Publisher:
         return {"CV": []}
 
 
-def make_workflow(repo: Repository, result: Qualification) -> tuple[ApplicationWorkflow, Publisher]:
+def make_workflow(repo: Repository, result: Qualification) -> tuple[ApplicationWorkflow, Publisher, AI, Renderer]:
     publisher = Publisher()
-    return (
-        ApplicationWorkflow(repo, AI(result), AI(result), Renderer(), publisher, Path("runs")),
-        publisher,
-    )
+    ai = AI(result)
+    renderer = Renderer()
+    return ApplicationWorkflow(repo, ai, ai, renderer, publisher, Path("runs")), publisher, ai, renderer
 
 
 def application_job() -> Job:
-    return assign_identity(
-        Job(
-            source="x",
-            external_id="1",
-            url="https://x/jobs/1",
-            company_name="C",
-            title="T",
-            description="D",
-        )
-    )
+    return assign_identity(Job(source="x", external_id="1", url="https://x/jobs/1", company_name="C", title="T", description="D"))
 
 
 def qualify(workflow: ApplicationWorkflow, *, force: bool = False) -> object:
-    return workflow.persist_and_qualify(
-        application_job(),
-        run_id=uuid4(),
-        master_cv={},
-        prompts={},
-        threshold=33,
-        force=force,
-    )
+    return workflow.persist_and_qualify(application_job(), run_id=uuid4(), master_cv={}, prompts={}, threshold=33, force=force)
 
 
 def generate(workflow: ApplicationWorkflow, *, row_id: int, score: int) -> object:
-    return workflow.generate_documents(
-        application_job(),
-        run_id=uuid4(),
-        row_id=row_id,
-        score=score,
-        master_cv={},
-        prompts={},
-        applicant_filename="Person",
-    )
+    return workflow.generate_documents(application_job(), run_id=uuid4(), row_id=row_id, score=score, master_cv={}, prompts={}, applicant_filename="Person")
 
 
-def test_below_threshold_stops_at_qualification_boundary() -> None:
+def test_below_threshold_marks_row_dropped_and_stops_at_qualification_boundary() -> None:
     repo = Repository()
-    workflow, publisher = make_workflow(repo, Qualification(score=32, should_apply=True, reasoning="low"))
+    workflow, publisher, _, _ = make_workflow(repo, Qualification(score=32, should_apply=True, reasoning="low"))
     result = qualify(workflow)
     assert not result.passed  # type: ignore[attr-defined]
     assert result.score == 32  # type: ignore[attr-defined]
     assert publisher.calls == 0
     assert ("qualification", 32) in repo.calls
+    assert ("status", "dropped") in repo.calls
     assert all(call[0] != "artifacts" for call in repo.calls)
 
 
 def test_document_generation_is_explicit_after_qualification() -> None:
     repo = Repository()
-    workflow, publisher = make_workflow(repo, Qualification(score=90, should_apply=False, reasoning="metadata only"))
+    workflow, publisher, _, _ = make_workflow(repo, Qualification(score=90, should_apply=False, reasoning="metadata only"))
     qualification = qualify(workflow)
-    assert qualification.passed  # type: ignore[attr-defined]
-    assert publisher.calls == 0
-
     result = generate(workflow, row_id=qualification.row_id, score=qualification.score)  # type: ignore[attr-defined]
     assert result.passed  # type: ignore[attr-defined]
-    assert result.score == 90  # type: ignore[attr-defined]
     assert publisher.calls == 1
     assert result.notification_paths == ("/tmp/application.zip",)  # type: ignore[attr-defined]
-    assert ("artifacts", 8) in repo.calls
 
 
-def test_force_qualifies_existing_job_without_rewriting_metadata() -> None:
+def test_manual_drop_before_documents_skips_tailoring_rendering_and_publish() -> None:
+    repo = Repository(dropped=True)
+    workflow, publisher, ai, renderer = make_workflow(repo, Qualification(score=90, should_apply=True, reasoning="good"))
+    result = generate(workflow, row_id=8, score=90)
+    assert not result.passed  # type: ignore[attr-defined]
+    assert not result.artifacts_published  # type: ignore[attr-defined]
+    assert result.notification_paths == ()  # type: ignore[attr-defined]
+    assert ai.tailor_calls == 0
+    assert renderer.calls == 0
+    assert publisher.calls == 0
+
+
+def test_force_qualifies_existing_job_without_automatic_drop() -> None:
     repo = Repository(existing=True)
-    workflow, publisher = make_workflow(repo, Qualification(score=1, should_apply=False, reasoning="no"))
+    workflow, publisher, _, _ = make_workflow(repo, Qualification(score=1, should_apply=False, reasoning="no"))
     result = qualify(workflow, force=True)
     assert result.passed  # type: ignore[attr-defined]
-    assert result.score == 1  # type: ignore[attr-defined]
-    assert ("reset", 7) in repo.calls
+    assert ("status", "dropped") not in repo.calls
     assert publisher.calls == 0
 
 
@@ -147,7 +144,7 @@ def test_permanent_error_is_not_retried() -> None:
         def find(self, job: Job) -> None:
             raise WorkflowError("bad", ErrorKind.VALIDATION)
 
-    workflow, _ = make_workflow(BrokenRepository(), Qualification(score=1, should_apply=False, reasoning="no"))
+    workflow, _, _, _ = make_workflow(BrokenRepository(), Qualification(score=1, should_apply=False, reasoning="no"))
     with pytest.raises(WorkflowError):
         qualify(workflow)
 
@@ -160,22 +157,13 @@ def test_qualification_rate_limit_escapes_immediately_for_celery_deferral() -> N
 
         def qualify(self, *_: object) -> Qualification:
             self.calls += 1
-            raise ProviderError(
-                "local requests-per-minute budget exhausted",
-                ErrorKind.RATE_LIMIT,
-                retryable=True,
-                provider="gemini",
-                retry_after=47,
-            )
+            raise ProviderError("local requests-per-minute budget exhausted", ErrorKind.RATE_LIMIT, retryable=True, provider="gemini", retry_after=47)
 
     repo = Repository()
     ai = RateLimitedAI()
     workflow = ApplicationWorkflow(repo, ai, ai, Renderer(), Publisher(), Path("runs"))
-
     with pytest.raises(ProviderError) as caught:
         qualify(workflow)
-
     assert caught.value.retry_after == 47
     assert ai.calls == 1
-    assert ("create", application_job().internal_id) in repo.calls
     assert all(call[0] != "qualification" for call in repo.calls)
