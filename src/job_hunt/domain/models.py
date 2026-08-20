@@ -128,11 +128,9 @@ class ArtifactBundle(BaseModel):
         )
 
     def notification_paths(self) -> tuple[Path, ...]:
-        return (
-            self.archive,
-            self.cv_pdf,
-            self.cover_letter_pdf,
-        )
+        # Telegram intentionally receives only the ZIP. The individual CV/CL files
+        # remain available inside the archive and through the persistent artifact store.
+        return (self.archive,)
 
 
 class RunState(StrEnum):
