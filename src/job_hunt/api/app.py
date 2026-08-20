@@ -163,7 +163,7 @@ def create_app(
             tenant,
             submission.model_dump(mode="json"),
             "fillout",
-            force=False,
+            force=True,
         )
 
     def telegram_route(chat_id: str) -> TelegramRoute | None:
