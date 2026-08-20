@@ -109,7 +109,11 @@ def _notifier() -> TelegramNotifier:
     )
 
 
-def _notification_caption(job: Job, score: int | None, notification: dict[str, object] | None = None) -> str:
+def _notification_caption(
+    job: Job,
+    score: int | None,
+    notification: dict[str, object] | None = None,
+) -> str:
     published = job.published_at.strftime("%B %d, %Y") if job.published_at else "Not specified"
     job_id = job.external_id or str(job.internal_id)
     match_score = f"{score}/100" if score is not None else "Pending"
@@ -148,8 +152,12 @@ def _notification_caption(job: Job, score: int | None, notification: dict[str, o
             started = raw.get("started_at")
             if stage == current_stage and isinstance(started, str):
                 try:
-                    local = datetime.fromisoformat(started).astimezone(ZoneInfo(settings.scheduler_timezone))
-                    lines.append(f"▶ {label}: started {local.strftime('%I:%M:%S %p').lstrip('0')}")
+                    local = datetime.fromisoformat(started).astimezone(
+                        ZoneInfo(settings.scheduler_timezone)
+                    )
+                    lines.append(
+                        f"▶ {label}: started {local.strftime('%I:%M:%S %p').lstrip('0')}"
+                    )
                 except ValueError:
                     lines.append(f"▶ {label}: running")
     retry_in = meta.get("retry_in_seconds")
@@ -246,7 +254,12 @@ def _progress_start(
     if score is not None:
         fields["score"] = score
     _store().merge_notification(run_id, **fields)
-    update_job_notification.delay(tenant, str(run_id), job.model_dump(mode="json"), chat_id)
+    update_job_notification.delay(
+        tenant,
+        str(run_id),
+        job.model_dump(mode="json"),
+        chat_id,
+    )
 
 
 def _progress_finish(run_id: UUID, stage: str) -> None:
@@ -285,7 +298,12 @@ def _progress_deferred(
         retry_in_seconds=countdown,
     )
     if job is not None and chat_id is not None:
-        update_job_notification.delay(tenant, str(run_id), job.model_dump(mode="json"), chat_id)
+        update_job_notification.delay(
+            tenant,
+            str(run_id),
+            job.model_dump(mode="json"),
+            chat_id,
+        )
 
 
 def _progress_terminal(
@@ -308,7 +326,12 @@ def _progress_terminal(
         fields["error_message"] = error_message
     _store().merge_notification(run_id, **fields)
     if job is not None and chat_id is not None:
-        update_job_notification.delay(tenant, str(run_id), job.model_dump(mode="json"), chat_id)
+        update_job_notification.delay(
+            tenant,
+            str(run_id),
+            job.model_dump(mode="json"),
+            chat_id,
+        )
 
 
 def _ensure_notification(tenant: str, run_id: UUID, job: Job, chat_id: str) -> None:
@@ -318,7 +341,12 @@ def _ensure_notification(tenant: str, run_id: UUID, job: Job, chat_id: str) -> N
     if notification.get("init_queued"):
         return
     store.merge_notification(run_id, init_queued=True)
-    init_job_notification.delay(tenant, str(run_id), job.model_dump(mode="json"), chat_id)
+    init_job_notification.delay(
+        tenant,
+        str(run_id),
+        job.model_dump(mode="json"),
+        chat_id,
+    )
 
 
 @celery_app.task(
@@ -345,20 +373,39 @@ def init_job_notification(
         job = Job.model_validate(job_data)
         score = notification.get("score") if isinstance(notification.get("score"), int) else None
         row_id = notification.get("row_id") if isinstance(notification.get("row_id"), int) else None
+        caption = _notification_caption(job, score, notification)
         message_id = _notifier().send_processing_message(
             chat_id,
-            caption=_notification_caption(job, score, notification),
+            caption=caption,
             job_url=job.url,
             row_id=row_id,
         )
-        store.merge_notification(identifier, message_id=message_id, state="processing")
+        store.merge_notification(
+            identifier,
+            message_id=message_id,
+            state="processing",
+            last_caption=caption,
+        )
         return {"state": "sent", "message_id": message_id}
     except Exception as exc:
         plan = _retry_plan(self, exc)
         if plan is not None and isinstance(exc, WorkflowError):
             retries, countdown = plan
-            _defer_task(self, exc, tenant=tenant, run_id=run_id, stage="telegram_init", retries=retries, countdown=countdown)
-        logger().warning("telegram_progress_init_failed", tenant=tenant, run_id=run_id, error=str(exc))
+            _defer_task(
+                self,
+                exc,
+                tenant=tenant,
+                run_id=run_id,
+                stage="telegram_init",
+                retries=retries,
+                countdown=countdown,
+            )
+        logger().warning(
+            "telegram_progress_init_failed",
+            tenant=tenant,
+            run_id=run_id,
+            error=str(exc),
+        )
         return {"state": "failed", "message_id": ""}
 
 
@@ -384,30 +431,39 @@ def update_job_notification(
         score = notification.get("score") if isinstance(notification.get("score"), int) else None
         row_id = notification.get("row_id") if isinstance(notification.get("row_id"), int) else None
         message_id = notification.get("message_id")
-        caption = _notification_caption(job, score, notification)
         if not message_id:
-            message_id = _notifier().send_processing_message(
-                chat_id,
-                caption=caption,
-                job_url=job.url,
-                row_id=row_id,
-            )
-            store.merge_notification(identifier, message_id=str(message_id), state="processing")
-        else:
-            _notifier().edit_processing_message(
-                chat_id,
-                str(message_id),
-                caption=caption,
-                job_url=job.url,
-                row_id=row_id,
-            )
+            return {"state": "pending_init", "message_id": ""}
+        caption = _notification_caption(job, score, notification)
+        if notification.get("last_caption") == caption:
+            return {"state": "unchanged", "message_id": str(message_id)}
+        _notifier().edit_processing_message(
+            chat_id,
+            str(message_id),
+            caption=caption,
+            job_url=job.url,
+            row_id=row_id,
+        )
+        store.merge_notification(identifier, last_caption=caption)
         return {"state": "updated", "message_id": str(message_id)}
     except Exception as exc:
         plan = _retry_plan(self, exc)
         if plan is not None and isinstance(exc, WorkflowError):
             retries, countdown = plan
-            _defer_task(self, exc, tenant=tenant, run_id=run_id, stage="telegram_progress", retries=retries, countdown=countdown)
-        logger().warning("telegram_progress_update_failed", tenant=tenant, run_id=run_id, error=str(exc))
+            _defer_task(
+                self,
+                exc,
+                tenant=tenant,
+                run_id=run_id,
+                stage="telegram_progress",
+                retries=retries,
+                countdown=countdown,
+            )
+        logger().warning(
+            "telegram_progress_update_failed",
+            tenant=tenant,
+            run_id=run_id,
+            error=str(exc),
+        )
         return {"state": "failed", "message_id": ""}
 
 
@@ -434,7 +490,14 @@ def notify_documents(
     try:
         _progress_finish(identifier, "notification_queue")
         if job is not None:
-            _progress_start(tenant, identifier, job, chat_id, "telegram_finalization", row_id=row_id)
+            _progress_start(
+                tenant,
+                identifier,
+                job,
+                chat_id,
+                "telegram_finalization",
+                row_id=row_id,
+            )
         artifacts = [Path(path) for path in paths]
         archives = [path for path in artifacts if path.suffix.casefold() == ".zip"]
         if len(archives) != 1:
@@ -475,27 +538,71 @@ def notify_documents(
             artifact_count=1,
             row_id=row_id,
         )
+        final_caption = caption
         if job is not None:
             final_status = store.get(identifier)
-            final_notification = final_status.notification if final_status and isinstance(final_status.notification, dict) else {}
-            final_score = final_notification.get("score") if isinstance(final_notification.get("score"), int) else None
+            final_notification = (
+                final_status.notification
+                if final_status and isinstance(final_status.notification, dict)
+                else {}
+            )
+            final_score = (
+                final_notification.get("score")
+                if isinstance(final_notification.get("score"), int)
+                else None
+            )
+            final_caption = _notification_caption(job, final_score, final_notification)
             notifier.edit_final_caption(
                 chat_id,
                 action_id,
-                caption=_notification_caption(job, final_score, final_notification),
+                caption=final_caption,
                 job_url=job_url,
                 row_id=row_id,
                 run_id=run_id,
             )
+        store.merge_notification(identifier, last_caption=final_caption)
+        store.update(identifier, state=RunState.SUCCEEDED, stage="complete", error=None)
         return {"state": "sent", "message_id": action_id}
     except Exception as exc:
         plan = _retry_plan(self, exc)
         if plan is not None and isinstance(exc, WorkflowError):
             retries, countdown = plan
-            _progress_deferred(tenant, identifier, job, chat_id, "telegram_finalization", countdown)
-            _defer_task(self, exc, tenant=tenant, run_id=run_id, stage="notification", retries=retries, countdown=countdown)
-        store.merge_notification(identifier, state="failed", processing_state="failed", error_message=str(exc))
-        _log_terminal_failure("notification_failed", exc, tenant=tenant, run_id=run_id, stage="notification")
+            _progress_deferred(
+                tenant,
+                identifier,
+                job,
+                chat_id,
+                "telegram_finalization",
+                countdown,
+            )
+            _defer_task(
+                self,
+                exc,
+                tenant=tenant,
+                run_id=run_id,
+                stage="notification",
+                retries=retries,
+                countdown=countdown,
+            )
+        store.merge_notification(
+            identifier,
+            state="failed",
+            processing_state="failed",
+            error_message=str(exc),
+        )
+        store.update(
+            identifier,
+            state=RunState.FAILED,
+            stage="failed",
+            error={"type": type(exc).__name__, "message": str(exc)},
+        )
+        _log_terminal_failure(
+            "notification_failed",
+            exc,
+            tenant=tenant,
+            run_id=run_id,
+            stage="notification",
+        )
         raise
 
 
@@ -519,19 +626,46 @@ def generate_documents(
     identifier = UUID(run_id)
     job = Job.model_validate(job_data)
     chat_id: str | None = None
-    store.update(identifier, state=RunState.RUNNING, stage="documents", task_id=self.request.id, error=None)
+    store.update(
+        identifier,
+        state=RunState.RUNNING,
+        stage="documents",
+        task_id=self.request.id,
+        error=None,
+    )
     try:
         snapshot = _state().get_snapshot(snapshot_id) if snapshot_id else None
-        services = Container(settings).tenant(tenant, snapshot=snapshot, checkpoint_namespace=checkpoint_namespace or run_id)
+        services = Container(settings).tenant(
+            tenant,
+            snapshot=snapshot,
+            checkpoint_namespace=checkpoint_namespace or run_id,
+        )
         chat_id = services.config.telegram_chat_id
         store.merge_notification(identifier, row_id=row_id, score=score)
         _progress_finish(identifier, "documents_queue")
-        _progress_start(tenant, identifier, job, chat_id, "document_check", row_id=row_id, score=score)
+        _progress_start(
+            tenant,
+            identifier,
+            job,
+            chat_id,
+            "document_check",
+            row_id=row_id,
+            score=score,
+        )
 
         def progress(stage: str, event: str) -> None:
             if event == "start":
-                _progress_finish(identifier, "document_check") if stage == "tailoring" else None
-                _progress_start(tenant, identifier, job, chat_id or "", stage, row_id=row_id, score=score)
+                if stage == "tailoring":
+                    _progress_finish(identifier, "document_check")
+                _progress_start(
+                    tenant,
+                    identifier,
+                    job,
+                    chat_id or "",
+                    stage,
+                    row_id=row_id,
+                    score=score,
+                )
             else:
                 _progress_finish(identifier, stage)
 
@@ -547,12 +681,28 @@ def generate_documents(
         )
         if not result.passed:
             _progress_finish(identifier, "document_check")
-            _progress_terminal(tenant, identifier, job, chat_id, "dropped", row_id=row_id, score=score)
-            store.update(identifier, state=RunState.SKIPPED, stage="complete", notification=store.get(identifier).notification, error=None)  # type: ignore[union-attr]
+            _progress_terminal(
+                tenant,
+                identifier,
+                job,
+                chat_id,
+                "dropped",
+                row_id=row_id,
+                score=score,
+            )
+            store.update(identifier, state=RunState.SKIPPED, stage="complete", error=None)
             return {"state": RunState.SKIPPED, "row_id": row_id, "published": False}
 
-        _progress_start(tenant, identifier, job, chat_id, "notification_queue", row_id=row_id, score=score)
-        store.update(identifier, state=RunState.SUCCEEDED, stage="complete", error=None)
+        _progress_start(
+            tenant,
+            identifier,
+            job,
+            chat_id,
+            "notification_queue",
+            row_id=row_id,
+            score=score,
+        )
+        store.update(identifier, state=RunState.RUNNING, stage="notification_queued", error=None)
         if result.notification_paths:
             notify_documents.delay(
                 tenant,
@@ -564,17 +714,58 @@ def generate_documents(
                 job.url,
                 job.model_dump(mode="json"),
             )
-        return {"state": RunState.SUCCEEDED, "row_id": result.row_id, "published": result.artifacts_published}
+        return {
+            "state": "notification_queued",
+            "row_id": result.row_id,
+            "published": result.artifacts_published,
+        }
     except Exception as exc:
         plan = _retry_plan(self, exc)
         if plan is not None and isinstance(exc, WorkflowError):
             retries, countdown = plan
             _progress_deferred(tenant, identifier, job, chat_id, "documents", countdown)
-            store.update(identifier, state=RunState.RUNNING, stage="documents_deferred", error={"type": type(exc).__name__, "message": str(exc), "retry_in_seconds": countdown})
-            _defer_task(self, exc, tenant=tenant, run_id=run_id, stage="documents", retries=retries, countdown=countdown)
-        _progress_terminal(tenant, identifier, job, chat_id, "failed", row_id=row_id, score=score, error_message=str(exc))
-        store.update(identifier, state=RunState.FAILED, stage="failed", error={"type": type(exc).__name__, "message": str(exc)})
-        _log_terminal_failure("document_generation_failed", exc, tenant=tenant, run_id=run_id, stage="documents")
+            store.update(
+                identifier,
+                state=RunState.RUNNING,
+                stage="documents_deferred",
+                error={
+                    "type": type(exc).__name__,
+                    "message": str(exc),
+                    "retry_in_seconds": countdown,
+                },
+            )
+            _defer_task(
+                self,
+                exc,
+                tenant=tenant,
+                run_id=run_id,
+                stage="documents",
+                retries=retries,
+                countdown=countdown,
+            )
+        _progress_terminal(
+            tenant,
+            identifier,
+            job,
+            chat_id,
+            "failed",
+            row_id=row_id,
+            score=score,
+            error_message=str(exc),
+        )
+        store.update(
+            identifier,
+            state=RunState.FAILED,
+            stage="failed",
+            error={"type": type(exc).__name__, "message": str(exc)},
+        )
+        _log_terminal_failure(
+            "document_generation_failed",
+            exc,
+            tenant=tenant,
+            run_id=run_id,
+            stage="documents",
+        )
         raise
 
 
@@ -598,15 +789,34 @@ def process_submission(
     redis = store.redis
     job: Job | None = None
     chat_id: str | None = None
-    store.update(identifier, state=RunState.RUNNING, stage="normalization", task_id=self.request.id, error=None)
+    store.update(
+        identifier,
+        state=RunState.RUNNING,
+        stage="normalization",
+        task_id=self.request.id,
+        error=None,
+    )
     try:
         snapshot = _state().get_snapshot(snapshot_id) if snapshot_id else None
-        services = Container(settings).tenant(tenant, snapshot=snapshot, checkpoint_namespace=checkpoint_namespace or run_id)
+        services = Container(settings).tenant(
+            tenant,
+            snapshot=snapshot,
+            checkpoint_namespace=checkpoint_namespace or run_id,
+        )
         chat_id = services.config.telegram_chat_id
         parsed: Any = TypeAdapter(JobSubmission).validate_python(submission)
         now = datetime.now(UTC).isoformat()
-        store.merge_notification(identifier, processing_state="processing", current_stage="normalization", timeline={"normalization": {"started_at": now}})
-        job = services.normalizer.normalize(parsed, country=services.config.apify_proxy_country, max_concurrency=services.config.apify_max_concurrency)
+        store.merge_notification(
+            identifier,
+            processing_state="processing",
+            current_stage="normalization",
+            timeline={"normalization": {"started_at": now}},
+        )
+        job = services.normalizer.normalize(
+            parsed,
+            country=services.config.apify_proxy_country,
+            max_concurrency=services.config.apify_max_concurrency,
+        )
         _ensure_notification(tenant, identifier, job, chat_id)
         _progress_finish(identifier, "normalization")
 
@@ -626,6 +836,15 @@ def process_submission(
                 else:
                     _progress_finish(identifier, stage)
 
+            def persisted(row_id: int) -> None:
+                store.merge_notification(identifier, row_id=row_id)
+                update_job_notification.delay(
+                    tenant,
+                    run_id,
+                    job.model_dump(mode="json"),
+                    chat_id or "",
+                )
+
             qualification = services.workflow.persist_and_qualify(
                 job,
                 run_id=identifier,
@@ -634,20 +853,50 @@ def process_submission(
                 threshold=services.config.qualification_threshold,
                 force=force,
                 progress=progress,
+                persisted=persisted,
             )
         finally:
             if lock.owned():
                 lock.release()
 
-        store.merge_notification(identifier, row_id=qualification.row_id, score=qualification.score)
-        update_job_notification.delay(tenant, run_id, job.model_dump(mode="json"), chat_id)
+        store.merge_notification(
+            identifier,
+            row_id=qualification.row_id,
+            score=qualification.score,
+        )
+        update_job_notification.delay(
+            tenant,
+            run_id,
+            job.model_dump(mode="json"),
+            chat_id,
+        )
         if not qualification.passed:
-            _progress_terminal(tenant, identifier, job, chat_id, "dropped", row_id=qualification.row_id, score=qualification.score)
+            _progress_terminal(
+                tenant,
+                identifier,
+                job,
+                chat_id,
+                "dropped",
+                row_id=qualification.row_id,
+                score=qualification.score,
+            )
             store.update(identifier, state=RunState.SKIPPED, stage="complete", error=None)
-            return {"state": RunState.SKIPPED, "row_id": qualification.row_id, "published": False}
+            return {
+                "state": RunState.SKIPPED,
+                "row_id": qualification.row_id,
+                "published": False,
+            }
 
         store.update(identifier, state=RunState.RUNNING, stage="documents_queued", error=None)
-        _progress_start(tenant, identifier, job, chat_id, "documents_queue", row_id=qualification.row_id, score=qualification.score)
+        _progress_start(
+            tenant,
+            identifier,
+            job,
+            chat_id,
+            "documents_queue",
+            row_id=qualification.row_id,
+            score=qualification.score,
+        )
         generate_documents.delay(
             tenant,
             job.model_dump(mode="json"),
@@ -657,16 +906,49 @@ def process_submission(
             snapshot_id,
             checkpoint_namespace or run_id,
         )
-        return {"state": "documents_queued", "row_id": qualification.row_id, "published": False}
+        return {
+            "state": "documents_queued",
+            "row_id": qualification.row_id,
+            "published": False,
+        }
     except Exception as exc:
         plan = _retry_plan(self, exc)
         if plan is not None and isinstance(exc, WorkflowError):
             retries, countdown = plan
             _progress_deferred(tenant, identifier, job, chat_id, "qualification", countdown)
-            store.update(identifier, state=RunState.RUNNING, stage="qualification_deferred", error={"type": type(exc).__name__, "message": str(exc), "retry_in_seconds": countdown})
-            _defer_task(self, exc, tenant=tenant, run_id=run_id, stage="qualification", retries=retries, countdown=countdown)
-        _progress_terminal(tenant, identifier, job, chat_id, "failed", error_message=str(exc))
-        store.update(identifier, state=RunState.FAILED, stage="failed", error={"type": type(exc).__name__, "message": str(exc)})
+            store.update(
+                identifier,
+                state=RunState.RUNNING,
+                stage="qualification_deferred",
+                error={
+                    "type": type(exc).__name__,
+                    "message": str(exc),
+                    "retry_in_seconds": countdown,
+                },
+            )
+            _defer_task(
+                self,
+                exc,
+                tenant=tenant,
+                run_id=run_id,
+                stage="qualification",
+                retries=retries,
+                countdown=countdown,
+            )
+        _progress_terminal(
+            tenant,
+            identifier,
+            job,
+            chat_id,
+            "failed",
+            error_message=str(exc),
+        )
+        store.update(
+            identifier,
+            state=RunState.FAILED,
+            stage="failed",
+            error={"type": type(exc).__name__, "message": str(exc)},
+        )
         _log_terminal_failure("job_failed", exc, tenant=tenant, run_id=run_id, stage="worker")
         raise
 
@@ -679,11 +961,21 @@ def discover_tenant(tenant: str, run_id: str) -> dict[str, int]:
         store.update(identifier, state=RunState.RUNNING, stage="discovery", error=None)
         services = Container(settings).tenant(tenant)
         snapshot_id = run_id
-        _state().set_snapshot(snapshot_id, services.snapshot(), ttl_seconds=settings.discovery_snapshot_ttl_seconds)
-        criteria = list(services.baserow.iter_rows(services.config.baserow_table_ids["searchCriteria"]))
+        _state().set_snapshot(
+            snapshot_id,
+            services.snapshot(),
+            ttl_seconds=settings.discovery_snapshot_ttl_seconds,
+        )
+        criteria = list(
+            services.baserow.iter_rows(services.config.baserow_table_ids["searchCriteria"])
+        )
         urls = [build_search_url(services.config.linkedin_base_search_url, row) for row in criteria]
         rows = services.discovery.discover(urls, max_items=services.config.linkedin_max_items)
-        jobs = normalize_discovery(rows, services.config.company_exclusions, services.config.title_exclusions)
+        jobs = normalize_discovery(
+            rows,
+            services.config.company_exclusions,
+            services.config.title_exclusions,
+        )
         for job in jobs:
             child = RunStatus(tenant=tenant, kind="scheduled-job")
             checkpoint_namespace = str(child.run_id)
@@ -694,9 +986,20 @@ def discover_tenant(tenant: str, run_id: str) -> dict[str, int]:
                 init_queued=True,
                 processing_state="processing",
                 current_stage="discovery",
-                timeline={"discovery": {"started_at": now, "completed_at": now, "duration_seconds": 0.0}},
+                timeline={
+                    "discovery": {
+                        "started_at": now,
+                        "completed_at": now,
+                        "duration_seconds": 0.0,
+                    }
+                },
             )
-            init_job_notification.delay(tenant, str(child.run_id), job.model_dump(mode="json"), services.config.telegram_chat_id)
+            init_job_notification.delay(
+                tenant,
+                str(child.run_id),
+                job.model_dump(mode="json"),
+                services.config.telegram_chat_id,
+            )
             payload = {
                 "entry_type": "external",
                 "source": job.source,
@@ -709,13 +1012,47 @@ def discover_tenant(tenant: str, run_id: str) -> dict[str, int]:
                 "contract_type": job.contract_type,
                 "published_at": job.published_at.isoformat() if job.published_at else None,
             }
-            store.save_request(child.run_id, {"tenant": tenant, "payload": payload, "kind": "scheduled-job", "force": False, "snapshot_id": snapshot_id, "checkpoint_namespace": checkpoint_namespace})
-            process_submission.delay(tenant, payload, str(child.run_id), False, snapshot_id, checkpoint_namespace)
-        store.update(identifier, state=RunState.SUCCEEDED, stage="dispatched", counts={"queued": len(jobs)}, error=None)
+            store.save_request(
+                child.run_id,
+                {
+                    "tenant": tenant,
+                    "payload": payload,
+                    "kind": "scheduled-job",
+                    "force": False,
+                    "snapshot_id": snapshot_id,
+                    "checkpoint_namespace": checkpoint_namespace,
+                },
+            )
+            process_submission.delay(
+                tenant,
+                payload,
+                str(child.run_id),
+                False,
+                snapshot_id,
+                checkpoint_namespace,
+            )
+        store.update(
+            identifier,
+            state=RunState.SUCCEEDED,
+            stage="dispatched",
+            counts={"queued": len(jobs)},
+            error=None,
+        )
         return {"queued": len(jobs)}
     except Exception as exc:
-        store.update(identifier, state=RunState.FAILED, stage="failed", error={"type": type(exc).__name__, "message": str(exc)})
-        _log_terminal_failure("discovery_failed", exc, tenant=tenant, run_id=run_id, stage="discovery")
+        store.update(
+            identifier,
+            state=RunState.FAILED,
+            stage="failed",
+            error={"type": type(exc).__name__, "message": str(exc)},
+        )
+        _log_terminal_failure(
+            "discovery_failed",
+            exc,
+            tenant=tenant,
+            run_id=run_id,
+            stage="discovery",
+        )
         raise
 
 
@@ -724,7 +1061,11 @@ def dispatch_due_tenants() -> dict[str, int]:
     redis = _redis()
     queued = 0
     failed = 0
-    local_now = datetime.now(ZoneInfo(settings.scheduler_timezone)).replace(minute=0, second=0, microsecond=0)
+    local_now = datetime.now(ZoneInfo(settings.scheduler_timezone)).replace(
+        minute=0,
+        second=0,
+        microsecond=0,
+    )
     for key, bootstrap in load_registry(settings.registry_path).items():
         if not bootstrap.enabled:
             continue
