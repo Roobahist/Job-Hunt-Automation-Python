@@ -64,11 +64,9 @@ def notify_documents(
         if not artifacts:
             raise ValueError("No notification artifacts were provided")
 
-        media_id: str | None = None
-        pdfs = artifacts[1:]
-        if len(pdfs) >= 2:
-            media_id = retry_transient(notifier.send_documents, chat_id, pdfs, "")
-
+        # Telegram supports only one document attachment on a message that carries
+        # an inline keyboard. The archive contains the CV, cover letter, and source
+        # files, so sending it is the only way to keep one job in one Telegram message.
         action_id = retry_transient(
             notifier.send_document_with_actions,
             chat_id,
@@ -82,7 +80,6 @@ def notify_documents(
             identifier,
             notification={
                 "state": "sent",
-                "media_message_id": media_id,
                 "action_message_id": action_id,
             },
         )
