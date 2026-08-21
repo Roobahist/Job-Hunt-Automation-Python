@@ -80,25 +80,26 @@ def test_generation_routes_reject_old_provider_model_syntax() -> None:
 
 
 def test_repair_routes_are_independent() -> None:
-    settings = Settings(llm_routes="job-balanced", llm_repair_routes="job-fast,job-balanced")
-    assert [route.model for route in settings.llm_repair_route_specs()] == ["job-fast", "job-balanced"]
+    settings = Settings(llm_routes="job-balanced", llm_repair_routes="repair-fast,repair-balanced")
+    assert [route.model for route in settings.llm_repair_route_specs()] == ["repair-fast", "repair-balanced"]
 
 
 def test_default_operation_policy_uses_capability_groups(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("JOB_HUNT_LLM_OPERATION_GROUPS_JSON", raising=False)
     assert capability_group_for_operation("compatibility_filter") == "job-fast"
-    assert capability_group_for_operation("qualification") == "job-balanced"
+    assert capability_group_for_operation("job_page_content_extraction") == "job-fast"
+    assert capability_group_for_operation("qualification_scoring") == "job-balanced"
     assert capability_group_for_operation("cover_letter_generation") == "job-powerful"
 
 
 def test_operation_policy_can_be_overridden(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("JOB_HUNT_LLM_OPERATION_GROUPS_JSON", '{"qualification":"job-powerful"}')
-    assert capability_group_for_operation("qualification") == "job-powerful"
+    assert capability_group_for_operation("qualification_scoring") == "job-powerful"
 
 
 def test_repair_policy_is_separate(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("JOB_HUNT_LLM_REPAIR_GROUP", "job-fast")
-    assert capability_group_for_operation("cover_letter_generation:repair", repair=True) == "job-fast"
+    monkeypatch.setenv("JOB_HUNT_LLM_REPAIR_GROUP", "repair-fast")
+    assert capability_group_for_operation("cover_letter_generation:repair", repair=True) == "repair-fast"
 
 
 def test_capability_router_calls_only_selected_group() -> None:
@@ -106,10 +107,19 @@ def test_capability_router_calls_only_selected_group() -> None:
     balanced = StubClient(result={"compatible": True})
     powerful = StubClient(result={"compatible": False})
     client = RoutedStructuredClient(routes(("job-fast", fast), ("job-balanced", balanced), ("job-powerful", powerful)))
-    assert client.generate("prompt", definition("qualification")) == {"compatible": True}
+    assert client.generate("prompt", definition("qualification_scoring")) == {"compatible": True}
     assert fast.calls == 0
     assert balanced.calls == 1
     assert powerful.calls == 0
+
+
+def test_repair_router_calls_only_repair_group() -> None:
+    fast = StubClient(result={"compatible": True})
+    balanced = StubClient(result={"compatible": False})
+    client = RoutedStructuredClient(routes(("repair-fast", fast), ("repair-balanced", balanced)), repair=True)
+    assert client.generate("prompt", definition("cover_letter_generation:repair")) == {"compatible": True}
+    assert fast.calls == 1
+    assert balanced.calls == 0
 
 
 def test_capability_router_does_not_duplicate_litellm_fallbacks() -> None:
@@ -117,7 +127,7 @@ def test_capability_router_does_not_duplicate_litellm_fallbacks() -> None:
     fast = StubClient(result={"compatible": True})
     client = RoutedStructuredClient(routes(("job-balanced", balanced), ("job-fast", fast)))
     with pytest.raises(ProviderError):
-        client.generate("prompt", definition("qualification"))
+        client.generate("prompt", definition("qualification_scoring"))
     assert balanced.calls == 1
     assert fast.calls == 0
 
