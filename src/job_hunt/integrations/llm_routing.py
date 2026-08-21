@@ -71,7 +71,7 @@ class LiteLLMGatewayClient(GeminiStructuredClient):
             transport=transport,
         )
 
-    def _repair(
+    def _repair_via_routes(
         self,
         raw_output: str,
         schema: dict[str, Any],
@@ -144,7 +144,12 @@ class LiteLLMGatewayClient(GeminiStructuredClient):
             try:
                 parsed = json.loads(content)
             except json.JSONDecodeError as exc:
-                return self._repair(raw_output, definition.output_structure, str(exc), operation=definition.key)
+                return self._repair_via_routes(
+                    raw_output,
+                    definition.output_structure,
+                    str(exc),
+                    operation=definition.key,
+                )
         else:
             raise ProviderError(
                 "LiteLLM gateway returned empty structured output",
@@ -156,7 +161,12 @@ class LiteLLMGatewayClient(GeminiStructuredClient):
             result = _validate_json_schema(parsed, definition.output_structure)
             repaired = False
         except JsonSchemaValidationError as exc:
-            result = self._repair(raw_output, definition.output_structure, str(exc), operation=definition.key)
+            result = self._repair_via_routes(
+                raw_output,
+                definition.output_structure,
+                str(exc),
+                operation=definition.key,
+            )
             repaired = True
 
         logger().info(
