@@ -25,7 +25,7 @@ from job_hunt.integrations.gemini_parallel import (
     ParallelGeminiWorkflowAI,
     ParallelMahsaGeminiWorkflowAI,
 )
-from job_hunt.integrations.gemini_pool import PooledGeminiStructuredClient
+from job_hunt.integrations.llm_routing import build_routed_structured_client
 from job_hunt.integrations.telegram import TelegramNotifier
 from job_hunt.state import RedisState
 from job_hunt.tenants.registry import TenantContext, TenantRegistry
@@ -82,6 +82,7 @@ class Container:
         return TelegramNotifier(
             self.settings.shared_telegram_token(),
             timeout_seconds=self.settings.telegram_request_timeout_seconds,
+            debug=self.settings.debug,
         )
 
     def telegram_route(self, chat_id: str) -> TelegramRoute | None:
@@ -137,15 +138,9 @@ class Container:
             quota_cooldown_seconds=self.settings.provider_quota_cooldown_seconds,
             state=self.state,
         )
-        structured_client = PooledGeminiStructuredClient(
-            self.settings.shared_gemini_keys(),
-            self.settings.content_models(),
-            self.settings.repair_models(),
-            quota_cooldown_seconds=self.settings.gemini_quota_cooldown_seconds,
-            request_timeout_seconds=self.settings.gemini_request_timeout_seconds,
+        structured_client = build_routed_structured_client(
+            self.settings,
             state=self.state.checkpoints(checkpoint_namespace),
-            checkpoint_ttl_seconds=self.settings.llm_checkpoint_ttl_seconds,
-            limits=self.settings.gemini_limits(),
         )
         compatibility_filter = GeminiCompatibilityFilter(structured_client)
 

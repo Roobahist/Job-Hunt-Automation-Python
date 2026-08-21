@@ -25,11 +25,26 @@ class TelegramNotifier:
         client: httpx.Client | None = None,
         *,
         timeout_seconds: int = 120,
+        debug: bool = False,
     ) -> None:
+        self.debug = debug
         self._client = client or httpx.Client(
             base_url=f"https://api.telegram.org/bot{token}",
             timeout=timeout_seconds,
         )
+
+    def _visible_caption(self, caption: str) -> str:
+        if self.debug:
+            return caption
+        lines = caption.splitlines()
+        status_index = next((index for index, line in enumerate(lines) if line.startswith("Status:")), None)
+        if status_index is None:
+            return caption
+        visible = lines[: status_index + 1]
+        error_line = next((line for line in lines[status_index + 1 :] if line.startswith("Error:")), None)
+        if error_line:
+            visible.append(error_line)
+        return "\n".join(visible)
 
     def _post(self, path: str, **kwargs: Any) -> dict[str, object]:
         try:
@@ -102,8 +117,7 @@ class TelegramNotifier:
         job_url: str,
         row_id: int | None = None,
     ) -> str:
-        # Dropped jobs should never leave a placeholder behind. Technical failures
-        # remain visible so the underlying error can be diagnosed and retried.
+        caption = self._visible_caption(caption)
         if _should_cleanup(caption):
             return ""
         placeholder = b" ".join(
@@ -132,6 +146,7 @@ class TelegramNotifier:
         job_url: str,
         row_id: int | None = None,
     ) -> str:
+        caption = self._visible_caption(caption)
         if _should_cleanup(caption):
             self.delete_message(chat_id, message_id)
             return message_id
@@ -155,6 +170,7 @@ class TelegramNotifier:
         row_id: int,
         run_id: str,
     ) -> str:
+        caption = self._visible_caption(caption)
         payload = self._post(
             "/editMessageCaption",
             json={
@@ -177,6 +193,7 @@ class TelegramNotifier:
         row_id: int,
         run_id: str,
     ) -> str:
+        caption = self._visible_caption(caption)
         with archive.open("rb") as handle:
             payload = self._post(
                 "/editMessageMedia",
@@ -200,6 +217,7 @@ class TelegramNotifier:
         self._post("/answerCallbackQuery", json={"callback_query_id": callback_id, "text": text})
 
     def send_documents(self, chat_id: str, artifacts: Iterable[Path], caption: str) -> str:
+        caption = self._visible_caption(caption)
         paths = list(artifacts)
         if not 2 <= len(paths) <= 10:
             raise ValueError("Telegram media groups support 2 to 10 documents")
@@ -248,6 +266,7 @@ class TelegramNotifier:
         row_id: int,
         run_id: str,
     ) -> str:
+        caption = self._visible_caption(caption)
         with archive.open("rb") as handle:
             payload = self._post(
                 "/sendDocument",
@@ -292,6 +311,7 @@ class TelegramNotifier:
         row_id: int,
         run_id: str,
     ) -> str:
+        caption = self._visible_caption(caption)
         payload = self._post(
             "/sendMessage",
             json={

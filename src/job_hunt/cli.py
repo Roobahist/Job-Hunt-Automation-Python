@@ -119,11 +119,16 @@ def validate_configuration(tenant: str | None = None, live: bool = False) -> Non
 
     if live:
         try:
-            models = list(dict.fromkeys(settings.content_models() + settings.repair_models()))
-            validate_gemini_models(settings.shared_gemini_keys()[0], models)
-            typer.echo("OK shared Gemini models")
+            routes = settings.llm_route_specs()
+            gemini_models = list(dict.fromkeys(route.model for route in routes if route.provider == "gemini"))
+            gemini_keys = settings.shared_gemini_keys(required=False)
+            if gemini_models and gemini_keys:
+                validate_gemini_models(gemini_keys[0], gemini_models)
+                typer.echo("OK configured Gemini models")
+            if any(route.provider == "cerebras" for route in routes) and settings.shared_cerebras_keys(required=False):
+                typer.echo("OK configured Cerebras routes")
         except Exception as exc:
-            failures.append(f"shared Gemini models: {exc}")
+            failures.append(f"shared LLM routes: {exc}")
 
     if failures:
         typer.echo("\n".join(failures), err=True)
