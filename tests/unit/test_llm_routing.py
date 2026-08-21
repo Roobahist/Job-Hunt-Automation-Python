@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import json
+from types import SimpleNamespace
 
-import httpx
+import litellm
 import pytest
 
 from job_hunt.config import LlmRoute, Settings
@@ -10,9 +10,10 @@ from job_hunt.domain.models import PromptDefinition
 from job_hunt.errors import ErrorKind, ProviderError
 from job_hunt.integrations.gemini import GeminiStructuredClient
 from job_hunt.integrations.llm_routing import (
-    CerebrasStructuredClient,
+    LiteLLMStructuredClient,
     RoutedStructuredClient,
-    _cerebras_schema,
+    _error_kind,
+    _provider_model,
     repair_route_specs,
 )
 
@@ -47,6 +48,23 @@ class StubClient(GeminiStructuredClient):
         return self.result
 
 
+class StubRouter:
+    def __init__(self, content: str | None = '{"compatible":true}', error: Exception | None = None) -> None:
+        self.content = content
+        self.error = error
+        self.calls: list[dict[str, object]] = []
+
+    def completion(self, **kwargs: object) -> object:
+        self.calls.append(kwargs)
+        if self.error is not None:
+            raise self.error
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content=self.content))],
+            usage=SimpleNamespace(model_dump=lambda: {"total_tokens": 4}),
+            _hidden_params={"model_id": "deployment-test"},
+        )
+
+
 def test_route_parser_preserves_cross_provider_order() -> None:
     settings = Settings(llm_routes="cerebras:first,gemini:second,cerebras:third")
     assert [(route.provider, route.model) for route in settings.llm_route_specs()] == [
@@ -57,23 +75,11 @@ def test_route_parser_preserves_cross_provider_order() -> None:
 
 
 def test_repair_routes_are_independent_from_generation_routes(monkeypatch: pytest.MonkeyPatch) -> None:
-    settings = Settings(
-        llm_routes="cerebras:content-one,gemini:content-two",
-        gemini_repair_models="legacy-one,legacy-two",
-    )
-    monkeypatch.setenv(
-        "JOB_HUNT_LLM_REPAIR_ROUTES",
-        "gemini:repair-one,cerebras:repair-two,gemini:repair-three",
-    )
-
-    assert [(route.provider, route.model) for route in settings.llm_route_specs()] == [
-        ("cerebras", "content-one"),
-        ("gemini", "content-two"),
-    ]
+    settings = Settings(llm_routes="cerebras:content-one,gemini:content-two", gemini_repair_models="legacy")
+    monkeypatch.setenv("JOB_HUNT_LLM_REPAIR_ROUTES", "gemini:repair-one,cerebras:repair-two")
     assert [(route.provider, route.model) for route in repair_route_specs(settings)] == [
         ("gemini", "repair-one"),
         ("cerebras", "repair-two"),
-        ("gemini", "repair-three"),
     ]
 
 
@@ -86,7 +92,7 @@ def test_repair_routes_fall_back_to_legacy_gemini_models(monkeypatch: pytest.Mon
     ]
 
 
-def test_routed_client_falls_through_immediately() -> None:
+def test_routed_client_preserves_fallback_order() -> None:
     first = StubClient(error=ProviderError("rate limited", ErrorKind.RATE_LIMIT, retryable=True, provider="cerebras"))
     second = StubClient(result={"compatible": True})
     client = RoutedStructuredClient(
@@ -100,69 +106,34 @@ def test_routed_client_falls_through_immediately() -> None:
     assert second.calls == 1
 
 
-def test_cerebras_tries_multiple_keys_and_uses_strict_schema() -> None:
-    seen_auth: list[str] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        seen_auth.append(request.headers["Authorization"])
-        if request.headers["Authorization"] == "Bearer bad-key":
-            return httpx.Response(429, json={"message": "rate limit"})
-        payload = json.loads(request.content)
-        schema = payload["response_format"]["json_schema"]["schema"]
-        assert schema["additionalProperties"] is False
-        return httpx.Response(
-            200,
-            json={
-                "choices": [{"message": {"content": '{"compatible":true}'}}],
-                "usage": {"total_tokens": 4},
-            },
-        )
-
-    http = httpx.Client(
-        base_url="https://api.cerebras.ai/v1",
-        transport=httpx.MockTransport(handler),
-    )
-    client = CerebrasStructuredClient(["bad-key", "good-key"], "test-model", client=http)
+def test_litellm_client_sends_schema_and_returns_validated_json() -> None:
+    router = StubRouter()
+    client = LiteLLMStructuredClient("gemini", "gemini-test", ["key"], router=router)
     assert client.generate("prompt", definition()) == {"compatible": True}
-    assert seen_auth == ["Bearer bad-key", "Bearer good-key"]
+    call = router.calls[0]
+    assert call["model"] == "job-hunt-gemini-gemini-test"
+    assert call["response_format"]["type"] == "json_schema"  # type: ignore[index]
 
 
-def test_cerebras_invalid_content_uses_independent_repair_client() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            200,
-            json={"choices": [{"message": {"content": '{"compatible":"yes"}'}}]},
-        )
-
+def test_litellm_client_uses_independent_repair_route_for_invalid_json() -> None:
     repair = StubClient(result={"compatible": True})
-    http = httpx.Client(
-        base_url="https://api.cerebras.ai/v1",
-        transport=httpx.MockTransport(handler),
-    )
-    client = CerebrasStructuredClient(
+    client = LiteLLMStructuredClient(
+        "gemini",
+        "gemini-test",
         ["key"],
-        "content-model",
-        client=http,
+        router=StubRouter(content="not json"),
         repair_client=repair,
     )
-
-    assert client.generate("original prompt", definition()) == {"compatible": True}
+    assert client.generate("prompt", definition()) == {"compatible": True}
     assert repair.calls == 1
     assert "ORIGINAL OUTPUT" in repair.prompts[0]
-    assert '{"compatible":"yes"}' in repair.prompts[0]
 
 
-def test_cerebras_schema_normalizes_nested_objects_without_mutating_source() -> None:
-    source = {
-        "type": "object",
-        "properties": {
-            "nested": {
-                "type": "object",
-                "properties": {"value": {"type": "string"}},
-            }
-        },
-    }
-    normalized = _cerebras_schema(source)
-    assert normalized["additionalProperties"] is False
-    assert normalized["properties"]["nested"]["additionalProperties"] is False
-    assert "additionalProperties" not in source
+def test_provider_model_uses_litellm_provider_prefix() -> None:
+    assert _provider_model("gemini", "gemini-3.5-flash") == "gemini/gemini-3.5-flash"
+    assert _provider_model("cerebras", "gpt-oss-120b") == "cerebras/gpt-oss-120b"
+
+
+def test_litellm_rate_limit_maps_to_domain_error() -> None:
+    exc = litellm.RateLimitError(message="limited", model="test", llm_provider="gemini", response=None)
+    assert _error_kind(exc) == ErrorKind.RATE_LIMIT
