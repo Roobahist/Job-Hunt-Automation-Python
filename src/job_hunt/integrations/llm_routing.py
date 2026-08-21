@@ -1,22 +1,52 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import time
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 import httpx
-from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
 
 from job_hunt.config import LlmRoute, Settings
 from job_hunt.domain.models import PromptDefinition
 from job_hunt.errors import ConfigurationError, ErrorKind, ProviderError
-from job_hunt.integrations.gemini import GeminiStructuredClient, _compact, _validate_json_schema
+from job_hunt.integrations.gemini import GeminiStructuredClient, _validate_json_schema
 from job_hunt.integrations.gemini_pool import PooledGeminiStructuredClient
 from job_hunt.integrations.http import raise_provider_error
 from job_hunt.logging import logger
 from job_hunt.state import RedisState
+
+
+def _cerebras_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """Make object schemas compatible with Cerebras strict structured outputs."""
+    normalized = copy.deepcopy(schema)
+
+    def visit(node: object) -> None:
+        if not isinstance(node, dict):
+            return
+        if node.get("type") == "object" or isinstance(node.get("properties"), dict):
+            node["additionalProperties"] = False
+            properties = node.get("properties")
+            if isinstance(properties, dict):
+                for child in properties.values():
+                    visit(child)
+        items = node.get("items")
+        if isinstance(items, dict):
+            visit(items)
+        for keyword in ("anyOf", "oneOf", "allOf", "prefixItems"):
+            variants = node.get(keyword)
+            if isinstance(variants, list):
+                for child in variants:
+                    visit(child)
+        definitions = node.get("$defs")
+        if isinstance(definitions, dict):
+            for child in definitions.values():
+                visit(child)
+
+    visit(normalized)
+    return normalized
 
 
 class CerebrasStructuredClient(GeminiStructuredClient):
@@ -50,6 +80,7 @@ class CerebrasStructuredClient(GeminiStructuredClient):
         schema: dict[str, Any],
         temperature: float,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
+        provider_schema = _cerebras_schema(schema)
         payload = {
             "model": self.model,
             "messages": [{"role": "user", "content": prompt}],
@@ -59,7 +90,7 @@ class CerebrasStructuredClient(GeminiStructuredClient):
                 "json_schema": {
                     "name": "job_hunt_response",
                     "strict": True,
-                    "schema": schema,
+                    "schema": provider_schema,
                 },
             },
         }
@@ -89,8 +120,8 @@ class CerebrasStructuredClient(GeminiStructuredClient):
                 ErrorKind.MALFORMED_PROVIDER_RESPONSE,
                 provider="cerebras",
             ) from exc
-        if isinstance(content, dict):
-            parsed = content
+        if isinstance(content, Mapping):
+            parsed: object = dict(content)
         elif isinstance(content, str):
             try:
                 parsed = json.loads(content)
@@ -116,25 +147,9 @@ class CerebrasStructuredClient(GeminiStructuredClient):
             "usage": usage if isinstance(usage, dict) else {},
         }
 
-    def _repair(
-        self,
-        key: str,
-        raw_output: str,
-        schema: dict[str, Any],
-        validation_error: str,
-    ) -> dict[str, Any]:
-        prompt = (
-            "Repair the following output so it conforms exactly to the supplied JSON Schema. "
-            "Preserve the original meaning and facts. Return only the repaired structured result.\n\n"
-            f"VALIDATION ERROR:\n{validation_error}\n\n"
-            f"JSON SCHEMA:\n{json.dumps(schema, ensure_ascii=False)}\n\n"
-            f"ORIGINAL OUTPUT:\n{raw_output}"
-        )
-        result, _ = self._call(key, prompt, schema, 0.0)
-        return result
-
     def generate(self, prompt: str, definition: PromptDefinition) -> dict[str, Any]:
         failures: list[str] = []
+        last_error: ProviderError | None = None
         for key in self.keys:
             try:
                 result, metadata = self._call(
@@ -147,22 +162,21 @@ class CerebrasStructuredClient(GeminiStructuredClient):
                 return result
             except ConfigurationError:
                 raise
-            except JsonSchemaValidationError as exc:
-                try:
-                    repaired = self._repair(key, "", definition.output_structure, str(exc))
-                    logger().info(
-                        "llm_generation",
-                        prompt_key=definition.key,
-                        provider="cerebras",
-                        model=self.model,
-                        account=self._key_id(key),
-                        repaired=True,
-                    )
-                    return repaired
-                except Exception as repair_exc:
-                    failures.append(f"{self._key_id(key)}: {repair_exc}")
+            except ProviderError as exc:
+                last_error = exc
+                failures.append(f"{self._key_id(key)}: {exc}")
+                continue
             except Exception as exc:
                 failures.append(f"{self._key_id(key)}: {exc}")
+                continue
+        if last_error is not None and all("429" in failure or "rate" in failure.lower() for failure in failures):
+            raise ProviderError(
+                f"Cerebras {self.model} exhausted all configured keys: " + "; ".join(failures),
+                ErrorKind.RATE_LIMIT,
+                retryable=True,
+                provider="cerebras",
+                retry_after=last_error.retry_after,
+            )
         raise ProviderError(
             f"Cerebras {self.model} failed across all configured keys: " + "; ".join(failures),
             ErrorKind.TRANSIENT_PROVIDER,
