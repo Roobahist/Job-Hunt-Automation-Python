@@ -50,10 +50,12 @@ docker compose build worker-fast
 
 docker compose run --rm --no-deps worker-fast python scripts/check-mahsa-latex.py
 
-# Bring the gateway up first so live validation checks the exact model groups workers will use.
-docker compose up -d redis litellm
+# Recreate the gateway so every deployment reloads the newly generated provider/model pools.
+docker compose up -d redis
+docker compose up -d --force-recreate litellm
 wait_for_litellm
 
+# This queries LiteLLM /v1/models and verifies every configured generation and repair group exists.
 docker compose run --rm --no-deps api job-hunt config validate --live
 
 docker compose up -d --force-recreate --remove-orphans \
