@@ -24,10 +24,16 @@ _DEFAULT_GEMINI_LIMITS = {
 }
 
 
+class LlmRoute(BaseModel):
+    provider: str
+    model: str
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="JOB_HUNT_", env_file=".env", extra="ignore")
 
     environment: str = "development"
+    debug: bool = False
     registry_path: Path = Path("config/users.toml")
     artifact_root: Path = Path("runs")
     redis_url: str = "redis://localhost:6379/0"
@@ -41,6 +47,7 @@ class Settings(BaseSettings):
     # Operational timing is environment-configurable. A task time limit of zero disables
     # Celery's global deadline so long document jobs are not killed mid-generation.
     gemini_request_timeout_seconds: int = Field(default=180, ge=1)
+    cerebras_request_timeout_seconds: int = Field(default=180, ge=1)
     telegram_request_timeout_seconds: int = Field(default=120, ge=1)
     baserow_request_timeout_seconds: int = Field(default=60, ge=1)
     latex_compile_timeout_seconds: int = Field(default=180, ge=1)
@@ -53,11 +60,20 @@ class Settings(BaseSettings):
     transient_max_delay_seconds: int = Field(default=300, ge=1)
 
     # Provider capacity is shared by every tenant. Each configured key belongs to a separate
-    # free-tier account, while all tenants consume the same ordered account pool.
+    # account, while all tenants consume the same ordered account pools.
     apify_tokens: str = ""
     gemini_api_keys: str = ""
+    cerebras_api_keys: str = ""
+    cerebras_base_url: str = "https://api.cerebras.ai/v1"
     telegram_bot_token: str = ""
     telegram_webhook_secret: str = ""
+
+    # When set, this is the authoritative fallback order across providers and models.
+    # Format: provider:model,provider:model. Example:
+    # cerebras:llama3.1-8b,gemini:gemini-3.5-flash-lite
+    llm_routes: str = ""
+
+    # Legacy Gemini-only settings remain supported when JOB_HUNT_LLM_ROUTES is empty.
     gemini_content_models: str = (
         "gemini-3.6-flash,gemini-3.5-flash,gemini-3-flash-preview,gemini-2.5-flash,"
         "gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-2.5-flash-lite"
@@ -66,6 +82,7 @@ class Settings(BaseSettings):
     gemini_limits_json: str = json.dumps(_DEFAULT_GEMINI_LIMITS, separators=(",", ":"))
     provider_quota_cooldown_seconds: int = Field(default=3600, ge=1)
     gemini_quota_cooldown_seconds: int = Field(default=65, ge=1)
+    cerebras_quota_cooldown_seconds: int = Field(default=65, ge=1)
 
     @staticmethod
     def _split_csv(value: str) -> list[str]:
@@ -77,10 +94,16 @@ class Settings(BaseSettings):
             raise ConfigurationError("JOB_HUNT_APIFY_TOKENS must contain at least one token")
         return tokens
 
-    def shared_gemini_keys(self) -> list[str]:
+    def shared_gemini_keys(self, *, required: bool = True) -> list[str]:
         keys = self._split_csv(self.gemini_api_keys)
-        if not keys:
+        if required and not keys:
             raise ConfigurationError("JOB_HUNT_GEMINI_API_KEYS must contain at least one API key")
+        return keys
+
+    def shared_cerebras_keys(self, *, required: bool = True) -> list[str]:
+        keys = self._split_csv(self.cerebras_api_keys)
+        if required and not keys:
+            raise ConfigurationError("JOB_HUNT_CEREBRAS_API_KEYS must contain at least one API key")
         return keys
 
     def shared_telegram_token(self) -> str:
@@ -92,6 +115,24 @@ class Settings(BaseSettings):
         if not self.telegram_webhook_secret:
             raise ConfigurationError("JOB_HUNT_TELEGRAM_WEBHOOK_SECRET must be set")
         return self.telegram_webhook_secret
+
+    def llm_route_specs(self) -> list[LlmRoute]:
+        raw_routes = self._split_csv(self.llm_routes)
+        if not raw_routes:
+            return [LlmRoute(provider="gemini", model=model) for model in self.content_models()]
+        routes: list[LlmRoute] = []
+        for raw in raw_routes:
+            provider, separator, model = raw.partition(":")
+            provider = provider.strip().lower()
+            model = model.strip().removeprefix("models/")
+            if not separator or not provider or not model:
+                raise ConfigurationError(
+                    "JOB_HUNT_LLM_ROUTES entries must use provider:model, for example cerebras:llama3.1-8b"
+                )
+            if provider not in {"cerebras", "gemini"}:
+                raise ConfigurationError(f"Unsupported LLM provider in JOB_HUNT_LLM_ROUTES: {provider}")
+            routes.append(LlmRoute(provider=provider, model=model))
+        return routes
 
     def content_models(self) -> list[str]:
         models = [model.removeprefix("models/") for model in self._split_csv(self.gemini_content_models)]
