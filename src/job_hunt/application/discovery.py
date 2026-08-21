@@ -8,6 +8,20 @@ from job_hunt.application.normalization import job_from_provider
 from job_hunt.domain.models import Job
 
 
+def search_criteria_active(criteria: Mapping[str, Any]) -> bool:
+    """Return whether a Baserow search-criteria row is enabled for discovery."""
+    value = criteria.get("Active")
+    if value is None:
+        value = criteria.get("active")
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().casefold() in {"1", "true", "yes", "on", "active", "enabled"}
+    return False
+
+
 def build_search_url(base_url: str, criteria: Mapping[str, Any]) -> str:
     generated = criteria.get("Generated URL") or criteria.get("generatedUrl")
     if generated:
