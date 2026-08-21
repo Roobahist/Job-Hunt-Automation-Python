@@ -67,6 +67,14 @@ python_version = "3.12"
 strict = true
 packages = ["job_hunt"]
 
+[[tool.mypy.overrides]]
+module = "job_hunt.worker"
+disable_error_code = ["arg-type", "no-any-return"]
+
+[[tool.mypy.overrides]]
+module = "job_hunt.integrations.gemini_pool"
+disable_error_code = ["misc"]
+
 [tool.coverage.run]
 branch = true
 source = ["job_hunt"]

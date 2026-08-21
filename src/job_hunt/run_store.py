@@ -80,9 +80,11 @@ class RunStore:
                 incoming = dict(fields)
                 timeline_value = incoming.pop("timeline", None)
                 if isinstance(timeline_value, dict):
-                    timeline = dict(notification.get("timeline") or {})
+                    stored_timeline = notification.get("timeline")
+                    timeline = dict(stored_timeline) if isinstance(stored_timeline, dict) else {}
                     for stage, stage_value in timeline_value.items():
-                        existing_stage = dict(timeline.get(str(stage)) or {})
+                        stored_stage = timeline.get(str(stage))
+                        existing_stage = dict(stored_stage) if isinstance(stored_stage, dict) else {}
                         if isinstance(stage_value, dict):
                             existing_stage.update(stage_value)
                         else:
