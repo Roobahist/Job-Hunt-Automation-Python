@@ -296,19 +296,14 @@ def build_litellm_config(
     if "repair-fast" in present_groups and "repair-balanced" in present_groups:
         fallbacks.append({"repair-fast": ["repair-balanced"]})
 
-    # LiteLLM retries are deliberately handled inside a single request. A failed or
-    # rate-limited deployment is cooled down and another deployment/key can be selected
-    # immediately instead of deferring the entire Celery job for minutes.
-    num_retries = int(env.get("LITELLM_NUM_RETRIES", "8"))
-    if num_retries < 0:
-        raise ConfigGenerationError("LITELLM_NUM_RETRIES must be zero or greater")
-
+    # The application defines capability groups and fallback intent. LiteLLM owns
+    # deployment selection, provider-normalized retries, cooldowns, and failover.
+    # Avoid deriving retry counts from our deployment topology or duplicating its router.
     return {
         "model_list": model_list,
         "router_settings": {
             "routing_strategy": env.get("LITELLM_ROUTING_STRATEGY", "latency-based-routing"),
-            "num_retries": num_retries,
-            "allowed_fails": 1,
+            "allowed_fails": int(env.get("LITELLM_ALLOWED_FAILS", "1")),
             "cooldown_time": int(env.get("LITELLM_COOLDOWN_SECONDS", "65")),
             "fallbacks": fallbacks,
         },
