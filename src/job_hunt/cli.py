@@ -52,11 +52,7 @@ def _validate_litellm_groups(settings: Settings) -> None:
     response.raise_for_status()
     payload = response.json()
     data = payload.get("data", []) if isinstance(payload, dict) else []
-    available = {
-        str(item.get("id", ""))
-        for item in data
-        if isinstance(item, dict) and str(item.get("id", "")).strip()
-    }
+    available = {str(item.get("id", "")) for item in data if isinstance(item, dict) and str(item.get("id", "")).strip()}
     missing = sorted(expected - available)
     if missing:
         raise ValueError(f"LiteLLM is missing configured capability groups: {missing}")
