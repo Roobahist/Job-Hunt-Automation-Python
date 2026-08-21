@@ -12,10 +12,13 @@ CHAT_MODEL_BLOCKLIST = (
     "whisper",
     "speech",
     "tts",
+    "orpheus",
     "guard",
+    "safeguard",
     "moderation",
     "embedding",
     "embed",
+    "rerank",
 )
 CAPABILITY_GROUPS = ("job-fast", "job-balanced", "job-powerful")
 REPAIR_GROUP_MAP = {"job-fast": "repair-fast", "job-balanced": "repair-balanced"}
@@ -129,15 +132,21 @@ def group_models(
     explicit: Mapping[str, Sequence[str]] | None = None,
     excluded: Sequence[str] = (),
     blocklist: Sequence[str] = CHAT_MODEL_BLOCKLIST,
+    allowlist: Sequence[str] = (),
 ) -> dict[str, list[str]]:
     groups: dict[str, list[str]] = {group: [] for group in CAPABILITY_GROUPS}
     explicit_groups = explicit or {}
     excluded_set = set(excluded)
+    allowlist_set = set(allowlist)
     explicitly_classified = {model for models in explicit_groups.values() for model in models}
     for group in CAPABILITY_GROUPS:
         groups[group].extend(model for model in explicit_groups.get(group, ()) if model not in excluded_set)
     for model in discovered:
-        if model in excluded_set or model in explicitly_classified or not is_chat_candidate(model, blocklist):
+        if model in excluded_set or model in explicitly_classified:
+            continue
+        if allowlist_set and model not in allowlist_set:
+            continue
+        if not is_chat_candidate(model, blocklist):
             continue
         groups[classify_model(model)].append(model)
     deduplicated = {group: sorted(set(models)) for group, models in groups.items()}
@@ -152,12 +161,7 @@ def deployment(
     extra_params: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     params = dict(extra_params or {})
-    params.update(
-        {
-            "model": provider_model,
-            "api_key": f"os.environ/{key_env_name}",
-        }
-    )
+    params.update({"model": provider_model, "api_key": f"os.environ/{key_env_name}"})
     return {"model_name": model_name, "litellm_params": params}
 
 
@@ -233,7 +237,14 @@ def add_provider_deployments(
     explicit = _provider_groups(provider)
     excluded = [str(item) for item in provider.get("exclude_models", [])]
     blocklist = [str(item) for item in provider.get("blocklist", CHAT_MODEL_BLOCKLIST)]
-    groups = group_models(discovered, explicit=explicit, excluded=excluded, blocklist=blocklist)
+    allowlist = [str(item) for item in provider.get("discovery_allowlist", [])]
+    groups = group_models(
+        discovered,
+        explicit=explicit,
+        excluded=excluded,
+        blocklist=blocklist,
+        allowlist=allowlist,
+    )
     provider_prefix = _provider_model_prefix(provider)
     extra_params = _provider_extra_params(provider)
 
@@ -251,12 +262,7 @@ def add_repair_deployments(model_list: list[dict[str, Any]]) -> None:
         repair_group = REPAIR_GROUP_MAP.get(group)
         if repair_group is None:
             continue
-        model_list.append(
-            {
-                "model_name": repair_group,
-                "litellm_params": dict(entry["litellm_params"]),
-            }
-        )
+        model_list.append({"model_name": repair_group, "litellm_params": dict(entry["litellm_params"])})
 
 
 def build_litellm_config(
