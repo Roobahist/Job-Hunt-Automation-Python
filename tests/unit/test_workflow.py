@@ -158,6 +158,46 @@ def test_existing_dropped_row_is_not_requalified_automatically() -> None:
     assert ("status", "new") not in repo.calls
 
 
+def test_manual_drop_after_persistence_stops_before_qualification() -> None:
+    repo = Repository()
+    workflow, _, ai, _ = make_workflow(repo, Qualification(score=90, should_apply=True, reasoning="unused"))
+
+    def persisted(_row_id: int) -> None:
+        repo.dropped = True
+
+    result = workflow.persist_and_qualify(
+        application_job(),
+        run_id=uuid4(),
+        master_cv={},
+        prompts={},
+        threshold=33,
+        force=False,
+        persisted=persisted,
+    )
+    assert not result.passed
+    assert result.score is None
+    assert ai.qualify_calls == 0
+    assert all(call[0] != "qualification" for call in repo.calls)
+
+
+def test_manual_drop_during_qualification_does_not_save_new_score() -> None:
+    repo = Repository()
+
+    class DroppingQualifier(AI):
+        def qualify(self, *_: object) -> Qualification:
+            result = super().qualify()
+            repo.dropped = True
+            return result
+
+    ai = DroppingQualifier(Qualification(score=90, should_apply=True, reasoning="unused"))
+    workflow = ApplicationWorkflow(repo, ai, ai, Renderer(), Publisher(), Path("runs"))
+    result = qualify(workflow)
+    assert not result.passed  # type: ignore[attr-defined]
+    assert result.score == 90  # type: ignore[attr-defined]
+    assert ai.qualify_calls == 1
+    assert ("qualification", 90) not in repo.calls
+
+
 def test_document_generation_is_explicit_after_qualification() -> None:
     repo = Repository()
     workflow, publisher, _, _ = make_workflow(
@@ -165,6 +205,7 @@ def test_document_generation_is_explicit_after_qualification() -> None:
         Qualification(score=90, should_apply=False, reasoning="metadata only"),
     )
     qualification = qualify(workflow)
+    assert qualification.score is not None  # type: ignore[attr-defined]
     result = generate(workflow, row_id=qualification.row_id, score=qualification.score)  # type: ignore[attr-defined]
     assert result.passed  # type: ignore[attr-defined]
     assert publisher.calls == 1
@@ -184,6 +225,7 @@ def test_progress_callback_reports_major_pipeline_boundaries() -> None:
         force=False,
         progress=lambda stage, event: events.append((stage, event)),
     )
+    assert qualification.score is not None
     workflow.generate_documents(
         application_job(),
         run_id=uuid4(),
