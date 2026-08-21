@@ -14,12 +14,12 @@ from job_hunt.errors import ErrorKind, ProviderError, WorkflowError
 
 
 class Repository:
-    def __init__(self, existing: bool = False, dropped: bool = False) -> None:
-        self.existing = {"id": 7} if existing else None
+    def __init__(self, existing: bool = False, dropped: bool = False, existing_score: int | None = None) -> None:
+        self.existing = {"id": 7, "Score": existing_score} if existing else None
         self.dropped = dropped
         self.calls: list[tuple[str, object]] = []
 
-    def find(self, job: Job) -> dict[str, int] | None:
+    def find(self, job: Job) -> dict[str, object] | None:
         self.calls.append(("find", job.identity))
         return self.existing
 
@@ -30,6 +30,9 @@ class Repository:
     def reset(self, row_id: int, job: Job) -> dict[str, int]:
         self.calls.append(("reset", row_id))
         return {"id": row_id}
+
+    def clear_qualification(self, row_id: int) -> None:
+        self.calls.append(("clear_qualification", row_id))
 
     def save_qualification(self, row_id: int, result: Qualification) -> None:
         self.calls.append(("qualification", result.score))
@@ -49,9 +52,11 @@ class Repository:
 class AI:
     def __init__(self, qualification: Qualification) -> None:
         self.qualification = qualification
+        self.qualify_calls = 0
         self.tailor_calls = 0
 
     def qualify(self, *_: object) -> Qualification:
+        self.qualify_calls += 1
         return self.qualification
 
     def tailor(self, *_: object) -> TailoredContent:
@@ -130,6 +135,27 @@ def test_below_threshold_marks_row_dropped_and_stops_at_qualification_boundary()
     assert ("qualification", 32) in repo.calls
     assert ("status", "dropped") in repo.calls
     assert all(call[0] != "artifacts" for call in repo.calls)
+
+
+def test_existing_non_dropped_row_clears_stale_qualification_before_rescoring() -> None:
+    repo = Repository(existing=True, dropped=False, existing_score=75)
+    workflow, _, ai, _ = make_workflow(repo, Qualification(score=90, should_apply=True, reasoning="good"))
+    result = qualify(workflow)
+    assert result.passed  # type: ignore[attr-defined]
+    assert ai.qualify_calls == 1
+    assert ("clear_qualification", 7) in repo.calls
+    assert ("qualification", 90) in repo.calls
+
+
+def test_existing_dropped_row_is_not_requalified_automatically() -> None:
+    repo = Repository(existing=True, dropped=True, existing_score=75)
+    workflow, _, ai, _ = make_workflow(repo, Qualification(score=99, should_apply=True, reasoning="unused"))
+    result = qualify(workflow)
+    assert not result.passed  # type: ignore[attr-defined]
+    assert result.score == 75  # type: ignore[attr-defined]
+    assert ai.qualify_calls == 0
+    assert ("clear_qualification", 7) not in repo.calls
+    assert ("status", "new") not in repo.calls
 
 
 def test_document_generation_is_explicit_after_qualification() -> None:
@@ -253,6 +279,7 @@ def test_force_resets_new_and_overrides_below_threshold_drop_rule() -> None:
     workflow, publisher, _, _ = make_workflow(repo, Qualification(score=1, should_apply=False, reasoning="no"))
     result = qualify(workflow, force=True)
     assert result.passed  # type: ignore[attr-defined]
+    assert ("clear_qualification", 7) in repo.calls
     assert ("status", "new") in repo.calls
     assert ("status", "dropped") not in repo.calls
     assert ("qualification", 1) in repo.calls
