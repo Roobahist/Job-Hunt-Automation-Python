@@ -37,10 +37,6 @@ def indexed_env_values(env: Mapping[str, str], prefix: str) -> list[tuple[str, s
     return [(name, value) for _, name, value in values]
 
 
-def csv_values(value: str) -> list[str]:
-    return [item.strip() for item in value.split(",") if item.strip()]
-
-
 def load_provider_registry(path: Path) -> dict[str, Any]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -148,14 +144,21 @@ def group_models(
     return _fill_missing_groups(deduplicated)
 
 
-def deployment(model_name: str, provider_model: str, key_env_name: str) -> dict[str, Any]:
-    return {
-        "model_name": model_name,
-        "litellm_params": {
+def deployment(
+    model_name: str,
+    provider_model: str,
+    key_env_name: str,
+    *,
+    extra_params: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    params = dict(extra_params or {})
+    params.update(
+        {
             "model": provider_model,
             "api_key": f"os.environ/{key_env_name}",
-        },
-    }
+        }
+    )
+    return {"model_name": model_name, "litellm_params": params}
 
 
 def _provider_groups(provider: Mapping[str, Any]) -> dict[str, list[str]]:
@@ -206,6 +209,13 @@ def _discover_provider_models(
     return discover_with_key_fallback(keys, lambda key: discoverer(key, url))
 
 
+def _provider_extra_params(provider: Mapping[str, Any]) -> dict[str, Any]:
+    raw = provider.get("litellm_params", {})
+    if not isinstance(raw, Mapping):
+        raise ConfigGenerationError(f"Provider {provider.get('name', '<unknown>')} litellm_params must be an object")
+    return {str(key): value for key, value in raw.items()}
+
+
 def add_provider_deployments(
     model_list: list[dict[str, Any]],
     provider: Mapping[str, Any],
@@ -225,12 +235,15 @@ def add_provider_deployments(
     blocklist = [str(item) for item in provider.get("blocklist", CHAT_MODEL_BLOCKLIST)]
     groups = group_models(discovered, explicit=explicit, excluded=excluded, blocklist=blocklist)
     provider_prefix = _provider_model_prefix(provider)
+    extra_params = _provider_extra_params(provider)
 
     for group, models in groups.items():
         for model in models:
             provider_model = model if model.startswith(f"{provider_prefix}/") else f"{provider_prefix}/{model}"
             for key_name, _ in keys:
-                model_list.append(deployment(group, provider_model, key_name))
+                model_list.append(
+                    deployment(group, provider_model, key_name, extra_params=extra_params)
+                )
 
 
 def add_repair_deployments(model_list: list[dict[str, Any]]) -> None:
