@@ -241,9 +241,7 @@ def add_provider_deployments(
         for model in models:
             provider_model = model if model.startswith(f"{provider_prefix}/") else f"{provider_prefix}/{model}"
             for key_name, _ in keys:
-                model_list.append(
-                    deployment(group, provider_model, key_name, extra_params=extra_params)
-                )
+                model_list.append(deployment(group, provider_model, key_name, extra_params=extra_params))
 
 
 def add_repair_deployments(model_list: list[dict[str, Any]]) -> None:
