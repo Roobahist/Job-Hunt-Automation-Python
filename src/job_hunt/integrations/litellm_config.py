@@ -18,6 +18,7 @@ CHAT_MODEL_BLOCKLIST = (
     "embed",
 )
 CAPABILITY_GROUPS = ("job-fast", "job-balanced", "job-powerful")
+REPAIR_GROUP_MAP = {"job-fast": "repair-fast", "job-balanced": "repair-balanced"}
 
 
 class ConfigGenerationError(RuntimeError):
@@ -91,8 +92,7 @@ def classify_model(model: str) -> str:
 
 
 def _fill_missing_groups(groups: dict[str, list[str]]) -> dict[str, list[str]]:
-    populated = {group: models for group, models in groups.items() if models}
-    if not populated:
+    if not any(groups.values()):
         return groups
     preferred_sources = {
         "job-fast": ("job-balanced", "job-powerful"),
@@ -166,6 +166,20 @@ def add_gemini_deployments(
                 model_list.append(deployment(group, f"gemini/{model}", key_name))
 
 
+def add_repair_deployments(model_list: list[dict[str, Any]]) -> None:
+    source_entries = list(model_list)
+    for entry in source_entries:
+        group = str(entry["model_name"])
+        repair_group = REPAIR_GROUP_MAP.get(group)
+        if repair_group is None:
+            continue
+        copied = {
+            "model_name": repair_group,
+            "litellm_params": dict(entry["litellm_params"]),
+        }
+        model_list.append(copied)
+
+
 def build_litellm_config(
     *,
     env: Mapping[str, str],
@@ -187,6 +201,7 @@ def build_litellm_config(
     add_gemini_deployments(model_list, env=env, key_names=[name for name, _ in gemini_keys])
     if not model_list:
         raise ConfigGenerationError("No LiteLLM chat-model deployments were generated")
+    add_repair_deployments(model_list)
 
     present_groups = {str(item["model_name"]) for item in model_list}
     fallbacks: list[dict[str, list[str]]] = []
@@ -196,6 +211,8 @@ def build_litellm_config(
             fallbacks.append({"job-powerful": chain})
     if "job-balanced" in present_groups and "job-fast" in present_groups:
         fallbacks.append({"job-balanced": ["job-fast"]})
+    if "repair-fast" in present_groups and "repair-balanced" in present_groups:
+        fallbacks.append({"repair-fast": ["repair-balanced"]})
 
     return {
         "model_list": model_list,
