@@ -1,23 +1,30 @@
 from __future__ import annotations
 
+import json
 import os
 import sys
 from pathlib import Path
 
 import httpx
 
-from job_hunt.integrations.litellm_config import ConfigGenerationError, discover_groq_models, generate_litellm_config
+from job_hunt.integrations.litellm_config import (
+    ConfigGenerationError,
+    build_litellm_config,
+    discover_groq_models,
+    write_config,
+)
 
 
 def main() -> int:
     destination = Path(os.getenv("LITELLM_CONFIG_PATH", "config/litellm.runtime.yaml"))
+    stdout_mode = os.getenv("LITELLM_CONFIG_STDOUT", "false").strip().lower() in {"1", "true", "yes"}
     try:
-        config = generate_litellm_config(
-            env=os.environ,
-            discover_groq=discover_groq_models,
-            destination=destination,
-        )
-    except (ConfigGenerationError, httpx.HTTPError, ValueError) as exc:
+        config = build_litellm_config(env=os.environ, discover_groq=discover_groq_models)
+        if stdout_mode:
+            sys.stdout.write(json.dumps(config, indent=2) + "\n")
+            return 0
+        write_config(config, destination)
+    except (ConfigGenerationError, httpx.HTTPError, OSError, ValueError) as exc:
         print(f"LiteLLM config generation failed: {exc}", file=sys.stderr)
         return 1
 
