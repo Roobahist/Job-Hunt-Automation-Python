@@ -17,23 +17,51 @@ wait_for_http() {
     done
 
     printf '%s did not become ready after %s seconds\n' "$name" "$attempts" >&2
-    docker compose logs --tail=100 api >&2 || true
+    docker compose logs --tail=100 api litellm >&2 || true
+    return 1
+}
+
+wait_for_litellm() {
+    local attempts="${1:-60}"
+    for ((attempt = 1; attempt <= attempts; attempt++)); do
+        if docker compose exec -T litellm python -c \
+            "import urllib.request; urllib.request.urlopen('http://localhost:4000/health/liveliness', timeout=2)" \
+            >/dev/null 2>&1; then
+            printf 'LiteLLM live\n'
+            return 0
+        fi
+        sleep 1
+    done
+
+    printf 'LiteLLM did not become ready after %s seconds\n' "$attempts" >&2
+    docker compose logs --tail=150 litellm >&2 || true
     return 1
 }
 
 git pull --ff-only
 
-# Build only the two actual application images, one at a time. The API image is
-# reused by API, Beat, Flower, and tests. The worker image is reused by all
-# Celery workers, including the TeX-enabled document worker.
 docker compose build api
+
+# Keep application config mounts read-only. The container emits the generated LiteLLM config,
+# while the host owns the atomic write into config/litellm.runtime.yaml.
+runtime_tmp="$(mktemp ./config/litellm.runtime.yaml.XXXXXX)"
+trap 'rm -f "$runtime_tmp"' EXIT
+docker compose run --rm -T --no-deps \
+    -e LITELLM_CONFIG_STDOUT=true \
+    api python scripts/generate-litellm-config.py >"$runtime_tmp"
+mv "$runtime_tmp" ./config/litellm.runtime.yaml
+trap - EXIT
+
 docker compose build worker-fast
 
-# Compile Mahsa's real CV template with the same TeX-enabled worker image that
-# production document jobs use. Abort deployment before restarting services if
-# deterministic JSON-to-LaTeX rendering cannot produce a PDF.
 docker compose run --rm --no-deps worker-fast python scripts/check-mahsa-latex.py
 
+# Recreate the gateway so every deployment reloads the newly generated provider/model pools.
+docker compose up -d redis
+docker compose up -d --force-recreate litellm
+wait_for_litellm
+
+# This queries LiteLLM /v1/models and verifies every configured generation and repair group exists.
 docker compose run --rm --no-deps api job-hunt config validate --live
 
 docker compose up -d --force-recreate --remove-orphans \

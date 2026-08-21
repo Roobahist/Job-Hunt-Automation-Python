@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Annotated, Any
 from uuid import UUID
 
+import httpx
 import typer
 from pydantic import TypeAdapter
 from redis import Redis
@@ -33,6 +34,28 @@ def _store(settings: Settings) -> RunStore:
 def _coordinator(settings: Settings) -> RunCoordinator:
     container = Container(settings)
     return RunCoordinator(_store(settings), CeleryQueue(), container.registry.get)
+
+
+def _validate_litellm_groups(settings: Settings) -> None:
+    expected = {
+        route.model
+        for route in [*settings.llm_route_specs(), *settings.llm_repair_route_specs()]
+        if route.provider == "litellm"
+    }
+    if not expected:
+        return
+    response = httpx.get(
+        f"{settings.litellm_base_url.rstrip('/')}/v1/models",
+        headers={"Authorization": f"Bearer {settings.shared_litellm_key()}"},
+        timeout=settings.litellm_request_timeout_seconds,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    data = payload.get("data", []) if isinstance(payload, dict) else []
+    available = {str(item.get("id", "")) for item in data if isinstance(item, dict) and str(item.get("id", "")).strip()}
+    missing = sorted(expected - available)
+    if missing:
+        raise ValueError(f"LiteLLM is missing configured capability groups: {missing}")
 
 
 @app.command()
@@ -127,6 +150,8 @@ def validate_configuration(tenant: str | None = None, live: bool = False) -> Non
                 typer.echo("OK configured Gemini models")
             if any(route.provider == "cerebras" for route in routes) and settings.shared_cerebras_keys(required=False):
                 typer.echo("OK configured Cerebras routes")
+            _validate_litellm_groups(settings)
+            typer.echo("OK configured LiteLLM capability groups")
         except Exception as exc:
             failures.append(f"shared LLM routes: {exc}")
 

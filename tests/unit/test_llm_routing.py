@@ -9,12 +9,17 @@ from job_hunt.config import LlmRoute, Settings
 from job_hunt.domain.models import PromptDefinition
 from job_hunt.errors import ConfigurationError, ErrorKind, ProviderError
 from job_hunt.integrations.gemini import GeminiStructuredClient
-from job_hunt.integrations.llm_routing import LiteLLMGatewayClient, RoutedStructuredClient, _error_kind
+from job_hunt.integrations.llm_routing import (
+    LiteLLMGatewayClient,
+    RoutedStructuredClient,
+    _error_kind,
+    capability_group_for_operation,
+)
 
 
-def definition() -> PromptDefinition:
+def definition(key: str = "qualification") -> PromptDefinition:
     return PromptDefinition(
-        key="test",
+        key=key,
         version=1,
         template="unused",
         temperature=0,
@@ -59,13 +64,13 @@ def gateway_transport(content: str = '{"compatible":true}', status_code: int = 2
     return httpx.MockTransport(handler)
 
 
-def test_generation_routes_are_litellm_aliases_in_order() -> None:
-    settings = Settings(llm_routes="groq-gpt-oss,gemini-flash,gemini-lite")
-    assert [(route.provider, route.model) for route in settings.llm_route_specs()] == [
-        ("litellm", "groq-gpt-oss"),
-        ("litellm", "gemini-flash"),
-        ("litellm", "gemini-lite"),
-    ]
+def routes(*pairs: tuple[str, StubClient]) -> list[tuple[LlmRoute, GeminiStructuredClient]]:
+    return [(LlmRoute(provider="litellm", model=name), client) for name, client in pairs]
+
+
+def test_generation_routes_are_litellm_capability_aliases() -> None:
+    settings = Settings(llm_routes="job-fast,job-balanced,job-powerful")
+    assert [route.model for route in settings.llm_route_specs()] == ["job-fast", "job-balanced", "job-powerful"]
 
 
 def test_generation_routes_reject_old_provider_model_syntax() -> None:
@@ -75,25 +80,59 @@ def test_generation_routes_reject_old_provider_model_syntax() -> None:
 
 
 def test_repair_routes_are_independent() -> None:
-    settings = Settings(llm_routes="content", llm_repair_routes="repair-fast,repair-backup")
-    assert [route.model for route in settings.llm_repair_route_specs()] == ["repair-fast", "repair-backup"]
+    settings = Settings(llm_routes="job-balanced", llm_repair_routes="repair-fast,repair-balanced")
+    assert [route.model for route in settings.llm_repair_route_specs()] == ["repair-fast", "repair-balanced"]
 
 
-def test_routed_client_preserves_alias_fallback_order() -> None:
-    first = StubClient(error=ProviderError("limited", ErrorKind.RATE_LIMIT, retryable=True, provider="litellm"))
-    second = StubClient(result={"compatible": True})
-    client = RoutedStructuredClient(
-        [
-            (LlmRoute(provider="litellm", model="first"), first),
-            (LlmRoute(provider="litellm", model="second"), second),
-        ]
-    )
-    assert client.generate("prompt", definition()) == {"compatible": True}
-    assert first.calls == 1
-    assert second.calls == 1
+def test_default_operation_policy_uses_capability_groups(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("JOB_HUNT_LLM_OPERATION_GROUPS_JSON", raising=False)
+    assert capability_group_for_operation("compatibility_filter") == "job-fast"
+    assert capability_group_for_operation("job_page_content_extraction") == "job-fast"
+    assert capability_group_for_operation("qualification_scoring") == "job-balanced"
+    assert capability_group_for_operation("cover_letter_generation") == "job-powerful"
 
 
-def test_gateway_client_sends_alias_schema_and_authentication() -> None:
+def test_operation_policy_can_be_overridden(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("JOB_HUNT_LLM_OPERATION_GROUPS_JSON", '{"qualification":"job-powerful"}')
+    assert capability_group_for_operation("qualification_scoring") == "job-powerful"
+
+
+def test_repair_policy_is_separate(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("JOB_HUNT_LLM_REPAIR_GROUP", "repair-fast")
+    assert capability_group_for_operation("cover_letter_generation:repair", repair=True) == "repair-fast"
+
+
+def test_capability_router_calls_only_selected_group() -> None:
+    fast = StubClient(result={"compatible": False})
+    balanced = StubClient(result={"compatible": True})
+    powerful = StubClient(result={"compatible": False})
+    client = RoutedStructuredClient(routes(("job-fast", fast), ("job-balanced", balanced), ("job-powerful", powerful)))
+    assert client.generate("prompt", definition("qualification_scoring")) == {"compatible": True}
+    assert fast.calls == 0
+    assert balanced.calls == 1
+    assert powerful.calls == 0
+
+
+def test_repair_router_calls_only_repair_group() -> None:
+    fast = StubClient(result={"compatible": True})
+    balanced = StubClient(result={"compatible": False})
+    client = RoutedStructuredClient(routes(("repair-fast", fast), ("repair-balanced", balanced)), repair=True)
+    assert client.generate("prompt", definition("cover_letter_generation:repair")) == {"compatible": True}
+    assert fast.calls == 1
+    assert balanced.calls == 0
+
+
+def test_capability_router_does_not_duplicate_litellm_fallbacks() -> None:
+    balanced = StubClient(error=ProviderError("limited", ErrorKind.RATE_LIMIT, retryable=True, provider="litellm"))
+    fast = StubClient(result={"compatible": True})
+    client = RoutedStructuredClient(routes(("job-balanced", balanced), ("job-fast", fast)))
+    with pytest.raises(ProviderError):
+        client.generate("prompt", definition("qualification_scoring"))
+    assert balanced.calls == 1
+    assert fast.calls == 0
+
+
+def test_gateway_client_sends_group_schema_and_authentication() -> None:
     requests: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -110,15 +149,15 @@ def test_gateway_client_sends_alias_schema_and_authentication() -> None:
     client = LiteLLMGatewayClient(
         "http://litellm:4000",
         "secret",
-        "groq-gpt-oss",
+        "job-powerful",
         transport=httpx.MockTransport(handler),
     )
-    assert client.generate("prompt", definition()) == {"compatible": True}
+    assert client.generate("prompt", definition("cover_letter_generation")) == {"compatible": True}
     request = requests[0]
     payload = json.loads(request.content)
     assert request.url.path == "/v1/chat/completions"
     assert request.headers["authorization"] == "Bearer secret"
-    assert payload["model"] == "groq-gpt-oss"
+    assert payload["model"] == "job-powerful"
     assert payload["response_format"]["type"] == "json_schema"
 
 
@@ -127,7 +166,7 @@ def test_gateway_client_uses_independent_repair_route_for_invalid_json() -> None
     client = LiteLLMGatewayClient(
         "http://litellm:4000",
         "secret",
-        "content",
+        "job-balanced",
         repair_client=repair,
         transport=gateway_transport(content="not json"),
     )
@@ -140,7 +179,7 @@ def test_gateway_rate_limit_maps_to_domain_error() -> None:
     client = LiteLLMGatewayClient(
         "http://litellm:4000",
         "secret",
-        "content",
+        "job-balanced",
         transport=gateway_transport(status_code=429),
     )
     with pytest.raises(ProviderError) as caught:

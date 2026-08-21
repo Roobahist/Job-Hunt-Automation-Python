@@ -29,6 +29,43 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build API image
         run: docker build --target api -t job-hunt-api .
+      - name: Generate LiteLLM smoke config
+        run: >-
+          docker run --rm
+          -e GROQ_API_KEY_1=dummy-groq-key
+          -e LITELLM_MASTER_KEY=sk-ci-litellm
+          -e LITELLM_CONFIG_STDOUT=true
+          -e LITELLM_GROQ_DISCOVER_MODELS=false
+          -e LITELLM_GROQ_FAST_MODELS=llama-3.1-8b-instant
+          -e LITELLM_GROQ_BALANCED_MODELS=openai/gpt-oss-20b
+          -e LITELLM_GROQ_POWERFUL_MODELS=openai/gpt-oss-120b
+          job-hunt-api python scripts/generate-litellm-config.py
+          > config/litellm.runtime.yaml
+      - name: Start LiteLLM proxy from generated config
+        run: |
+          docker run -d --name litellm-smoke -p 4000:4000 \
+            -v "$PWD/config/litellm.runtime.yaml:/app/config.yaml:ro" \
+            -e GROQ_API_KEY_1=dummy-groq-key \
+            -e LITELLM_MASTER_KEY=sk-ci-litellm \
+            ghcr.io/berriai/litellm:main-stable \
+            --config /app/config.yaml --port 4000
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:4000/health/liveliness >/dev/null; then
+              break
+            fi
+            if [ "$i" -eq 60 ]; then
+              docker logs litellm-smoke
+              exit 1
+            fi
+            sleep 1
+          done
+          curl -fsS -H 'Authorization: Bearer sk-ci-litellm' http://127.0.0.1:4000/v1/models > /tmp/models.json
+          grep -q 'job-fast' /tmp/models.json
+          grep -q 'job-balanced' /tmp/models.json
+          grep -q 'job-powerful' /tmp/models.json
+          grep -q 'repair-fast' /tmp/models.json
+          grep -q 'repair-balanced' /tmp/models.json
+          docker rm -f litellm-smoke
       - name: Build worker image
         run: docker build --target worker -t job-hunt-worker .
       - name: Compile Mahsa CV with real pdflatex

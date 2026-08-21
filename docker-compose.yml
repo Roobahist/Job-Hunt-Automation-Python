@@ -39,7 +39,7 @@ services:
     env_file: .env
     command: ["--config", "/app/config.yaml", "--port", "4000"]
     volumes:
-      - ./config/litellm.yaml:/app/config.yaml:ro
+      - ./config/litellm.runtime.yaml:/app/config.yaml:ro
     expose: ["4000"]
     healthcheck:
       test:
