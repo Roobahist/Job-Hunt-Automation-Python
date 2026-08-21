@@ -8,8 +8,8 @@ from pathlib import Path
 import httpx
 
 from job_hunt.integrations.litellm_config import (
-    ConfigGenerationError,
     DEFAULT_PROVIDER_REGISTRY_PATH,
+    ConfigGenerationError,
     build_litellm_config,
     discover_models,
     load_provider_registry,
