@@ -17,17 +17,23 @@ def test_debug_caption_keeps_timing_details() -> None:
 
 def test_non_debug_caption_keeps_only_general_status() -> None:
     notifier = TelegramNotifier("token", debug=False)
-    assert notifier._visible_caption(CAPTION) == """Software Engineer
+    assert (
+        notifier._visible_caption(CAPTION)
+        == """Software Engineer
 🏢 Example
 
 Status: ⏳ Processing"""
+    )
 
 
 def test_non_debug_failed_caption_keeps_error_but_not_timings() -> None:
     caption = CAPTION + "\nError: LaTeX compilation failed"
     notifier = TelegramNotifier("token", debug=False)
-    assert notifier._visible_caption(caption) == """Software Engineer
+    assert (
+        notifier._visible_caption(caption)
+        == """Software Engineer
 🏢 Example
 
 Status: ⏳ Processing
 Error: LaTeX compilation failed"""
+    )
