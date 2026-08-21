@@ -3,11 +3,13 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import os
 import time
 from collections.abc import Mapping, Sequence
 from typing import Any
 
 import httpx
+from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
 
 from job_hunt.config import LlmRoute, Settings
 from job_hunt.domain.models import PromptDefinition
@@ -49,6 +51,53 @@ def _cerebras_schema(schema: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
+def _parse_routes(raw: str, *, variable_name: str) -> list[LlmRoute]:
+    routes: list[LlmRoute] = []
+    for item in (value.strip() for value in raw.split(",")):
+        if not item:
+            continue
+        provider, separator, model = item.partition(":")
+        provider = provider.strip().lower()
+        model = model.strip().removeprefix("models/")
+        if not separator or not provider or not model:
+            raise ConfigurationError(
+                f"{variable_name} entries must use provider:model, for example cerebras:gpt-oss-120b"
+            )
+        if provider not in {"cerebras", "gemini"}:
+            raise ConfigurationError(f"Unsupported LLM provider in {variable_name}: {provider}")
+        routes.append(LlmRoute(provider=provider, model=model))
+    return routes
+
+
+def repair_route_specs(settings: Settings) -> list[LlmRoute]:
+    """Return repair routes independently from the normal generation route chain."""
+    configured = os.getenv("JOB_HUNT_LLM_REPAIR_ROUTES", "")
+    if configured.strip():
+        return _parse_routes(configured, variable_name="JOB_HUNT_LLM_REPAIR_ROUTES")
+    return [LlmRoute(provider="gemini", model=model) for model in settings.repair_models()]
+
+
+def _repair_prompt(raw_output: str, schema: dict[str, Any], validation_error: str) -> str:
+    return (
+        "Repair the following model output so it conforms exactly to the supplied JSON Schema. "
+        "Preserve the original meaning and facts. Do not add facts that were not present. "
+        "Return only the repaired structured result.\n\n"
+        f"VALIDATION ERROR:\n{validation_error}\n\n"
+        f"JSON SCHEMA:\n{json.dumps(schema, ensure_ascii=False)}\n\n"
+        f"ORIGINAL OUTPUT:\n{raw_output}"
+    )
+
+
+def _repair_definition(operation: str, schema: dict[str, Any]) -> PromptDefinition:
+    return PromptDefinition(
+        key=f"{operation}:repair",
+        version=1.0,
+        template="repair structured output",
+        output_structure=schema,
+        temperature=0.0,
+    )
+
+
 class CerebrasStructuredClient(GeminiStructuredClient):
     """Structured-output client for Cerebras' OpenAI-compatible chat-completions API."""
 
@@ -60,10 +109,12 @@ class CerebrasStructuredClient(GeminiStructuredClient):
         base_url: str = "https://api.cerebras.ai/v1",
         timeout_seconds: int = 180,
         client: httpx.Client | None = None,
+        repair_client: GeminiStructuredClient | None = None,
     ) -> None:
         self.keys = [key for key in keys if key]
         self.model = model
         self._client = client or httpx.Client(base_url=base_url.rstrip("/"), timeout=timeout_seconds)
+        self.repair_client = repair_client
         if not self.keys:
             raise ValueError("At least one Cerebras API key is required")
         if not self.model:
@@ -73,12 +124,33 @@ class CerebrasStructuredClient(GeminiStructuredClient):
     def _key_id(key: str) -> str:
         return hashlib.sha256(key.encode()).hexdigest()[:12]
 
+    def _repair(
+        self,
+        raw_output: str,
+        schema: dict[str, Any],
+        validation_error: str,
+        *,
+        operation: str,
+    ) -> dict[str, Any]:
+        if self.repair_client is None:
+            raise ProviderError(
+                f"Cerebras structured output failed validation: {validation_error}",
+                ErrorKind.MALFORMED_PROVIDER_RESPONSE,
+                provider="cerebras",
+            )
+        return self.repair_client.generate(
+            _repair_prompt(raw_output, schema, validation_error),
+            _repair_definition(operation, schema),
+        )
+
     def _call(
         self,
         key: str,
         prompt: str,
         schema: dict[str, Any],
         temperature: float,
+        *,
+        operation: str,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         provider_schema = _cerebras_schema(schema)
         payload = {
@@ -120,24 +192,35 @@ class CerebrasStructuredClient(GeminiStructuredClient):
                 ErrorKind.MALFORMED_PROVIDER_RESPONSE,
                 provider="cerebras",
             ) from exc
+
+        raw_output = json.dumps(content, ensure_ascii=False) if isinstance(content, Mapping) else str(content or "")
         if isinstance(content, Mapping):
             parsed: object = dict(content)
         elif isinstance(content, str):
             try:
                 parsed = json.loads(content)
             except json.JSONDecodeError as exc:
-                raise ProviderError(
-                    "Cerebras returned non-JSON structured output",
-                    ErrorKind.MALFORMED_PROVIDER_RESPONSE,
-                    provider="cerebras",
-                ) from exc
+                repaired = self._repair(raw_output, schema, str(exc), operation=operation)
+                return repaired, {
+                    "provider": "cerebras",
+                    "model": self.model,
+                    "account": self._key_id(key),
+                    "latency_ms": latency_ms,
+                    "repaired": True,
+                }
         else:
             raise ProviderError(
                 "Cerebras returned empty structured output",
                 ErrorKind.MALFORMED_PROVIDER_RESPONSE,
                 provider="cerebras",
             )
-        validated = _validate_json_schema(parsed, schema)
+
+        try:
+            validated = _validate_json_schema(parsed, schema)
+            repaired = False
+        except JsonSchemaValidationError as exc:
+            validated = self._repair(raw_output, schema, str(exc), operation=operation)
+            repaired = True
         usage = body.get("usage", {}) if isinstance(body, dict) else {}
         return validated, {
             "provider": "cerebras",
@@ -145,6 +228,7 @@ class CerebrasStructuredClient(GeminiStructuredClient):
             "account": self._key_id(key),
             "latency_ms": latency_ms,
             "usage": usage if isinstance(usage, dict) else {},
+            "repaired": repaired,
         }
 
     def generate(self, prompt: str, definition: PromptDefinition) -> dict[str, Any]:
@@ -157,6 +241,7 @@ class CerebrasStructuredClient(GeminiStructuredClient):
                     prompt,
                     definition.output_structure,
                     definition.temperature,
+                    operation=definition.key,
                 )
                 logger().info("llm_generation", prompt_key=definition.key, **metadata)
                 return result
@@ -244,36 +329,71 @@ class RoutedStructuredClient(GeminiStructuredClient):
         )
 
 
-def build_routed_structured_client(
+class RoutedGeminiContentClient(PooledGeminiStructuredClient):
+    """Gemini content generation that delegates malformed output to the independent repair route chain."""
+
+    def __init__(self, *args: Any, repair_client: GeminiStructuredClient, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.repair_client = repair_client
+
+    def _pooled_repair(
+        self,
+        raw_output: str,
+        schema: dict[str, Any],
+        validation_error: str,
+        *,
+        operation: str,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        result = self.repair_client.generate(
+            _repair_prompt(raw_output, schema, validation_error),
+            _repair_definition(operation, schema),
+        )
+        return result, {"repaired": True, "model": "repair-route", "account": "repair-route"}
+
+
+def _build_route_clients(
     settings: Settings,
+    specs: Sequence[LlmRoute],
     *,
-    state: RedisState | None = None,
-) -> RoutedStructuredClient:
+    state: RedisState | None,
+    repair_client: GeminiStructuredClient | None,
+    generation: bool,
+) -> list[tuple[LlmRoute, GeminiStructuredClient]]:
     gemini_keys = settings.shared_gemini_keys(required=False)
     cerebras_keys = settings.shared_cerebras_keys(required=False)
     gemini_limits = settings.gemini_limits()
     routes: list[tuple[LlmRoute, GeminiStructuredClient]] = []
 
-    for route in settings.llm_route_specs():
+    for route in specs:
         if route.provider == "gemini":
             if not gemini_keys:
                 logger().warning("llm_route_skipped", provider="gemini", model=route.model, reason="no keys")
                 continue
-            routes.append(
-                (
-                    route,
-                    PooledGeminiStructuredClient(
-                        gemini_keys,
-                        [route.model],
-                        [route.model],
-                        quota_cooldown_seconds=settings.gemini_quota_cooldown_seconds,
-                        request_timeout_seconds=settings.gemini_request_timeout_seconds,
-                        state=state,
-                        checkpoint_ttl_seconds=settings.llm_checkpoint_ttl_seconds,
-                        limits=gemini_limits,
-                    ),
+            common: dict[str, Any] = {
+                "quota_cooldown_seconds": settings.gemini_quota_cooldown_seconds,
+                "request_timeout_seconds": settings.gemini_request_timeout_seconds,
+                "state": state,
+                "checkpoint_ttl_seconds": settings.llm_checkpoint_ttl_seconds,
+                "limits": gemini_limits,
+            }
+            if generation:
+                if repair_client is None:
+                    raise ConfigurationError("Generation routes require an independent repair route client")
+                client: GeminiStructuredClient = RoutedGeminiContentClient(
+                    gemini_keys,
+                    [route.model],
+                    [route.model],
+                    repair_client=repair_client,
+                    **common,
                 )
-            )
+            else:
+                client = PooledGeminiStructuredClient(
+                    gemini_keys,
+                    [route.model],
+                    [route.model],
+                    **common,
+                )
+            routes.append((route, client))
             continue
         if route.provider == "cerebras":
             if not cerebras_keys:
@@ -287,10 +407,33 @@ def build_routed_structured_client(
                         route.model,
                         base_url=settings.cerebras_base_url,
                         timeout_seconds=settings.cerebras_request_timeout_seconds,
+                        repair_client=repair_client if generation else None,
                     ),
                 )
             )
             continue
         raise ConfigurationError(f"Unsupported LLM provider: {route.provider}")
+    return routes
 
-    return RoutedStructuredClient(routes)
+
+def build_routed_structured_client(
+    settings: Settings,
+    *,
+    state: RedisState | None = None,
+) -> RoutedStructuredClient:
+    repair_routes = _build_route_clients(
+        settings,
+        repair_route_specs(settings),
+        state=state,
+        repair_client=None,
+        generation=False,
+    )
+    repair_client = RoutedStructuredClient(repair_routes)
+    content_routes = _build_route_clients(
+        settings,
+        settings.llm_route_specs(),
+        state=state,
+        repair_client=repair_client,
+        generation=True,
+    )
+    return RoutedStructuredClient(content_routes)
