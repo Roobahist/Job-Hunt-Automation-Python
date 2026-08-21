@@ -87,6 +87,69 @@ def test_real_tenant_templates_and_master_cv_render(
     assert r"A\&B" in bundle.cover_letter_tex.read_text()
 
 
+def test_mahsa_renderer_wraps_parent_bullets_in_itemize_structure() -> None:
+    rendered = MahsaCvRenderer().render(
+        "%%__SECTIONS__%%",
+        {
+            "sections": [
+                {
+                    "type": "entries",
+                    "title": "EXPERIENCE",
+                    "entries": [
+                        {
+                            "title": "Designer",
+                            "date": "2026",
+                            "content": [
+                                {"text": "First bullet", "bullet": True},
+                                {"text": "Second bullet", "bullet": True},
+                            ],
+                        }
+                    ],
+                },
+                {"type": "education"},
+            ]
+        },
+    )
+    assert "\\CVBulletList{" in rendered
+    assert "\\CVBullet{First bullet}" in rendered
+    assert "\\CVBullet{Second bullet}" in rendered
+
+
+def test_mahsa_renderer_wraps_nested_bullets_and_renders_plain_text_safely() -> None:
+    rendered = MahsaCvRenderer().render(
+        "%%__SECTIONS__%%",
+        {
+            "sections": [
+                {
+                    "type": "entries",
+                    "title": "PROJECTS",
+                    "entries": [
+                        {
+                            "title": "Parent",
+                            "content": [{"text": "Parent note", "bullet": False}],
+                        },
+                        {
+                            "title": "Child",
+                            "parent": "Parent",
+                            "nested_group": "Selected work",
+                            "content": [
+                                {"text": "Nested bullet", "bullet": True},
+                                {"text": "Nested note", "bullet": False},
+                            ],
+                        },
+                    ],
+                },
+                {"type": "education"},
+            ]
+        },
+    )
+    assert "\\CVEntryText{Parent note}" in rendered
+    assert "\\CVNestedBulletList{" in rendered
+    assert "\\CVBullet{Nested bullet}" in rendered
+    assert "\\CVNestedText{Nested note}" in rendered
+    assert "\\CVBullet[false]" not in rendered
+
+
 def test_cover_letter_requires_exactly_three_paragraphs() -> None:
     template = " ".join(MahsaCoverLetterRenderer.markers.values())
     with pytest.raises(DocumentRenderingError, match="exactly three"):
