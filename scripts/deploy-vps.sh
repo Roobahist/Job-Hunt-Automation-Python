@@ -17,16 +17,18 @@ wait_for_http() {
     done
 
     printf '%s did not become ready after %s seconds\n' "$name" "$attempts" >&2
-    docker compose logs --tail=100 api >&2 || true
+    docker compose logs --tail=100 api litellm >&2 || true
     return 1
 }
 
 git pull --ff-only
 
-# Build only the two actual application images, one at a time. The API image is
-# reused by API, Beat, Flower, and tests. The worker image is reused by all
-# Celery workers, including the TeX-enabled document worker.
 docker compose build api
+
+# Provider credentials and currently available Groq models are expanded into capability
+# pools before LiteLLM starts. The generated file is intentionally not tracked by Git.
+docker compose run --rm --no-deps api python scripts/generate-litellm-config.py
+
 docker compose build worker-fast
 
 # Compile Mahsa's real CV template with the same TeX-enabled worker image that
@@ -37,9 +39,10 @@ docker compose run --rm --no-deps worker-fast python scripts/check-mahsa-latex.p
 docker compose run --rm --no-deps api job-hunt config validate --live
 
 docker compose up -d --force-recreate --remove-orphans \
-    api worker-fast worker-documents worker-notifications beat flower
+    litellm api worker-fast worker-documents worker-notifications beat flower
 
 docker compose ps
+wait_for_http "LiteLLM live" "http://127.0.0.1:8000/health/live"
 wait_for_http "API live" "http://127.0.0.1:8000/health/live"
 wait_for_http "API ready" "http://127.0.0.1:8000/health/ready"
 docker compose exec -T redis redis-cli ping
