@@ -17,6 +17,7 @@ CHAT_MODEL_BLOCKLIST = (
     "embedding",
     "embed",
 )
+CAPABILITY_GROUPS = ("job-fast", "job-balanced", "job-powerful")
 
 
 class ConfigGenerationError(RuntimeError):
@@ -57,6 +58,22 @@ def discover_groq_models(api_key: str, *, client_factory: Callable[[], httpx.Cli
     )
 
 
+def discover_with_key_fallback(
+    keys: Sequence[tuple[str, str]],
+    discover: Callable[[str], Sequence[str]],
+) -> list[str]:
+    failures: list[str] = []
+    for key_name, key in keys:
+        try:
+            models = list(discover(key))
+            if models:
+                return models
+            failures.append(f"{key_name}: empty model catalog")
+        except Exception as exc:
+            failures.append(f"{key_name}: {exc}")
+    raise ConfigGenerationError("Unable to discover Groq models with configured keys: " + "; ".join(failures))
+
+
 def is_chat_candidate(model: str) -> bool:
     lowered = model.lower()
     return not any(marker in lowered for marker in CHAT_MODEL_BLOCKLIST)
@@ -73,21 +90,42 @@ def classify_model(model: str) -> str:
     return "job-fast"
 
 
+def _fill_missing_groups(groups: dict[str, list[str]]) -> dict[str, list[str]]:
+    populated = {group: models for group, models in groups.items() if models}
+    if not populated:
+        return groups
+    preferred_sources = {
+        "job-fast": ("job-balanced", "job-powerful"),
+        "job-balanced": ("job-powerful", "job-fast"),
+        "job-powerful": ("job-balanced", "job-fast"),
+    }
+    for group in CAPABILITY_GROUPS:
+        if groups[group]:
+            continue
+        for source in preferred_sources[group]:
+            if groups[source]:
+                groups[group] = list(groups[source])
+                break
+    return groups
+
+
 def group_models(discovered: Sequence[str], *, env: Mapping[str, str]) -> dict[str, list[str]]:
-    groups: dict[str, list[str]] = {"job-fast": [], "job-balanced": [], "job-powerful": []}
+    groups: dict[str, list[str]] = {group: [] for group in CAPABILITY_GROUPS}
     explicit = {
         "job-fast": csv_values(env.get("LITELLM_GROQ_FAST_MODELS", "")),
         "job-balanced": csv_values(env.get("LITELLM_GROQ_BALANCED_MODELS", "")),
         "job-powerful": csv_values(env.get("LITELLM_GROQ_POWERFUL_MODELS", "")),
     }
+    excluded = set(csv_values(env.get("LITELLM_GROQ_EXCLUDE_MODELS", "")))
     explicitly_classified = {model for models in explicit.values() for model in models}
     for group, models in explicit.items():
-        groups[group].extend(models)
+        groups[group].extend(model for model in models if model not in excluded)
     for model in discovered:
-        if model in explicitly_classified or not is_chat_candidate(model):
+        if model in excluded or model in explicitly_classified or not is_chat_candidate(model):
             continue
         groups[classify_model(model)].append(model)
-    return {group: sorted(set(models)) for group, models in groups.items()}
+    deduplicated = {group: sorted(set(models)) for group, models in groups.items()}
+    return _fill_missing_groups(deduplicated)
 
 
 def deployment(model_name: str, provider_model: str, key_env_name: str) -> dict[str, Any]:
@@ -141,7 +179,7 @@ def build_litellm_config(
     discovered: Sequence[str] = []
     discovery_enabled = env.get("LITELLM_GROQ_DISCOVER_MODELS", "true").strip().lower() not in {"0", "false", "no"}
     if groq_keys and discovery_enabled:
-        discovered = discover_groq(groq_keys[0][1])
+        discovered = discover_with_key_fallback(groq_keys, discover_groq)
     groups = group_models(discovered, env=env)
 
     model_list: list[dict[str, Any]] = []
@@ -162,7 +200,7 @@ def build_litellm_config(
     return {
         "model_list": model_list,
         "router_settings": {
-            "routing_strategy": env.get("LITELLM_ROUTING_STRATEGY", "simple-shuffle"),
+            "routing_strategy": env.get("LITELLM_ROUTING_STRATEGY", "latency-based-routing"),
             "num_retries": 0,
             "allowed_fails": 1,
             "cooldown_time": int(env.get("LITELLM_COOLDOWN_SECONDS", "65")),
