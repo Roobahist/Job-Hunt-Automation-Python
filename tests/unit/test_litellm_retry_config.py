@@ -23,6 +23,31 @@ def _registry() -> dict[str, object]:
     }
 
 
+def _multi_provider_registry() -> dict[str, object]:
+    return {
+        "providers": [
+            {
+                "name": "alpha",
+                "litellm_prefix": "openai",
+                "api_key_prefix": "ALPHA_API_KEY_",
+                "enabled": True,
+                "discovery": {"enabled": False},
+                "models": {"fast": ["alpha-fast"], "balanced": [], "powerful": []},
+                "exclude_models": [],
+            },
+            {
+                "name": "beta",
+                "litellm_prefix": "groq",
+                "api_key_prefix": "BETA_API_KEY_",
+                "enabled": True,
+                "discovery": {"enabled": False},
+                "models": {"fast": ["beta-fast"], "balanced": [], "powerful": []},
+                "exclude_models": [],
+            },
+        ]
+    }
+
+
 def test_litellm_owns_deployment_retries_and_cooldowns() -> None:
     config = build_litellm_config(
         env={"TEST_API_KEY_1": "one", "TEST_API_KEY_2": "two"},
@@ -45,6 +70,32 @@ def test_each_provider_key_is_a_separate_litellm_deployment() -> None:
         "os.environ/TEST_API_KEY_1",
         "os.environ/TEST_API_KEY_2",
         "os.environ/TEST_API_KEY_3",
+    }
+
+
+def test_models_and_keys_from_multiple_providers_share_the_capability_pool() -> None:
+    config = build_litellm_config(
+        env={
+            "ALPHA_API_KEY_1": "a1",
+            "ALPHA_API_KEY_2": "a2",
+            "BETA_API_KEY_1": "b1",
+            "BETA_API_KEY_2": "b2",
+            "BETA_API_KEY_3": "b3",
+        },
+        registry=_multi_provider_registry(),
+    )
+    job_fast = [entry for entry in config["model_list"] if entry["model_name"] == "job-fast"]
+    assert len(job_fast) == 5
+    assert {entry["litellm_params"]["model"] for entry in job_fast} == {
+        "openai/alpha-fast",
+        "groq/beta-fast",
+    }
+    assert {entry["litellm_params"]["api_key"] for entry in job_fast} == {
+        "os.environ/ALPHA_API_KEY_1",
+        "os.environ/ALPHA_API_KEY_2",
+        "os.environ/BETA_API_KEY_1",
+        "os.environ/BETA_API_KEY_2",
+        "os.environ/BETA_API_KEY_3",
     }
 
 
