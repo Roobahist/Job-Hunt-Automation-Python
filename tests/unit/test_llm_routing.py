@@ -53,9 +53,7 @@ def test_route_parser_preserves_cross_provider_order() -> None:
 
 
 def test_routed_client_falls_through_immediately() -> None:
-    first = StubClient(
-        error=ProviderError("rate limited", ErrorKind.RATE_LIMIT, retryable=True, provider="cerebras")
-    )
+    first = StubClient(error=ProviderError("rate limited", ErrorKind.RATE_LIMIT, retryable=True, provider="cerebras"))
     second = StubClient(result={"compatible": True})
     client = RoutedStructuredClient(
         [
