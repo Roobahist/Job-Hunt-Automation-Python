@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from job_hunt.integrations.litellm_config import build_litellm_config
+import pytest
+
+from job_hunt.integrations.litellm_config import ConfigGenerationError, build_litellm_config
 
 
 def _registry() -> dict[str, object]:
@@ -126,3 +128,15 @@ def test_router_tuning_remains_environment_configurable_without_retry_topology()
     assert router["cooldown_time"] == 90
     assert router["routing_strategy"] == "simple-shuffle"
     assert "num_retries" not in router
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [("LITELLM_ALLOWED_FAILS", "-1"), ("LITELLM_COOLDOWN_SECONDS", "-1"), ("LITELLM_ALLOWED_FAILS", "bad")],
+)
+def test_invalid_router_tuning_fails_config_generation(name: str, value: str) -> None:
+    with pytest.raises(ConfigGenerationError, match=name):
+        build_litellm_config(
+            env={"TEST_API_KEY_1": "one", name: value},
+            registry=_registry(),
+        )
