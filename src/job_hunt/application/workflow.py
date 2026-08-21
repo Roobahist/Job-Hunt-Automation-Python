@@ -84,9 +84,26 @@ class ApplicationWorkflow:
             else retry_transient(self.repository.create, job)
         )
         row_id = int(row["id"])
+
+        # A dropped row is terminal for automatic discovery. Do not spend more LLM
+        # capacity re-evaluating it and do not overwrite the reason/state that caused
+        # it to be dropped. A Fillout/manual forced submission is the explicit override.
+        if existing and not force and self._dropped(row_id):
+            if persisted is not None:
+                persisted(row_id)
+            self._progress(progress, "persistence", "finish")
+            existing_score = existing.get("Score")
+            score = int(existing_score) if isinstance(existing_score, (int, float)) else 0
+            log.info("job_already_dropped", stage="persist", row_id=row_id, score=score)
+            return QualificationResult(row_id=row_id, passed=False, score=score)
+
+        # Existing rows may contain a qualification result from an older run. Clear
+        # it before a fresh gate evaluation so Baserow never displays stale Apply/Score
+        # values beside a new compatibility decision.
+        if existing:
+            retry_transient(self.repository.clear_qualification, row_id)
+
         if force:
-            # A forced/manual submission is an explicit user override. Reset a
-            # previously dropped row before any downstream live-status checks run.
             retry_transient(self.repository.set_status, row_id, "new")
         if persisted is not None:
             persisted(row_id)
@@ -109,9 +126,8 @@ class ApplicationWorkflow:
         qualification = self.qualifier.qualify(job, master_cv, prompts)
         passed = qualification.passes(threshold, force=force)
         retry_transient(self.repository.save_qualification, row_id, qualification)
-        if qualification.score < threshold and not force:
+        if not passed and not force:
             retry_transient(self.repository.set_status, row_id, "dropped")
-            passed = False
         self._progress(progress, "qualification", "finish")
         log.info(
             "job_qualified",
