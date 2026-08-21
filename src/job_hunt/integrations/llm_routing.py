@@ -69,7 +69,10 @@ def _operation_groups() -> dict[str, str]:
         parsed = json.loads(configured)
     except json.JSONDecodeError as exc:
         raise ConfigurationError("JOB_HUNT_LLM_OPERATION_GROUPS_JSON must be valid JSON") from exc
-    if not isinstance(parsed, dict) or not all(isinstance(key, str) and isinstance(value, str) for key, value in parsed.items()):
+    valid_mapping = isinstance(parsed, dict) and all(
+        isinstance(key, str) and isinstance(value, str) for key, value in parsed.items()
+    )
+    if not valid_mapping:
         raise ConfigurationError("JOB_HUNT_LLM_OPERATION_GROUPS_JSON must map operation names to LiteLLM aliases")
     return {**_DEFAULT_OPERATION_GROUPS, **parsed}
 
