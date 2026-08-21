@@ -1,7 +1,4 @@
-from __future__ import annotations
-
 from job_hunt.integrations.telegram import TelegramNotifier
-
 
 CAPTION = """Software Engineer
 🏢 Example
