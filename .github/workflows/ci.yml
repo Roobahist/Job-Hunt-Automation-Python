@@ -32,14 +32,15 @@ jobs:
       - name: Generate LiteLLM smoke config
         run: >-
           docker run --rm
-          -v "$PWD/config:/app/config"
           -e GROQ_API_KEY_1=dummy-groq-key
           -e LITELLM_MASTER_KEY=sk-ci-litellm
+          -e LITELLM_CONFIG_STDOUT=true
           -e LITELLM_GROQ_DISCOVER_MODELS=false
           -e LITELLM_GROQ_FAST_MODELS=llama-3.1-8b-instant
           -e LITELLM_GROQ_BALANCED_MODELS=openai/gpt-oss-20b
           -e LITELLM_GROQ_POWERFUL_MODELS=openai/gpt-oss-120b
           job-hunt-api python scripts/generate-litellm-config.py
+          > config/litellm.runtime.yaml
       - name: Start LiteLLM proxy from generated config
         run: |
           docker run -d --name litellm-smoke -p 4000:4000 \
