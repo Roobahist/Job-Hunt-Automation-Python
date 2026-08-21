@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from job_hunt.application.discovery import build_search_url, excluded, normalize_discovery
+from job_hunt.application.discovery import (
+    build_search_url,
+    excluded,
+    normalize_discovery,
+    search_criteria_active,
+)
 from job_hunt.application.normalization import fillout_submission, job_from_provider
 from job_hunt.domain.models import ExternalSubmission, LinkedInSubmission
 
@@ -21,6 +26,15 @@ def test_search_url_prefers_generated_or_encodes_fields() -> None:
     assert build_search_url("https://x", {"Generated URL": "https://ready"}) == "https://ready"
     url = build_search_url("https://x/search/", {"Keywords": "data science", "Location": "Calgary"})
     assert url == "https://x/search/?keywords=data+science&location=Calgary"
+
+
+def test_search_criteria_requires_active_flag() -> None:
+    assert search_criteria_active({"Active": True})
+    assert search_criteria_active({"Active": "yes"})
+    assert search_criteria_active({"active": 1})
+    assert not search_criteria_active({"Active": False})
+    assert not search_criteria_active({"Active": "off"})
+    assert not search_criteria_active({})
 
 
 def test_discovery_filters_and_deduplicates() -> None:
