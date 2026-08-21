@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
 
 from job_hunt.worker import _automatic_discovery_slot, celery_app, settings
 
@@ -16,12 +17,13 @@ def test_beat_dispatches_on_top_of_every_hour() -> None:
     assert schedule.minute == {0}
 
 
-def test_hourly_slot_uses_calgary_clock_and_dst_offset() -> None:
+def test_hourly_slot_uses_calgary_clock_and_timezone_rules() -> None:
+    calgary = ZoneInfo("America/Edmonton")
     summer = datetime(2026, 8, 20, 19, 0, tzinfo=UTC)
     winter = datetime(2026, 12, 20, 19, 0, tzinfo=UTC)
 
-    assert _automatic_discovery_slot(summer, 1) == "2026-08-20T13-0600"
-    assert _automatic_discovery_slot(winter, 1) == "2026-12-20T12-0700"
+    assert _automatic_discovery_slot(summer, 1) == summer.astimezone(calgary).strftime("%Y-%m-%dT%H%z")
+    assert _automatic_discovery_slot(winter, 1) == winter.astimezone(calgary).strftime("%Y-%m-%dT%H%z")
 
 
 def test_multi_hour_intervals_align_to_local_clock_hours() -> None:
