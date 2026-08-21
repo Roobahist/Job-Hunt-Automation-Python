@@ -137,14 +137,15 @@ def test_below_threshold_marks_row_dropped_and_stops_at_qualification_boundary()
     assert all(call[0] != "artifacts" for call in repo.calls)
 
 
-def test_existing_non_dropped_row_clears_stale_qualification_before_rescoring() -> None:
+def test_existing_non_dropped_row_is_not_requalified_automatically() -> None:
     repo = Repository(existing=True, dropped=False, existing_score=75)
-    workflow, _, ai, _ = make_workflow(repo, Qualification(score=90, should_apply=True, reasoning="good"))
+    workflow, _, ai, _ = make_workflow(repo, Qualification(score=90, should_apply=True, reasoning="unused"))
     result = qualify(workflow)
-    assert result.passed  # type: ignore[attr-defined]
-    assert ai.qualify_calls == 1
-    assert ("clear_qualification", 7) in repo.calls
-    assert ("qualification", 90) in repo.calls
+    assert not result.passed  # type: ignore[attr-defined]
+    assert result.score == 75  # type: ignore[attr-defined]
+    assert ai.qualify_calls == 0
+    assert ("clear_qualification", 7) not in repo.calls
+    assert ("qualification", 90) not in repo.calls
 
 
 def test_existing_dropped_row_is_not_requalified_automatically() -> None:
