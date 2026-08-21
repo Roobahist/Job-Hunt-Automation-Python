@@ -29,6 +29,11 @@ git pull --ff-only
 docker compose build api
 docker compose build worker-fast
 
+# Compile Mahsa's real CV template with the same TeX-enabled worker image that
+# production document jobs use. Abort deployment before restarting services if
+# deterministic JSON-to-LaTeX rendering cannot produce a PDF.
+docker compose run --rm --no-deps worker-fast python scripts/check-mahsa-latex.py
+
 docker compose run --rm --no-deps api job-hunt config validate --live
 
 docker compose up -d --force-recreate --remove-orphans \

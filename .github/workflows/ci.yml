@@ -31,5 +31,7 @@ jobs:
         run: docker build --target api -t job-hunt-api .
       - name: Build worker image
         run: docker build --target worker -t job-hunt-worker .
+      - name: Compile Mahsa CV with real pdflatex
+        run: docker run --rm job-hunt-worker python scripts/check-mahsa-latex.py
       - name: Build Beat image
         run: docker build --target beat -t job-hunt-beat .

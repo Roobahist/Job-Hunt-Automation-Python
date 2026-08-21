@@ -8,7 +8,6 @@ services:
     ports: ["127.0.0.1:8000:8000"]
     volumes:
       - artifacts:/app/runs
-      - ./src:/app/src:ro
       - ./config:/app/config:ro
       - ./tenants:/app/tenants:ro
     depends_on: {redis: {condition: service_healthy}}
@@ -41,7 +40,6 @@ services:
       --concurrency=${FAST_WORKER_CONCURRENCY:-3}
     volumes:
       - artifacts:/app/runs
-      - ./src:/app/src:ro
       - ./config:/app/config:ro
       - ./tenants:/app/tenants:ro
     depends_on: {redis: {condition: service_healthy}}
@@ -56,7 +54,6 @@ services:
       --concurrency=${DOCUMENT_WORKER_CONCURRENCY:-1}
     volumes:
       - artifacts:/app/runs
-      - ./src:/app/src:ro
       - ./config:/app/config:ro
       - ./tenants:/app/tenants:ro
     depends_on: {redis: {condition: service_healthy}}
@@ -71,7 +68,6 @@ services:
       --concurrency=${NOTIFICATION_WORKER_CONCURRENCY:-1}
     volumes:
       - artifacts:/app/runs
-      - ./src:/app/src:ro
       - ./config:/app/config:ro
       - ./tenants:/app/tenants:ro
     depends_on: {redis: {condition: service_healthy}}
@@ -82,7 +78,6 @@ services:
     env_file: .env
     command: celery -A job_hunt.worker.celery_app beat --loglevel=INFO
     volumes:
-      - ./src:/app/src:ro
       - ./config:/app/config:ro
       - ./tenants:/app/tenants:ro
     depends_on: {redis: {condition: service_healthy}}
@@ -96,7 +91,6 @@ services:
       $${FLOWER_BASIC_AUTH:+--basic-auth=$${FLOWER_BASIC_AUTH}}'
     ports: ["127.0.0.1:5555:5555"]
     volumes:
-      - ./src:/app/src:ro
       - ./config:/app/config:ro
       - ./tenants:/app/tenants:ro
     depends_on: {redis: {condition: service_healthy}}
