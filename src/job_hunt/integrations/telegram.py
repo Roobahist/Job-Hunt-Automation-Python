@@ -11,14 +11,11 @@ import httpx
 from job_hunt.errors import ErrorKind, ProviderError
 from job_hunt.integrations.http import raise_provider_error
 
-_TERMINAL_CLEANUP_STATUS_MARKERS = (
-    "Status: ⛔ Dropped",
-    "Status: ❌ Failed",
-)
+_DROPPED_STATUS_MARKER = "Status: ⛔ Dropped"
 
 
 def _should_cleanup(caption: str) -> bool:
-    return any(marker in caption for marker in _TERMINAL_CLEANUP_STATUS_MARKERS)
+    return _DROPPED_STATUS_MARKER in caption
 
 
 class TelegramNotifier:
@@ -105,8 +102,8 @@ class TelegramNotifier:
         job_url: str,
         row_id: int | None = None,
     ) -> str:
-        # A run can become terminal while its notification-init task is still queued.
-        # In that case there should never be a placeholder message to clean up.
+        # Dropped jobs should never leave a placeholder behind. Technical failures
+        # remain visible so the underlying error can be diagnosed and retried.
         if _should_cleanup(caption):
             return ""
         placeholder = (
@@ -133,8 +130,6 @@ class TelegramNotifier:
         job_url: str,
         row_id: int | None = None,
     ) -> str:
-        # Terminal runs without a finalized ZIP are removed from Telegram. Every drop
-        # and terminal-failure path refreshes this same persistent message.
         if _should_cleanup(caption):
             self.delete_message(chat_id, message_id)
             return message_id
@@ -167,83 +162,91 @@ class TelegramNotifier:
                 "reply_markup": self._actions(job_url, row_id, run_id),
             },
         )
-        return self._message_id(payload, "Telegram returned no edited final message")
+        return self._message_id(payload, "Telegram returned no edited final caption")
 
     def finalize_processing_message(
         self,
         chat_id: str,
         message_id: str,
-        document: Path,
+        archive: Path,
         *,
         caption: str,
         job_url: str,
         row_id: int,
         run_id: str,
     ) -> str:
-        media = {
-            "type": "document",
-            "media": "attach://document",
-            "caption": caption[:1024],
-        }
-        with document.open("rb") as handle:
+        with archive.open("rb") as handle:
             payload = self._post(
                 "/editMessageMedia",
                 data={
                     "chat_id": chat_id,
-                    "message_id": message_id,
-                    "media": json.dumps(media),
+                    "message_id": int(message_id),
+                    "media": json.dumps(
+                        {
+                            "type": "document",
+                            "media": "attach://document",
+                            "caption": caption[:1024],
+                        }
+                    ),
                     "reply_markup": json.dumps(self._actions(job_url, row_id, run_id)),
                 },
-                files={"document": (document.name, handle, "application/zip")},
+                files={"document": (archive.name, handle, "application/zip")},
             )
-        return self._message_id(payload, "Telegram returned no finalized application message")
+        return self._message_id(payload, "Telegram returned no finalized processing message")
+
+    def answer_callback(self, callback_id: str, text: str) -> None:
+        self._post("/answerCallbackQuery", json={"callback_query_id": callback_id, "text": text})
 
     def send_documents(self, chat_id: str, artifacts: Iterable[Path], caption: str) -> str:
         paths = list(artifacts)
         if not 2 <= len(paths) <= 10:
-            raise ValueError("Telegram media groups require 2 to 10 documents")
-        media = [
-            {
-                "type": "document",
-                "media": f"attach://file_{index}",
-                **({"caption": caption[:1024]} if index == 0 else {}),
-            }
-            for index, _ in enumerate(paths)
-        ]
+            raise ValueError("Telegram media groups support 2 to 10 documents")
+        media = []
         with ExitStack() as stack:
-            files = {
-                f"file_{index}": (
-                    path.name,
-                    stack.enter_context(path.open("rb")),
-                    "application/octet-stream",
+            files: dict[str, tuple[str, Any, str]] = {}
+            for index, path in enumerate(paths):
+                handle = stack.enter_context(path.open("rb"))
+                name = f"file_{index}"
+                files[name] = (path.name, handle, "application/octet-stream")
+                media.append(
+                    {
+                        "type": "document",
+                        "media": f"attach://{name}",
+                        "caption": caption[:1024] if index == 0 else "",
+                    }
                 )
-                for index, path in enumerate(paths)
-            }
             payload = self._post(
                 "/sendMediaGroup",
                 data={"chat_id": chat_id, "media": json.dumps(media)},
                 files=files,
             )
         result = payload.get("result")
-        if not isinstance(result, list) or not result or not isinstance(result[0], dict):
+        if not isinstance(result, list) or not result:
             raise ProviderError(
-                "Telegram returned no media-group message",
+                "Telegram returned no media group messages",
                 ErrorKind.MALFORMED_PROVIDER_RESPONSE,
                 provider="telegram",
             )
-        return str(result[0]["message_id"])
+        first = result[0]
+        if not isinstance(first, dict) or "message_id" not in first:
+            raise ProviderError(
+                "Telegram returned malformed media group result",
+                ErrorKind.MALFORMED_PROVIDER_RESPONSE,
+                provider="telegram",
+            )
+        return str(first["message_id"])
 
     def send_document_with_actions(
         self,
         chat_id: str,
-        document: Path,
+        archive: Path,
         *,
         caption: str,
         job_url: str,
         row_id: int,
         run_id: str,
     ) -> str:
-        with document.open("rb") as handle:
+        with archive.open("rb") as handle:
             payload = self._post(
                 "/sendDocument",
                 data={
@@ -251,30 +254,9 @@ class TelegramNotifier:
                     "caption": caption[:1024],
                     "reply_markup": json.dumps(self._actions(job_url, row_id, run_id)),
                 },
-                files={"document": (document.name, handle, "application/octet-stream")},
+                files={"document": (archive.name, handle, "application/zip")},
             )
-        return self._message_id(payload, "Telegram returned no document message")
-
-    def send_application_actions(
-        self,
-        chat_id: str,
-        *,
-        caption: str,
-        job_url: str,
-        row_id: int,
-        run_id: str,
-        reply_to_message_id: str | None = None,
-    ) -> str:
-        payload: dict[str, object] = {
-            "chat_id": chat_id,
-            "text": caption,
-            "reply_markup": self._actions(job_url, row_id, run_id),
-            "disable_web_page_preview": True,
-        }
-        if reply_to_message_id is not None:
-            payload["reply_parameters"] = {"message_id": int(reply_to_message_id)}
-        response = self._post("/sendMessage", json=payload)
-        return self._message_id(response, "Telegram returned no action message")
+        return self._message_id(payload, "Telegram returned no application archive message")
 
     def send_application_bundle(
         self,
@@ -286,9 +268,10 @@ class TelegramNotifier:
         row_id: int,
         run_id: str,
     ) -> str:
-        archives = [path for path in artifacts if path.suffix.casefold() == ".zip"]
+        paths = list(artifacts)
+        archives = [path for path in paths if path.suffix.casefold() == ".zip"]
         if len(archives) != 1:
-            raise ValueError("Application notification requires exactly one ZIP archive")
+            raise ValueError("Telegram application bundle requires exactly one ZIP archive")
         return self.send_document_with_actions(
             chat_id,
             archives[0],
@@ -298,8 +281,21 @@ class TelegramNotifier:
             run_id=run_id,
         )
 
-    def answer_callback(self, callback_query_id: str, text: str) -> None:
-        self._post(
-            "/answerCallbackQuery",
-            json={"callback_query_id": callback_query_id, "text": text[:200]},
+    def send_application_actions(
+        self,
+        chat_id: str,
+        *,
+        caption: str,
+        job_url: str,
+        row_id: int,
+        run_id: str,
+    ) -> str:
+        payload = self._post(
+            "/sendMessage",
+            json={
+                "chat_id": chat_id,
+                "text": caption[:4096],
+                "reply_markup": self._actions(job_url, row_id, run_id),
+            },
         )
+        return self._message_id(payload, "Telegram returned no application action message")
