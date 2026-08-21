@@ -148,7 +148,11 @@ def test_generation_requires_at_least_one_provider_key() -> None:
 def test_high_level_generator_writes_runtime_config(tmp_path: Path) -> None:
     destination = tmp_path / "litellm.runtime.yaml"
     config = generate_litellm_config(
-        env={"GROQ_API_KEY_1": "key", "LITELLM_GROQ_FAST_MODELS": "llama-8b"},
+        env={
+            "GROQ_API_KEY_1": "key",
+            "LITELLM_GROQ_DISCOVER_MODELS": "false",
+            "LITELLM_GROQ_FAST_MODELS": "llama-8b",
+        },
         discover_groq=lambda _: [],
         destination=destination,
     )
