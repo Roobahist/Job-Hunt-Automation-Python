@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import pytest
-
-from job_hunt.integrations.litellm_config import ConfigGenerationError, build_litellm_config
+from job_hunt.integrations.litellm_config import build_litellm_config
 
 
 def _registry() -> dict[str, object]:
@@ -25,26 +23,55 @@ def _registry() -> dict[str, object]:
     }
 
 
-def test_litellm_router_retries_deployments_immediately_by_default() -> None:
+def test_litellm_owns_deployment_retries_and_cooldowns() -> None:
     config = build_litellm_config(
         env={"TEST_API_KEY_1": "one", "TEST_API_KEY_2": "two"},
         registry=_registry(),
     )
-    assert config["router_settings"]["num_retries"] == 8
-    assert config["router_settings"]["cooldown_time"] == 65
+    router = config["router_settings"]
+    assert "num_retries" not in router
+    assert router["allowed_fails"] == 1
+    assert router["cooldown_time"] == 65
 
 
-def test_litellm_router_retry_count_is_environment_configurable() -> None:
+def test_each_provider_key_is_a_separate_litellm_deployment() -> None:
     config = build_litellm_config(
-        env={"TEST_API_KEY_1": "one", "LITELLM_NUM_RETRIES": "3"},
+        env={"TEST_API_KEY_1": "one", "TEST_API_KEY_2": "two", "TEST_API_KEY_3": "three"},
         registry=_registry(),
     )
-    assert config["router_settings"]["num_retries"] == 3
+    job_fast = [entry for entry in config["model_list"] if entry["model_name"] == "job-fast"]
+    assert len(job_fast) == 3
+    assert {entry["litellm_params"]["api_key"] for entry in job_fast} == {
+        "os.environ/TEST_API_KEY_1",
+        "os.environ/TEST_API_KEY_2",
+        "os.environ/TEST_API_KEY_3",
+    }
 
 
-def test_litellm_router_rejects_negative_retry_count() -> None:
-    with pytest.raises(ConfigGenerationError, match="LITELLM_NUM_RETRIES"):
-        build_litellm_config(
-            env={"TEST_API_KEY_1": "one", "LITELLM_NUM_RETRIES": "-1"},
-            registry=_registry(),
-        )
+def test_capability_fallback_graph_is_delegated_to_litellm() -> None:
+    config = build_litellm_config(
+        env={"TEST_API_KEY_1": "one"},
+        registry=_registry(),
+    )
+    assert config["router_settings"]["fallbacks"] == [
+        {"job-powerful": ["job-balanced", "job-fast"]},
+        {"job-balanced": ["job-fast"]},
+        {"repair-fast": ["repair-balanced"]},
+    ]
+
+
+def test_router_tuning_remains_environment_configurable_without_retry_topology() -> None:
+    config = build_litellm_config(
+        env={
+            "TEST_API_KEY_1": "one",
+            "LITELLM_ALLOWED_FAILS": "2",
+            "LITELLM_COOLDOWN_SECONDS": "90",
+            "LITELLM_ROUTING_STRATEGY": "simple-shuffle",
+        },
+        registry=_registry(),
+    )
+    router = config["router_settings"]
+    assert router["allowed_fails"] == 2
+    assert router["cooldown_time"] == 90
+    assert router["routing_strategy"] == "simple-shuffle"
+    assert "num_retries" not in router
