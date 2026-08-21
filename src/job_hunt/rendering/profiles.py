@@ -164,7 +164,10 @@ class MahsaCvRenderer(CvRenderer):
                 f"{{{latex_value(ref.get('contact', ''))}}}"
                 for ref in refs
                 if isinstance(ref, Mapping)
+                and any(latex_value(ref.get(field, "")) for field in ("name", "title", "contact"))
             )
+            if not body:
+                return ""
             return heading + f"\\CVReferences{{\n{body}\n}}"
         if kind == "entries":
             return heading + self._entries(section.get("entries", []))
