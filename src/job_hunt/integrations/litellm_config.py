@@ -19,6 +19,7 @@ CHAT_MODEL_BLOCKLIST = (
 )
 CAPABILITY_GROUPS = ("job-fast", "job-balanced", "job-powerful")
 REPAIR_GROUP_MAP = {"job-fast": "repair-fast", "job-balanced": "repair-balanced"}
+DEFAULT_PROVIDER_REGISTRY_PATH = Path("config/llm-providers.json")
 
 
 class ConfigGenerationError(RuntimeError):
@@ -36,14 +37,27 @@ def indexed_env_values(env: Mapping[str, str], prefix: str) -> list[tuple[str, s
     return [(name, value) for _, name, value in values]
 
 
-def csv_values(value: str) -> list[str]:
-    return [item.strip() for item in value.split(",") if item.strip()]
+def load_provider_registry(path: Path) -> dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise ConfigGenerationError(f"LiteLLM provider registry not found: {path}") from exc
+    except json.JSONDecodeError as exc:
+        raise ConfigGenerationError(f"LiteLLM provider registry is invalid JSON: {path}: {exc}") from exc
+    if not isinstance(payload, dict) or not isinstance(payload.get("providers"), list):
+        raise ConfigGenerationError("LiteLLM provider registry must contain a providers array")
+    return payload
 
 
-def discover_groq_models(api_key: str, *, client_factory: Callable[[], httpx.Client] = httpx.Client) -> list[str]:
+def discover_models(
+    api_key: str,
+    *,
+    url: str,
+    client_factory: Callable[[], httpx.Client] = httpx.Client,
+) -> list[str]:
     with client_factory() as client:
         response = client.get(
-            "https://api.groq.com/openai/v1/models",
+            url,
             headers={"Authorization": f"Bearer {api_key}"},
             timeout=30,
         )
@@ -72,12 +86,12 @@ def discover_with_key_fallback(
             failures.append(f"{key_name}: empty model catalog")
         except Exception as exc:
             failures.append(f"{key_name}: {exc}")
-    raise ConfigGenerationError("Unable to discover Groq models with configured keys: " + "; ".join(failures))
+    raise ConfigGenerationError("Unable to discover provider models with configured keys: " + "; ".join(failures))
 
 
-def is_chat_candidate(model: str) -> bool:
+def is_chat_candidate(model: str, blocklist: Sequence[str] = CHAT_MODEL_BLOCKLIST) -> bool:
     lowered = model.lower()
-    return not any(marker in lowered for marker in CHAT_MODEL_BLOCKLIST)
+    return not any(marker.lower() in lowered for marker in blocklist)
 
 
 def classify_model(model: str) -> str:
@@ -109,61 +123,125 @@ def _fill_missing_groups(groups: dict[str, list[str]]) -> dict[str, list[str]]:
     return groups
 
 
-def group_models(discovered: Sequence[str], *, env: Mapping[str, str]) -> dict[str, list[str]]:
+def group_models(
+    discovered: Sequence[str],
+    *,
+    explicit: Mapping[str, Sequence[str]] | None = None,
+    excluded: Sequence[str] = (),
+    blocklist: Sequence[str] = CHAT_MODEL_BLOCKLIST,
+) -> dict[str, list[str]]:
     groups: dict[str, list[str]] = {group: [] for group in CAPABILITY_GROUPS}
-    explicit = {
-        "job-fast": csv_values(env.get("LITELLM_GROQ_FAST_MODELS", "")),
-        "job-balanced": csv_values(env.get("LITELLM_GROQ_BALANCED_MODELS", "")),
-        "job-powerful": csv_values(env.get("LITELLM_GROQ_POWERFUL_MODELS", "")),
-    }
-    excluded = set(csv_values(env.get("LITELLM_GROQ_EXCLUDE_MODELS", "")))
-    explicitly_classified = {model for models in explicit.values() for model in models}
-    for group, models in explicit.items():
-        groups[group].extend(model for model in models if model not in excluded)
+    explicit_groups = explicit or {}
+    excluded_set = set(excluded)
+    explicitly_classified = {model for models in explicit_groups.values() for model in models}
+    for group in CAPABILITY_GROUPS:
+        groups[group].extend(model for model in explicit_groups.get(group, ()) if model not in excluded_set)
     for model in discovered:
-        if model in excluded or model in explicitly_classified or not is_chat_candidate(model):
+        if model in excluded_set or model in explicitly_classified or not is_chat_candidate(model, blocklist):
             continue
         groups[classify_model(model)].append(model)
     deduplicated = {group: sorted(set(models)) for group, models in groups.items()}
     return _fill_missing_groups(deduplicated)
 
 
-def deployment(model_name: str, provider_model: str, key_env_name: str) -> dict[str, Any]:
-    return {
-        "model_name": model_name,
-        "litellm_params": {
+def deployment(
+    model_name: str,
+    provider_model: str,
+    key_env_name: str,
+    *,
+    extra_params: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    params = dict(extra_params or {})
+    params.update(
+        {
             "model": provider_model,
             "api_key": f"os.environ/{key_env_name}",
-        },
+        }
+    )
+    return {"model_name": model_name, "litellm_params": params}
+
+
+def _provider_groups(provider: Mapping[str, Any]) -> dict[str, list[str]]:
+    raw = provider.get("models", {})
+    if not isinstance(raw, Mapping):
+        raise ConfigGenerationError(f"Provider {provider.get('name', '<unknown>')} models must be an object")
+    return {
+        "job-fast": [str(item) for item in raw.get("fast", [])],
+        "job-balanced": [str(item) for item in raw.get("balanced", [])],
+        "job-powerful": [str(item) for item in raw.get("powerful", [])],
     }
 
 
-def add_groq_deployments(
-    model_list: list[dict[str, Any]],
-    groups: Mapping[str, Sequence[str]],
-    key_names: Sequence[str],
-) -> None:
-    for group, models in groups.items():
-        for model in models:
-            for key_name in key_names:
-                model_list.append(deployment(group, f"groq/{model}", key_name))
+def _provider_enabled(provider: Mapping[str, Any], env: Mapping[str, str]) -> bool:
+    flag = str(provider.get("enabled_env", "")).strip()
+    if not flag:
+        return bool(provider.get("enabled", True))
+    raw = env.get(flag, str(provider.get("enabled", True))).strip().lower()
+    return raw not in {"0", "false", "no", "off"}
 
 
-def add_gemini_deployments(
+def _provider_model_prefix(provider: Mapping[str, Any]) -> str:
+    prefix = str(provider.get("litellm_prefix", provider.get("name", ""))).strip().strip("/")
+    if not prefix:
+        raise ConfigGenerationError("Each provider must define name or litellm_prefix")
+    return prefix
+
+
+def _provider_keys(provider: Mapping[str, Any], env: Mapping[str, str]) -> list[tuple[str, str]]:
+    prefix = str(provider.get("api_key_prefix", "")).strip()
+    if not prefix:
+        raise ConfigGenerationError(f"Provider {provider.get('name', '<unknown>')} must define api_key_prefix")
+    return indexed_env_values(env, prefix)
+
+
+def _discover_provider_models(
+    provider: Mapping[str, Any],
+    keys: Sequence[tuple[str, str]],
+    *,
+    discoverer: Callable[[str, str], Sequence[str]],
+) -> list[str]:
+    discovery = provider.get("discovery")
+    if not isinstance(discovery, Mapping) or not discovery.get("enabled", False):
+        return []
+    url = str(discovery.get("url", "")).strip()
+    if not url:
+        raise ConfigGenerationError(f"Provider {provider.get('name', '<unknown>')} discovery requires a url")
+    return discover_with_key_fallback(keys, lambda key: discoverer(key, url))
+
+
+def _provider_extra_params(provider: Mapping[str, Any]) -> dict[str, Any]:
+    raw = provider.get("litellm_params", {})
+    if not isinstance(raw, Mapping):
+        raise ConfigGenerationError(f"Provider {provider.get('name', '<unknown>')} litellm_params must be an object")
+    return {str(key): value for key, value in raw.items()}
+
+
+def add_provider_deployments(
     model_list: list[dict[str, Any]],
+    provider: Mapping[str, Any],
     *,
     env: Mapping[str, str],
-    key_names: Sequence[str],
+    discoverer: Callable[[str, str], Sequence[str]],
 ) -> None:
-    groups = {
-        "job-fast": csv_values(env.get("LITELLM_GEMINI_FAST_MODELS", "gemini-3.5-flash-lite")),
-        "job-balanced": csv_values(env.get("LITELLM_GEMINI_BALANCED_MODELS", "gemini-3.5-flash")),
-        "job-powerful": csv_values(env.get("LITELLM_GEMINI_POWERFUL_MODELS", "gemini-3.5-flash")),
-    }
+    if not _provider_enabled(provider, env):
+        return
+    keys = _provider_keys(provider, env)
+    if not keys:
+        return
+
+    discovered = _discover_provider_models(provider, keys, discoverer=discoverer)
+    explicit = _provider_groups(provider)
+    excluded = [str(item) for item in provider.get("exclude_models", [])]
+    blocklist = [str(item) for item in provider.get("blocklist", CHAT_MODEL_BLOCKLIST)]
+    groups = group_models(discovered, explicit=explicit, excluded=excluded, blocklist=blocklist)
+    provider_prefix = _provider_model_prefix(provider)
+    extra_params = _provider_extra_params(provider)
+
     for group, models in groups.items():
         for model in models:
-            for key_name in key_names:
-                model_list.append(deployment(group, f"gemini/{model}", key_name))
+            provider_model = model if model.startswith(f"{provider_prefix}/") else f"{provider_prefix}/{model}"
+            for key_name, _ in keys:
+                model_list.append(deployment(group, provider_model, key_name, extra_params=extra_params))
 
 
 def add_repair_deployments(model_list: list[dict[str, Any]]) -> None:
@@ -173,34 +251,32 @@ def add_repair_deployments(model_list: list[dict[str, Any]]) -> None:
         repair_group = REPAIR_GROUP_MAP.get(group)
         if repair_group is None:
             continue
-        copied = {
-            "model_name": repair_group,
-            "litellm_params": dict(entry["litellm_params"]),
-        }
-        model_list.append(copied)
+        model_list.append(
+            {
+                "model_name": repair_group,
+                "litellm_params": dict(entry["litellm_params"]),
+            }
+        )
 
 
 def build_litellm_config(
     *,
     env: Mapping[str, str],
-    discover_groq: Callable[[str], Sequence[str]],
+    registry: Mapping[str, Any],
+    discoverer: Callable[[str, str], Sequence[str]] = lambda key, url: discover_models(key, url=url),
 ) -> dict[str, Any]:
-    groq_keys = indexed_env_values(env, "GROQ_API_KEY_")
-    gemini_keys = indexed_env_values(env, "GEMINI_API_KEY_")
-    if not groq_keys and not gemini_keys:
-        raise ConfigGenerationError("At least one GROQ_API_KEY_N or GEMINI_API_KEY_N must be configured")
-
-    discovered: Sequence[str] = []
-    discovery_enabled = env.get("LITELLM_GROQ_DISCOVER_MODELS", "true").strip().lower() not in {"0", "false", "no"}
-    if groq_keys and discovery_enabled:
-        discovered = discover_with_key_fallback(groq_keys, discover_groq)
-    groups = group_models(discovered, env=env)
+    providers = registry.get("providers")
+    if not isinstance(providers, list):
+        raise ConfigGenerationError("LiteLLM provider registry must contain a providers array")
 
     model_list: list[dict[str, Any]] = []
-    add_groq_deployments(model_list, groups, [name for name, _ in groq_keys])
-    add_gemini_deployments(model_list, env=env, key_names=[name for name, _ in gemini_keys])
+    for provider in providers:
+        if not isinstance(provider, Mapping):
+            raise ConfigGenerationError("Every provider registry entry must be an object")
+        add_provider_deployments(model_list, provider, env=env, discoverer=discoverer)
+
     if not model_list:
-        raise ConfigGenerationError("No LiteLLM chat-model deployments were generated")
+        raise ConfigGenerationError("No LiteLLM chat-model deployments were generated from configured provider keys")
     add_repair_deployments(model_list)
 
     present_groups = {str(item["model_name"]) for item in model_list}
@@ -236,9 +312,10 @@ def write_config(config: Mapping[str, Any], destination: Path) -> None:
 def generate_litellm_config(
     *,
     env: Mapping[str, str],
-    discover_groq: Callable[[str], Sequence[str]],
+    registry: Mapping[str, Any],
     destination: Path,
+    discoverer: Callable[[str, str], Sequence[str]] = lambda key, url: discover_models(key, url=url),
 ) -> dict[str, Any]:
-    config = build_litellm_config(env=env, discover_groq=discover_groq)
+    config = build_litellm_config(env=env, registry=registry, discoverer=discoverer)
     write_config(config, destination)
     return config
