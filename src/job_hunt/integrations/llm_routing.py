@@ -18,6 +18,7 @@ from job_hunt.state import RedisState
 
 _DEFAULT_OPERATION_GROUPS = {
     "compatibility": "job-fast",
+    "content_extraction": "job-fast",
     "qualification": "job-balanced",
     "project_selection": "job-balanced",
     "project_rewrite": "job-powerful",
@@ -75,7 +76,7 @@ def _operation_groups() -> dict[str, str]:
 
 def capability_group_for_operation(operation: str, *, repair: bool = False) -> str:
     if repair:
-        return os.getenv("JOB_HUNT_LLM_REPAIR_GROUP", "job-fast").strip() or "job-fast"
+        return os.getenv("JOB_HUNT_LLM_REPAIR_GROUP", "repair-fast").strip() or "repair-fast"
     overrides = _operation_groups()
     normalized = operation.lower().replace("-", "_")
     for marker, group in overrides.items():
@@ -263,7 +264,6 @@ class CapabilityRoutedStructuredClient(GeminiStructuredClient):
         return result
 
 
-# Backward-compatible name for callers/tests that imported the old class directly.
 RoutedStructuredClient = CapabilityRoutedStructuredClient
 
 
