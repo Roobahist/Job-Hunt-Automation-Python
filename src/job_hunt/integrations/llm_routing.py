@@ -70,8 +70,6 @@ def _key_id(key: str) -> str:
 
 
 def _provider_model(provider: str, model: str) -> str:
-    # LiteLLM uses provider/model identifiers. Keeping this conversion in one place
-    # makes adding another provider independent from the workflow code.
     return f"{provider}/{model}"
 
 
@@ -79,7 +77,7 @@ def _error_kind(exc: Exception) -> ErrorKind:
     if isinstance(exc, litellm.RateLimitError):
         return ErrorKind.RATE_LIMIT
     if isinstance(exc, (litellm.AuthenticationError, litellm.PermissionDeniedError)):
-        return ErrorKind.AUTH
+        return ErrorKind.AUTHENTICATION
     if isinstance(exc, litellm.BadRequestError):
         return ErrorKind.MALFORMED_PROVIDER_RESPONSE
     return ErrorKind.TRANSIENT_PROVIDER
@@ -232,7 +230,7 @@ class LiteLLMStructuredClient(GeminiStructuredClient):
 
 
 class RoutedStructuredClient(GeminiStructuredClient):
-    """Preserves the explicit route order while LiteLLM manages deployments within each route."""
+    """Preserves explicit model fallback order while LiteLLM manages keys inside each route."""
 
     def __init__(self, routes: Sequence[tuple[LlmRoute, GeminiStructuredClient]]) -> None:
         self.routes = list(routes)
@@ -336,8 +334,6 @@ def build_routed_structured_client(
     *,
     state: RedisState | None = None,
 ) -> RoutedStructuredClient:
-    # State is retained in the public factory signature so callers do not change. LiteLLM now
-    # owns provider deployment selection and cooldowns; application Redis remains workflow state.
     del state
     repair_routes = _build_route_clients(
         settings,
