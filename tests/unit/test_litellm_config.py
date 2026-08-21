@@ -95,9 +95,13 @@ def test_generator_expands_every_key_across_discovered_models() -> None:
         "os.environ/GROQ_API_KEY_1",
         "os.environ/GROQ_API_KEY_2",
     }
+    repair_fast = [item for item in deployments if item["model_name"] == "repair-fast"]
+    repair_balanced = [item for item in deployments if item["model_name"] == "repair-balanced"]
+    assert repair_fast
+    assert repair_balanced
 
 
-def test_generated_config_contains_native_group_fallbacks_and_latency_routing() -> None:
+def test_generated_config_contains_generation_and_repair_fallbacks() -> None:
     config = build_litellm_config(
         env={"GROQ_API_KEY_1": "key"},
         discover_groq=lambda _: ["openai/gpt-oss-120b", "qwen-32b", "llama-8b"],
@@ -106,6 +110,7 @@ def test_generated_config_contains_native_group_fallbacks_and_latency_routing() 
     assert config["router_settings"]["fallbacks"] == [
         {"job-powerful": ["job-balanced", "job-fast"]},
         {"job-balanced": ["job-fast"]},
+        {"repair-fast": ["repair-balanced"]},
     ]
 
 
@@ -130,6 +135,8 @@ def test_discovery_can_be_disabled_with_explicit_models() -> None:
         "job-fast",
         "job-balanced",
         "job-powerful",
+        "repair-fast",
+        "repair-balanced",
     }
 
 
