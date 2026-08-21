@@ -124,5 +124,7 @@ def test_discovery_uses_only_active_criteria_and_skips_existing_jobs(monkeypatch
     assert result["discovered"] == 2
     assert result["duplicates"] == 1
     assert result["queued"] == 1
-    assert notification_jobs == ["2"]
+    # Discovery must not expose a Telegram message before process_submission
+    # persists the corresponding Baserow row.
+    assert notification_jobs == []
     assert submission_jobs == ["2"]

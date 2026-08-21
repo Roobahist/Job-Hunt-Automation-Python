@@ -6,7 +6,6 @@ from job_hunt.application.normalization import (
     SubmissionNormalizer,
     fillout_submission,
     job_from_provider,
-    linkedin_job_id_from_url,
 )
 from job_hunt.domain.models import (
     AiContentSubmission,
