@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from collections.abc import Mapping, Sequence
 from typing import Any
@@ -14,6 +15,18 @@ from job_hunt.errors import ConfigurationError, ErrorKind, ProviderError
 from job_hunt.integrations.gemini import GeminiStructuredClient, _validate_json_schema
 from job_hunt.logging import logger
 from job_hunt.state import RedisState
+
+_DEFAULT_OPERATION_GROUPS = {
+    "compatibility": "job-fast",
+    "qualification": "job-balanced",
+    "project_selection": "job-balanced",
+    "project_rewrite": "job-powerful",
+    "work_experience_selection": "job-balanced",
+    "work_experience_rewrite": "job-powerful",
+    "skills": "job-balanced",
+    "summary": "job-powerful",
+    "cover_letter": "job-powerful",
+}
 
 
 def _repair_prompt(raw_output: str, schema: dict[str, Any], validation_error: str) -> str:
@@ -47,8 +60,32 @@ def _error_kind(status_code: int) -> ErrorKind:
     return ErrorKind.TRANSIENT_PROVIDER
 
 
+def _operation_groups() -> dict[str, str]:
+    configured = os.getenv("JOB_HUNT_LLM_OPERATION_GROUPS_JSON", "").strip()
+    if not configured:
+        return dict(_DEFAULT_OPERATION_GROUPS)
+    try:
+        parsed = json.loads(configured)
+    except json.JSONDecodeError as exc:
+        raise ConfigurationError("JOB_HUNT_LLM_OPERATION_GROUPS_JSON must be valid JSON") from exc
+    if not isinstance(parsed, dict) or not all(isinstance(key, str) and isinstance(value, str) for key, value in parsed.items()):
+        raise ConfigurationError("JOB_HUNT_LLM_OPERATION_GROUPS_JSON must map operation names to LiteLLM aliases")
+    return {**_DEFAULT_OPERATION_GROUPS, **parsed}
+
+
+def capability_group_for_operation(operation: str, *, repair: bool = False) -> str:
+    if repair:
+        return os.getenv("JOB_HUNT_LLM_REPAIR_GROUP", "job-fast").strip() or "job-fast"
+    overrides = _operation_groups()
+    normalized = operation.lower().replace("-", "_")
+    for marker, group in overrides.items():
+        if marker.lower().replace("-", "_") in normalized:
+            return group
+    return os.getenv("JOB_HUNT_LLM_DEFAULT_GROUP", "job-balanced").strip() or "job-balanced"
+
+
 class LiteLLMGatewayClient(GeminiStructuredClient):
-    """OpenAI-compatible client for one logical model alias exposed by LiteLLM Proxy."""
+    """OpenAI-compatible client for one logical capability group exposed by LiteLLM Proxy."""
 
     def __init__(
         self,
@@ -173,7 +210,7 @@ class LiteLLMGatewayClient(GeminiStructuredClient):
             "llm_generation",
             prompt_key=definition.key,
             provider="litellm",
-            model=self.model,
+            model_group=self.model,
             upstream_model=payload.get("model"),
             latency_ms=int((time.perf_counter() - started) * 1000),
             usage=payload.get("usage", {}),
@@ -183,58 +220,51 @@ class LiteLLMGatewayClient(GeminiStructuredClient):
         return result
 
 
-class RoutedStructuredClient(GeminiStructuredClient):
-    def __init__(self, routes: Sequence[tuple[LlmRoute, GeminiStructuredClient]]) -> None:
-        self.routes = list(routes)
+class CapabilityRoutedStructuredClient(GeminiStructuredClient):
+    """Selects one capability group; LiteLLM owns deployment choice and inter-group fallbacks."""
+
+    def __init__(
+        self,
+        routes: Sequence[tuple[LlmRoute, GeminiStructuredClient]],
+        *,
+        repair: bool = False,
+    ) -> None:
+        self.routes = {route.model: client for route, client in routes}
+        self.repair = repair
         if not self.routes:
-            raise ConfigurationError("No usable LLM routes are configured")
+            raise ConfigurationError("No usable LiteLLM capability groups are configured")
 
     def generate(self, prompt: str, definition: PromptDefinition) -> dict[str, Any]:
-        failures: list[str] = []
-        all_rate_limited = True
-        for route, client in self.routes:
-            try:
-                result = client.generate(prompt, definition)
-                logger().info(
-                    "llm_route_succeeded",
-                    prompt_key=definition.key,
-                    provider="litellm",
-                    model=route.model,
-                    router="litellm-proxy",
-                )
-                return result
-            except ConfigurationError:
-                raise
-            except ProviderError as exc:
-                failures.append(f"{route.model}: {exc}")
-                all_rate_limited = all_rate_limited and exc.kind == ErrorKind.RATE_LIMIT
-                logger().warning(
-                    "llm_route_failed",
-                    prompt_key=definition.key,
-                    provider="litellm",
-                    model=route.model,
-                    error_kind=exc.kind,
-                    reason=str(exc),
-                    router="litellm-proxy",
-                )
-            except Exception as exc:
-                all_rate_limited = False
-                failures.append(f"{route.model}: {exc}")
-                logger().warning(
-                    "llm_route_failed",
-                    prompt_key=definition.key,
-                    provider="litellm",
-                    model=route.model,
-                    reason=str(exc),
-                    router="litellm-proxy",
-                )
-        kind = ErrorKind.RATE_LIMIT if all_rate_limited else ErrorKind.TRANSIENT_PROVIDER
-        raise ProviderError(
-            "LLM generation failed across all configured LiteLLM routes: " + "; ".join(failures),
-            kind,
-            retryable=True,
-            provider="litellm",
+        group = capability_group_for_operation(definition.key, repair=self.repair)
+        client = self.routes.get(group)
+        if client is None:
+            raise ConfigurationError(
+                f"LiteLLM capability group {group!r} is not configured for {'repair' if self.repair else 'generation'}"
+            )
+        try:
+            result = client.generate(prompt, definition)
+        except ProviderError as exc:
+            logger().warning(
+                "llm_group_failed",
+                prompt_key=definition.key,
+                group=group,
+                error_kind=exc.kind,
+                reason=str(exc),
+                router="litellm-proxy",
+            )
+            raise
+        logger().info(
+            "llm_group_succeeded",
+            prompt_key=definition.key,
+            group=group,
+            repair=self.repair,
+            router="litellm-proxy",
         )
+        return result
+
+
+# Backward-compatible name for callers/tests that imported the old class directly.
+RoutedStructuredClient = CapabilityRoutedStructuredClient
 
 
 def _build_gateway_routes(
@@ -262,11 +292,12 @@ def build_routed_structured_client(
     settings: Settings,
     *,
     state: RedisState | None = None,
-) -> RoutedStructuredClient:
+) -> CapabilityRoutedStructuredClient:
     del state
-    repair_client = RoutedStructuredClient(
-        _build_gateway_routes(settings, settings.llm_repair_route_specs(), repair_client=None)
+    repair_client = CapabilityRoutedStructuredClient(
+        _build_gateway_routes(settings, settings.llm_repair_route_specs(), repair_client=None),
+        repair=True,
     )
-    return RoutedStructuredClient(
-        _build_gateway_routes(settings, settings.llm_route_specs(), repair_client=repair_client)
+    return CapabilityRoutedStructuredClient(
+        _build_gateway_routes(settings, settings.llm_route_specs(), repair_client=repair_client),
     )
