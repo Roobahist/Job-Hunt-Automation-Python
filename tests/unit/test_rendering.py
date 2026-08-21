@@ -150,6 +150,20 @@ def test_mahsa_renderer_wraps_nested_bullets_and_renders_plain_text_safely() -> 
     assert "\\CVBullet[false]" not in rendered
 
 
+def test_mahsa_renderer_omits_empty_references_section() -> None:
+    rendered = MahsaCvRenderer().render(
+        "%%__SECTIONS__%%",
+        {
+            "sections": [
+                {"type": "education"},
+                {"type": "references", "title": "REFERENCES", "items": []},
+            ]
+        },
+    )
+    assert "\\CVSection{REFERENCES}" not in rendered
+    assert "\\CVReferences{" not in rendered
+
+
 def test_cover_letter_requires_exactly_three_paragraphs() -> None:
     template = " ".join(MahsaCoverLetterRenderer.markers.values())
     with pytest.raises(DocumentRenderingError, match="exactly three"):
