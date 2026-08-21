@@ -42,11 +42,7 @@ def provider(
 
 
 def test_indexed_env_values_orders_numbered_keys() -> None:
-    env = {
-        "GROQ_API_KEY_10": "ten",
-        "GROQ_API_KEY_2": "two",
-        "GROQ_API_KEY_1": "one",
-    }
+    env = {"GROQ_API_KEY_10": "ten", "GROQ_API_KEY_2": "two", "GROQ_API_KEY_1": "one"}
     assert indexed_env_values(env, "GROQ_API_KEY_") == [
         ("GROQ_API_KEY_1", "one"),
         ("GROQ_API_KEY_2", "two"),
@@ -149,11 +145,12 @@ def test_generator_expands_every_key_across_discovered_models() -> None:
             "llama-3.1-8b-instant",
         ],
     )
+    target_model = "groq/openai/gpt-oss-120b"
     powerful = [
         item
         for item in config["model_list"]
         if item["model_name"] == "job-powerful"
-        and item["litellm_params"]["model"] == "groq/openai/gpt-oss-120b"
+        if item["litellm_params"]["model"] == target_model
     ]
     assert len(powerful) == 2
     assert {item["litellm_params"]["api_key"] for item in powerful} == {
@@ -183,17 +180,16 @@ def test_provider_registry_allowlist_applies_to_discovery() -> None:
 
 
 def test_arbitrary_curated_provider_requires_no_python_adapter() -> None:
+    openrouter = provider(
+        "openrouter",
+        "OPENROUTER_API_KEY_",
+        fast=["meta-llama/llama-3.1-8b-instruct:free"],
+        balanced=["qwen/qwen3-30b-a3b:free"],
+        powerful=["openai/gpt-oss-120b:free"],
+    )
     config = build_litellm_config(
         env={"OPENROUTER_API_KEY_1": "key"},
-        registry=registry(
-            provider(
-                "openrouter",
-                "OPENROUTER_API_KEY_",
-                fast=["meta-llama/llama-3.1-8b-instruct:free"],
-                balanced=["qwen/qwen3-30b-a3b:free"],
-                powerful=["openai/gpt-oss-120b:free"],
-            )
-        ),
+        registry=registry(openrouter),
     )
     models = {item["litellm_params"]["model"] for item in config["model_list"]}
     assert "openrouter/meta-llama/llama-3.1-8b-instruct:free" in models
@@ -224,10 +220,8 @@ def test_arbitrary_openai_compatible_provider_can_discover_models() -> None:
     models = {item["litellm_params"]["model"] for item in config["model_list"]}
     assert "openai/vendor-70b" in models
     assert "openai/vendor-8b" in models
-    assert all(
-        item["litellm_params"]["api_base"] == "https://vendor.test/v1"
-        for item in config["model_list"]
-    )
+    api_bases = {item["litellm_params"]["api_base"] for item in config["model_list"]}
+    assert api_bases == {"https://vendor.test/v1"}
 
 
 def test_provider_without_keys_is_skipped() -> None:
@@ -268,13 +262,9 @@ def test_generated_config_contains_generation_and_repair_fallbacks() -> None:
 
 
 def test_generation_requires_at_least_one_configured_provider_key() -> None:
+    groq = provider("groq", "GROQ_API_KEY_", fast=["llama-8b"])
     with pytest.raises(ConfigGenerationError):
-        build_litellm_config(
-            env={},
-            registry=registry(
-                provider("groq", "GROQ_API_KEY_", fast=["llama-8b"])
-            ),
-        )
+        build_litellm_config(env={}, registry=registry(groq))
 
 
 def test_provider_registry_loads_from_disk(tmp_path: Path) -> None:
@@ -285,11 +275,10 @@ def test_provider_registry_loads_from_disk(tmp_path: Path) -> None:
 
 def test_high_level_generator_writes_runtime_config(tmp_path: Path) -> None:
     destination = tmp_path / "litellm.runtime.yaml"
+    custom = provider("custom", "CUSTOM_API_KEY_", fast=["model-8b"])
     config = generate_litellm_config(
         env={"CUSTOM_API_KEY_1": "key"},
-        registry=registry(
-            provider("custom", "CUSTOM_API_KEY_", fast=["model-8b"])
-        ),
+        registry=registry(custom),
         destination=destination,
     )
     assert destination.exists()
