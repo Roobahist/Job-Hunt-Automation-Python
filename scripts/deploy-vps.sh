@@ -42,9 +42,15 @@ git pull --ff-only
 
 docker compose build api
 
-# Expand numbered provider keys and the current Groq model catalog into capability pools.
-# The generated runtime file is intentionally ignored by Git.
-docker compose run --rm --no-deps api python scripts/generate-litellm-config.py
+# Keep application config mounts read-only. The container emits the generated LiteLLM config,
+# while the host owns the atomic write into config/litellm.runtime.yaml.
+runtime_tmp="$(mktemp ./config/litellm.runtime.yaml.XXXXXX)"
+trap 'rm -f "$runtime_tmp"' EXIT
+docker compose run --rm -T --no-deps \
+    -e LITELLM_CONFIG_STDOUT=true \
+    api python scripts/generate-litellm-config.py >"$runtime_tmp"
+mv "$runtime_tmp" ./config/litellm.runtime.yaml
+trap - EXIT
 
 docker compose build worker-fast
 
