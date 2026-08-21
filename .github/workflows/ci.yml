@@ -62,6 +62,8 @@ jobs:
           grep -q 'job-fast' /tmp/models.json
           grep -q 'job-balanced' /tmp/models.json
           grep -q 'job-powerful' /tmp/models.json
+          grep -q 'repair-fast' /tmp/models.json
+          grep -q 'repair-balanced' /tmp/models.json
           docker rm -f litellm-smoke
       - name: Build worker image
         run: docker build --target worker -t job-hunt-worker .
