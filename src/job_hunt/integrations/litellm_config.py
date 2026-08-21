@@ -265,6 +265,16 @@ def add_repair_deployments(model_list: list[dict[str, Any]]) -> None:
         model_list.append({"model_name": repair_group, "litellm_params": dict(entry["litellm_params"])})
 
 
+def _nonnegative_int(env: Mapping[str, str], name: str, default: int) -> int:
+    try:
+        value = int(env.get(name, str(default)))
+    except ValueError as exc:
+        raise ConfigGenerationError(f"{name} must be an integer") from exc
+    if value < 0:
+        raise ConfigGenerationError(f"{name} must be zero or greater")
+    return value
+
+
 def build_litellm_config(
     *,
     env: Mapping[str, str],
@@ -303,8 +313,8 @@ def build_litellm_config(
         "model_list": model_list,
         "router_settings": {
             "routing_strategy": env.get("LITELLM_ROUTING_STRATEGY", "latency-based-routing"),
-            "allowed_fails": int(env.get("LITELLM_ALLOWED_FAILS", "1")),
-            "cooldown_time": int(env.get("LITELLM_COOLDOWN_SECONDS", "65")),
+            "allowed_fails": _nonnegative_int(env, "LITELLM_ALLOWED_FAILS", 1),
+            "cooldown_time": _nonnegative_int(env, "LITELLM_COOLDOWN_SECONDS", 65),
             "fallbacks": fallbacks,
         },
         "litellm_settings": {"drop_params": True},
