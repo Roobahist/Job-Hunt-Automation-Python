@@ -48,6 +48,7 @@ class Settings(BaseSettings):
     # Celery's global deadline so long document jobs are not killed mid-generation.
     gemini_request_timeout_seconds: int = Field(default=180, ge=1)
     cerebras_request_timeout_seconds: int = Field(default=180, ge=1)
+    litellm_request_timeout_seconds: int = Field(default=180, ge=1)
     telegram_request_timeout_seconds: int = Field(default=120, ge=1)
     baserow_request_timeout_seconds: int = Field(default=60, ge=1)
     latex_compile_timeout_seconds: int = Field(default=180, ge=1)
@@ -59,8 +60,7 @@ class Settings(BaseSettings):
     transient_base_delay_seconds: int = Field(default=5, ge=1)
     transient_max_delay_seconds: int = Field(default=300, ge=1)
 
-    # Provider capacity is shared by every tenant. Each configured key belongs to a separate
-    # account, while all tenants consume the same ordered account pools.
+    # Existing provider settings remain for backward compatibility with old deployments.
     apify_tokens: str = ""
     gemini_api_keys: str = ""
     cerebras_api_keys: str = ""
@@ -68,12 +68,13 @@ class Settings(BaseSettings):
     telegram_bot_token: str = ""
     telegram_webhook_secret: str = ""
 
-    # When set, this is the authoritative fallback order across providers and models.
-    # Format: provider:model,provider:model. Example:
-    # cerebras:llama3.1-8b,gemini:gemini-3.5-flash-lite
+    # Job-hunt workers now call a centralized LiteLLM Proxy using logical model aliases.
+    litellm_base_url: str = "http://litellm:4000"
+    litellm_api_key: str = ""
     llm_routes: str = ""
+    llm_repair_routes: str = ""
 
-    # Legacy Gemini-only settings remain supported when JOB_HUNT_LLM_ROUTES is empty.
+    # Legacy Gemini-only settings remain available for migration compatibility.
     gemini_content_models: str = (
         "gemini-3.6-flash,gemini-3.5-flash,gemini-3-flash-preview,gemini-2.5-flash,"
         "gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-2.5-flash-lite"
@@ -106,6 +107,11 @@ class Settings(BaseSettings):
             raise ConfigurationError("JOB_HUNT_CEREBRAS_API_KEYS must contain at least one API key")
         return keys
 
+    def shared_litellm_key(self) -> str:
+        if not self.litellm_api_key:
+            raise ConfigurationError("JOB_HUNT_LITELLM_API_KEY must be set")
+        return self.litellm_api_key
+
     def shared_telegram_token(self) -> str:
         if not self.telegram_bot_token:
             raise ConfigurationError("JOB_HUNT_TELEGRAM_BOT_TOKEN must be set")
@@ -116,22 +122,27 @@ class Settings(BaseSettings):
             raise ConfigurationError("JOB_HUNT_TELEGRAM_WEBHOOK_SECRET must be set")
         return self.telegram_webhook_secret
 
-    def llm_route_specs(self) -> list[LlmRoute]:
-        raw_routes = self._split_csv(self.llm_routes)
-        if not raw_routes:
-            return [LlmRoute(provider="gemini", model=model) for model in self.content_models()]
+    @classmethod
+    def _gateway_routes(cls, raw: str, variable_name: str) -> list[LlmRoute]:
         routes: list[LlmRoute] = []
-        for raw in raw_routes:
-            provider, separator, model = raw.partition(":")
-            provider = provider.strip().lower()
-            model = model.strip().removeprefix("models/")
-            if not separator or not provider or not model:
+        for alias in cls._split_csv(raw):
+            if ":" in alias:
                 raise ConfigurationError(
-                    "JOB_HUNT_LLM_ROUTES entries must use provider:model, for example cerebras:llama3.1-8b"
+                    f"{variable_name} must contain LiteLLM model aliases, not provider:model entries: {alias}"
                 )
-            if provider not in {"cerebras", "gemini"}:
-                raise ConfigurationError(f"Unsupported LLM provider in JOB_HUNT_LLM_ROUTES: {provider}")
-            routes.append(LlmRoute(provider=provider, model=model))
+            routes.append(LlmRoute(provider="litellm", model=alias))
+        return routes
+
+    def llm_route_specs(self) -> list[LlmRoute]:
+        routes = self._gateway_routes(self.llm_routes, "JOB_HUNT_LLM_ROUTES")
+        if not routes:
+            raise ConfigurationError("JOB_HUNT_LLM_ROUTES must contain at least one LiteLLM model alias")
+        return routes
+
+    def llm_repair_route_specs(self) -> list[LlmRoute]:
+        routes = self._gateway_routes(self.llm_repair_routes, "JOB_HUNT_LLM_REPAIR_ROUTES")
+        if not routes:
+            raise ConfigurationError("JOB_HUNT_LLM_REPAIR_ROUTES must contain at least one LiteLLM model alias")
         return routes
 
     def content_models(self) -> list[str]:

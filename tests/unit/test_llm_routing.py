@@ -1,21 +1,15 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
+import json
 
-import litellm
+import httpx
 import pytest
 
 from job_hunt.config import LlmRoute, Settings
 from job_hunt.domain.models import PromptDefinition
-from job_hunt.errors import ErrorKind, ProviderError
+from job_hunt.errors import ConfigurationError, ErrorKind, ProviderError
 from job_hunt.integrations.gemini import GeminiStructuredClient
-from job_hunt.integrations.llm_routing import (
-    LiteLLMStructuredClient,
-    RoutedStructuredClient,
-    _error_kind,
-    _provider_model,
-    repair_route_specs,
-)
+from job_hunt.integrations.llm_routing import LiteLLMGatewayClient, RoutedStructuredClient, _error_kind
 
 
 def definition() -> PromptDefinition:
@@ -48,57 +42,50 @@ class StubClient(GeminiStructuredClient):
         return self.result
 
 
-class StubRouter:
-    def __init__(self, content: str | None = '{"compatible":true}', error: Exception | None = None) -> None:
-        self.content = content
-        self.error = error
-        self.calls: list[dict[str, object]] = []
-
-    def completion(self, **kwargs: object) -> object:
-        self.calls.append(kwargs)
-        if self.error is not None:
-            raise self.error
-        return SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(content=self.content))],
-            usage=SimpleNamespace(model_dump=lambda: {"total_tokens": 4}),
-            _hidden_params={"model_id": "deployment-test"},
+def gateway_transport(content: str = '{"compatible":true}', status_code: int = 200) -> httpx.MockTransport:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if status_code >= 400:
+            return httpx.Response(status_code, text="upstream failed")
+        return httpx.Response(
+            200,
+            json={
+                "id": "chatcmpl-test",
+                "model": "upstream/provider-model",
+                "choices": [{"message": {"role": "assistant", "content": content}}],
+                "usage": {"total_tokens": 4},
+            },
         )
 
+    return httpx.MockTransport(handler)
 
-def test_route_parser_preserves_cross_provider_order() -> None:
-    settings = Settings(llm_routes="cerebras:first,gemini:second,cerebras:third")
+
+def test_generation_routes_are_litellm_aliases_in_order() -> None:
+    settings = Settings(llm_routes="groq-gpt-oss,gemini-flash,gemini-lite")
     assert [(route.provider, route.model) for route in settings.llm_route_specs()] == [
-        ("cerebras", "first"),
-        ("gemini", "second"),
-        ("cerebras", "third"),
+        ("litellm", "groq-gpt-oss"),
+        ("litellm", "gemini-flash"),
+        ("litellm", "gemini-lite"),
     ]
 
 
-def test_repair_routes_are_independent_from_generation_routes(monkeypatch: pytest.MonkeyPatch) -> None:
-    settings = Settings(llm_routes="cerebras:content-one,gemini:content-two", gemini_repair_models="legacy")
-    monkeypatch.setenv("JOB_HUNT_LLM_REPAIR_ROUTES", "gemini:repair-one,cerebras:repair-two")
-    assert [(route.provider, route.model) for route in repair_route_specs(settings)] == [
-        ("gemini", "repair-one"),
-        ("cerebras", "repair-two"),
-    ]
+def test_generation_routes_reject_old_provider_model_syntax() -> None:
+    settings = Settings(llm_routes="gemini:gemini-3.5-flash")
+    with pytest.raises(ConfigurationError):
+        settings.llm_route_specs()
 
 
-def test_repair_routes_fall_back_to_legacy_gemini_models(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("JOB_HUNT_LLM_REPAIR_ROUTES", raising=False)
-    settings = Settings(gemini_repair_models="gemini-repair-a,gemini-repair-b")
-    assert [(route.provider, route.model) for route in repair_route_specs(settings)] == [
-        ("gemini", "gemini-repair-a"),
-        ("gemini", "gemini-repair-b"),
-    ]
+def test_repair_routes_are_independent() -> None:
+    settings = Settings(llm_routes="content", llm_repair_routes="repair-fast,repair-backup")
+    assert [route.model for route in settings.llm_repair_route_specs()] == ["repair-fast", "repair-backup"]
 
 
-def test_routed_client_preserves_fallback_order() -> None:
-    first = StubClient(error=ProviderError("rate limited", ErrorKind.RATE_LIMIT, retryable=True, provider="cerebras"))
+def test_routed_client_preserves_alias_fallback_order() -> None:
+    first = StubClient(error=ProviderError("limited", ErrorKind.RATE_LIMIT, retryable=True, provider="litellm"))
     second = StubClient(result={"compatible": True})
     client = RoutedStructuredClient(
         [
-            (LlmRoute(provider="cerebras", model="first"), first),
-            (LlmRoute(provider="gemini", model="second"), second),
+            (LlmRoute(provider="litellm", model="first"), first),
+            (LlmRoute(provider="litellm", model="second"), second),
         ]
     )
     assert client.generate("prompt", definition()) == {"compatible": True}
@@ -106,34 +93,64 @@ def test_routed_client_preserves_fallback_order() -> None:
     assert second.calls == 1
 
 
-def test_litellm_client_sends_schema_and_returns_validated_json() -> None:
-    router = StubRouter()
-    client = LiteLLMStructuredClient("gemini", "gemini-test", ["key"], router=router)
+def test_gateway_client_sends_alias_schema_and_authentication() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "model": "groq/openai/gpt-oss-120b",
+                "choices": [{"message": {"content": '{"compatible":true}'}}],
+                "usage": {},
+            },
+        )
+
+    client = LiteLLMGatewayClient(
+        "http://litellm:4000",
+        "secret",
+        "groq-gpt-oss",
+        transport=httpx.MockTransport(handler),
+    )
     assert client.generate("prompt", definition()) == {"compatible": True}
-    call = router.calls[0]
-    assert call["model"] == "job-hunt-gemini-gemini-test"
-    assert call["response_format"]["type"] == "json_schema"  # type: ignore[index]
+    request = requests[0]
+    payload = json.loads(request.content)
+    assert request.url.path == "/v1/chat/completions"
+    assert request.headers["authorization"] == "Bearer secret"
+    assert payload["model"] == "groq-gpt-oss"
+    assert payload["response_format"]["type"] == "json_schema"
 
 
-def test_litellm_client_uses_independent_repair_route_for_invalid_json() -> None:
+def test_gateway_client_uses_independent_repair_route_for_invalid_json() -> None:
     repair = StubClient(result={"compatible": True})
-    client = LiteLLMStructuredClient(
-        "gemini",
-        "gemini-test",
-        ["key"],
-        router=StubRouter(content="not json"),
+    client = LiteLLMGatewayClient(
+        "http://litellm:4000",
+        "secret",
+        "content",
         repair_client=repair,
+        transport=gateway_transport(content="not json"),
     )
     assert client.generate("prompt", definition()) == {"compatible": True}
     assert repair.calls == 1
     assert "ORIGINAL OUTPUT" in repair.prompts[0]
 
 
-def test_provider_model_uses_litellm_provider_prefix() -> None:
-    assert _provider_model("gemini", "gemini-3.5-flash") == "gemini/gemini-3.5-flash"
-    assert _provider_model("cerebras", "gpt-oss-120b") == "cerebras/gpt-oss-120b"
+def test_gateway_rate_limit_maps_to_domain_error() -> None:
+    client = LiteLLMGatewayClient(
+        "http://litellm:4000",
+        "secret",
+        "content",
+        transport=gateway_transport(status_code=429),
+    )
+    with pytest.raises(ProviderError) as caught:
+        client.generate("prompt", definition())
+    assert caught.value.kind == ErrorKind.RATE_LIMIT
+    assert caught.value.retryable is True
 
 
-def test_litellm_rate_limit_maps_to_domain_error() -> None:
-    exc = litellm.RateLimitError(message="limited", model="test", llm_provider="gemini", response=None)
-    assert _error_kind(exc) == ErrorKind.RATE_LIMIT
+def test_http_status_error_mapping() -> None:
+    assert _error_kind(429) == ErrorKind.RATE_LIMIT
+    assert _error_kind(401) == ErrorKind.AUTHENTICATION
+    assert _error_kind(422) == ErrorKind.MALFORMED_PROVIDER_RESPONSE
+    assert _error_kind(503) == ErrorKind.TRANSIENT_PROVIDER

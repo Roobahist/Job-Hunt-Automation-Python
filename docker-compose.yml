@@ -1,3 +1,9 @@
+x-app-depends: &app-depends
+  redis:
+    condition: service_healthy
+  litellm:
+    condition: service_healthy
+
 services:
   api:
     image: job-hunt-automation-api:latest
@@ -10,7 +16,7 @@ services:
       - artifacts:/app/runs
       - ./config:/app/config:ro
       - ./tenants:/app/tenants:ro
-    depends_on: {redis: {condition: service_healthy}}
+    depends_on: *app-depends
     restart: unless-stopped
 
   test:
@@ -28,6 +34,23 @@ services:
     profiles: ["tools"]
     restart: "no"
 
+  litellm:
+    image: ghcr.io/berriai/litellm:main-stable
+    env_file: .env
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    volumes:
+      - ./config/litellm.yaml:/app/config.yaml:ro
+    expose: ["4000"]
+    healthcheck:
+      test:
+        ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:4000/health/liveliness')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    depends_on: {redis: {condition: service_healthy}}
+    restart: unless-stopped
+
   worker-fast:
     image: job-hunt-automation-worker:latest
     build:
@@ -42,7 +65,7 @@ services:
       - artifacts:/app/runs
       - ./config:/app/config:ro
       - ./tenants:/app/tenants:ro
-    depends_on: {redis: {condition: service_healthy}}
+    depends_on: *app-depends
     restart: unless-stopped
 
   worker-documents:
@@ -56,7 +79,7 @@ services:
       - artifacts:/app/runs
       - ./config:/app/config:ro
       - ./tenants:/app/tenants:ro
-    depends_on: {redis: {condition: service_healthy}}
+    depends_on: *app-depends
     restart: unless-stopped
 
   worker-notifications:
@@ -70,7 +93,7 @@ services:
       - artifacts:/app/runs
       - ./config:/app/config:ro
       - ./tenants:/app/tenants:ro
-    depends_on: {redis: {condition: service_healthy}}
+    depends_on: *app-depends
     restart: unless-stopped
 
   beat:
@@ -80,7 +103,7 @@ services:
     volumes:
       - ./config:/app/config:ro
       - ./tenants:/app/tenants:ro
-    depends_on: {redis: {condition: service_healthy}}
+    depends_on: *app-depends
     restart: unless-stopped
 
   flower:
@@ -93,7 +116,7 @@ services:
     volumes:
       - ./config:/app/config:ro
       - ./tenants:/app/tenants:ro
-    depends_on: {redis: {condition: service_healthy}}
+    depends_on: *app-depends
     restart: unless-stopped
 
   redis:
