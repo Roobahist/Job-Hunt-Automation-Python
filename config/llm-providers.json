@@ -14,15 +14,23 @@
         "balanced": [],
         "powerful": []
       },
+      "discovery_allowlist": [
+        "openai/gpt-oss-20b",
+        "openai/gpt-oss-120b",
+        "qwen/qwen3.6-27b"
+      ],
       "exclude_models": [],
       "blocklist": [
         "whisper",
         "speech",
         "tts",
+        "orpheus",
         "guard",
+        "safeguard",
         "moderation",
         "embedding",
-        "embed"
+        "embed",
+        "rerank"
       ]
     },
     {
