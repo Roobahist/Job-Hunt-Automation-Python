@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 from uuid import UUID
 
 from job_hunt.domain.models import Job, PromptDefinition
@@ -28,7 +28,7 @@ class WorkflowResult:
 class QualificationResult:
     row_id: int
     passed: bool
-    score: int
+    score: int | None
 
 
 class ApplicationWorkflow:
@@ -63,6 +63,10 @@ class ApplicationWorkflow:
     def _skipped(row_id: int, score: int) -> WorkflowResult:
         return WorkflowResult(row_id=row_id, passed=False, artifacts_published=False, score=score)
 
+    def _cancelled(self, log: Any, row_id: int, stage: str, score: int | None = None) -> QualificationResult:
+        log.info("job_cancelled_by_status", stage=stage, row_id=row_id)
+        return QualificationResult(row_id=row_id, passed=False, score=score)
+
     def persist_and_qualify(
         self,
         job: Job,
@@ -85,21 +89,17 @@ class ApplicationWorkflow:
         )
         row_id = int(row["id"])
 
-        # A dropped row is terminal for automatic discovery. Do not spend more LLM
-        # capacity re-evaluating it and do not overwrite the reason/state that caused
-        # it to be dropped. A Fillout/manual forced submission is the explicit override.
+        # Automatic discovery never reprocesses a previously dropped row. Fillout
+        # remains the explicit override and resets the row to New below.
         if existing and not force and self._dropped(row_id):
             if persisted is not None:
                 persisted(row_id)
             self._progress(progress, "persistence", "finish")
             existing_score = existing.get("Score")
-            score = int(existing_score) if isinstance(existing_score, (int, float)) else 0
+            score = int(existing_score) if isinstance(existing_score, (int, float)) else None
             log.info("job_already_dropped", stage="persist", row_id=row_id, score=score)
             return QualificationResult(row_id=row_id, passed=False, score=score)
 
-        # Existing rows may contain a qualification result from an older run. Clear
-        # it before a fresh gate evaluation so Baserow never displays stale Apply/Score
-        # values beside a new compatibility decision.
         if existing:
             retry_transient(self.repository.clear_qualification, row_id)
 
@@ -110,25 +110,38 @@ class ApplicationWorkflow:
         self._progress(progress, "persistence", "finish")
         log.info("job_persisted", stage="persist", row_id=row_id, reprocessed=bool(existing), forced=force)
 
+        # Baserow is user-owned state. A manual Dropped change is a normal cancellation,
+        # not a workflow error. Check it at every expensive stage boundary.
+        if self._dropped(row_id):
+            return self._cancelled(log, row_id, "pre_compatibility")
+
         if self.compatibility_filter is not None and not force:
             self._progress(progress, "compatibility_filter", "start")
             compatible = self.compatibility_filter.compatible(job, prompts)
             self._progress(progress, "compatibility_filter", "finish")
+            if self._dropped(row_id):
+                return self._cancelled(log, row_id, "post_compatibility")
             log.info("job_compatibility_checked", stage="compatibility_filter", compatible=compatible)
             if not compatible:
                 retry_transient(self.repository.set_status, row_id, "dropped")
                 log.info("job_compatibility_filtered", stage="compatibility_filter", row_id=row_id)
-                return QualificationResult(row_id=row_id, passed=False, score=cast(int, None))
+                return QualificationResult(row_id=row_id, passed=False, score=None)
         elif force:
             log.info("job_compatibility_bypassed", stage="compatibility_filter", row_id=row_id)
 
+        if self._dropped(row_id):
+            return self._cancelled(log, row_id, "pre_qualification")
+
         self._progress(progress, "qualification", "start")
         qualification = self.qualifier.qualify(job, master_cv, prompts)
+        self._progress(progress, "qualification", "finish")
+        if self._dropped(row_id):
+            return self._cancelled(log, row_id, "post_qualification", qualification.score)
+
         passed = qualification.passes(threshold, force=force)
         retry_transient(self.repository.save_qualification, row_id, qualification)
         if not passed and not force:
             retry_transient(self.repository.set_status, row_id, "dropped")
-        self._progress(progress, "qualification", "finish")
         log.info(
             "job_qualified",
             stage="qualification",
