@@ -11,7 +11,7 @@ from celery.schedules import crontab  # type: ignore[import-untyped]
 from pydantic import TypeAdapter
 from redis import Redis
 
-from job_hunt.application.discovery import build_search_url, normalize_discovery
+from job_hunt.application.discovery import build_search_url, normalize_discovery, search_criteria_active
 from job_hunt.config import Settings, load_registry
 from job_hunt.container import Container
 from job_hunt.domain.models import Job, JobSubmission, RunState, RunStatus
@@ -887,6 +887,9 @@ def process_submission(
                 "published": False,
             }
 
+        if qualification.score is None:
+            raise RuntimeError("Passing qualification result must include a score")
+
         store.update(identifier, state=RunState.RUNNING, stage="documents_queued", error=None)
         _progress_start(
             tenant,
@@ -966,9 +969,10 @@ def discover_tenant(tenant: str, run_id: str) -> dict[str, int]:
             services.snapshot(),
             ttl_seconds=settings.discovery_snapshot_ttl_seconds,
         )
-        criteria = list(
+        all_criteria = list(
             services.baserow.iter_rows(services.config.baserow_table_ids["searchCriteria"])
         )
+        criteria = [row for row in all_criteria if search_criteria_active(row)]
         urls = [build_search_url(services.config.linkedin_base_search_url, row) for row in criteria]
         rows = services.discovery.discover(urls, max_items=services.config.linkedin_max_items)
         jobs = normalize_discovery(
@@ -976,7 +980,24 @@ def discover_tenant(tenant: str, run_id: str) -> dict[str, int]:
             services.config.company_exclusions,
             services.config.title_exclusions,
         )
+
+        new_jobs: list[Job] = []
+        duplicates = 0
         for job in jobs:
+            existing = retry_transient(services.repository.find, job)
+            if existing is not None:
+                duplicates += 1
+                logger().info(
+                    "discovery_duplicate_skipped",
+                    tenant=tenant,
+                    run_id=run_id,
+                    job_identity=job.identity,
+                    row_id=existing.get("id"),
+                )
+                continue
+            new_jobs.append(job)
+
+        for job in new_jobs:
             child = RunStatus(tenant=tenant, kind="scheduled-job")
             checkpoint_namespace = str(child.run_id)
             store.save(child)
@@ -1031,14 +1052,27 @@ def discover_tenant(tenant: str, run_id: str) -> dict[str, int]:
                 snapshot_id,
                 checkpoint_namespace,
             )
+        counts = {
+            "criteria_total": len(all_criteria),
+            "criteria_active": len(criteria),
+            "discovered": len(jobs),
+            "duplicates": duplicates,
+            "queued": len(new_jobs),
+        }
         store.update(
             identifier,
             state=RunState.SUCCEEDED,
             stage="dispatched",
-            counts={"queued": len(jobs)},
+            counts=counts,
             error=None,
         )
-        return {"queued": len(jobs)}
+        logger().info(
+            "discovery_dispatched",
+            tenant=tenant,
+            run_id=run_id,
+            **counts,
+        )
+        return counts
     except Exception as exc:
         store.update(
             identifier,
