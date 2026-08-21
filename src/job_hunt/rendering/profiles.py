@@ -23,6 +23,43 @@ def _content(items: object, command: str = "CVContent") -> str:
     return "\n".join(rendered)
 
 
+def _mahsa_content(items: object, *, nested: bool = False) -> str:
+    """Render structured Mahsa content without allowing JSON to define LaTeX structure."""
+    if not isinstance(items, Sequence) or isinstance(items, (str, bytes)):
+        return ""
+
+    bullet_command = "CVBullet"
+    list_command = "CVNestedBulletList" if nested else "CVBulletList"
+    text_command = "CVNestedText" if nested else "CVEntryText"
+    rendered: list[str] = []
+    pending_bullets: list[str] = []
+
+    def flush_bullets() -> None:
+        if not pending_bullets:
+            return
+        body = "\n".join(pending_bullets)
+        rendered.append(f"\\{list_command}{{\n{body}\n}}")
+        pending_bullets.clear()
+
+    for item in items:
+        bullet = True
+        value = item
+        if isinstance(item, Mapping):
+            value = item.get("text", "")
+            bullet = bool(item.get("bullet", True))
+        text = latex_value(value)
+        if not text:
+            continue
+        if bullet:
+            pending_bullets.append(f"\\{bullet_command}{{{text}}}")
+        else:
+            flush_bullets()
+            rendered.append(f"\\{text_command}{{{text}}}")
+
+    flush_bullets()
+    return "\n".join(rendered)
+
+
 def _label_row(row: Mapping[str, Any]) -> str:
     label = latex_value(row.get("label", ""))
     value = latex_value(row.get("value", ""))
@@ -149,7 +186,7 @@ class MahsaCvRenderer(CvRenderer):
                 f"{{{latex_value(child.get('secondary_right', ''))}}}"
                 f"{{{latex_value(child.get('url', ''))}}}"
                 f"{{{latex_value(child.get('icon', ''))}}}"
-                f"{{{_content(child.get('content', []), 'CVBullet')}}}"
+                f"{{{_mahsa_content(child.get('content', []), nested=True)}}}"
                 for child in nested
             )
             nested_group = ""
@@ -163,7 +200,7 @@ class MahsaCvRenderer(CvRenderer):
                 latex_value(entry.get("secondary_right", "")),
                 latex_value(entry.get("url", "")),
                 latex_value(entry.get("icon", "")),
-                _content(entry.get("content", []), "CVBullet"),
+                _mahsa_content(entry.get("content", [])),
                 nested_group,
             ]
             output.append("\\CVEntry" + "".join(f"{{{arg}}}" for arg in args))
