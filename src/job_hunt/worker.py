@@ -152,12 +152,8 @@ def _notification_caption(
             started = raw.get("started_at")
             if stage == current_stage and isinstance(started, str):
                 try:
-                    local = datetime.fromisoformat(started).astimezone(
-                        ZoneInfo(settings.scheduler_timezone)
-                    )
-                    lines.append(
-                        f"▶ {label}: started {local.strftime('%I:%M:%S %p').lstrip('0')}"
-                    )
+                    local = datetime.fromisoformat(started).astimezone(ZoneInfo(settings.scheduler_timezone))
+                    lines.append(f"▶ {label}: started {local.strftime('%I:%M:%S %p').lstrip('0')}")
                 except ValueError:
                     lines.append(f"▶ {label}: running")
     retry_in = meta.get("retry_in_seconds")
@@ -254,12 +250,7 @@ def _progress_start(
     if score is not None:
         fields["score"] = score
     _store().merge_notification(run_id, **fields)
-    update_job_notification.delay(
-        tenant,
-        str(run_id),
-        job.model_dump(mode="json"),
-        chat_id,
-    )
+    update_job_notification.delay(tenant, str(run_id), job.model_dump(mode="json"), chat_id)
 
 
 def _progress_finish(run_id: UUID, stage: str) -> None:
@@ -298,12 +289,7 @@ def _progress_deferred(
         retry_in_seconds=countdown,
     )
     if job is not None and chat_id is not None:
-        update_job_notification.delay(
-            tenant,
-            str(run_id),
-            job.model_dump(mode="json"),
-            chat_id,
-        )
+        update_job_notification.delay(tenant, str(run_id), job.model_dump(mode="json"), chat_id)
 
 
 def _progress_terminal(
@@ -326,12 +312,7 @@ def _progress_terminal(
         fields["error_message"] = error_message
     _store().merge_notification(run_id, **fields)
     if job is not None and chat_id is not None:
-        update_job_notification.delay(
-            tenant,
-            str(run_id),
-            job.model_dump(mode="json"),
-            chat_id,
-        )
+        update_job_notification.delay(tenant, str(run_id), job.model_dump(mode="json"), chat_id)
 
 
 def _ensure_notification(tenant: str, run_id: UUID, job: Job, chat_id: str) -> None:
@@ -341,12 +322,7 @@ def _ensure_notification(tenant: str, run_id: UUID, job: Job, chat_id: str) -> N
     if notification.get("init_queued"):
         return
     store.merge_notification(run_id, init_queued=True)
-    init_job_notification.delay(
-        tenant,
-        str(run_id),
-        job.model_dump(mode="json"),
-        chat_id,
-    )
+    init_job_notification.delay(tenant, str(run_id), job.model_dump(mode="json"), chat_id)
 
 
 @celery_app.task(
@@ -400,12 +376,7 @@ def init_job_notification(
                 retries=retries,
                 countdown=countdown,
             )
-        logger().warning(
-            "telegram_progress_init_failed",
-            tenant=tenant,
-            run_id=run_id,
-            error=str(exc),
-        )
+        logger().warning("telegram_progress_init_failed", tenant=tenant, run_id=run_id, error=str(exc))
         return {"state": "failed", "message_id": ""}
 
 
@@ -458,12 +429,7 @@ def update_job_notification(
                 retries=retries,
                 countdown=countdown,
             )
-        logger().warning(
-            "telegram_progress_update_failed",
-            tenant=tenant,
-            run_id=run_id,
-            error=str(exc),
-        )
+        logger().warning("telegram_progress_update_failed", tenant=tenant, run_id=run_id, error=str(exc))
         return {"state": "failed", "message_id": ""}
 
 
@@ -490,14 +456,7 @@ def notify_documents(
     try:
         _progress_finish(identifier, "notification_queue")
         if job is not None:
-            _progress_start(
-                tenant,
-                identifier,
-                job,
-                chat_id,
-                "telegram_finalization",
-                row_id=row_id,
-            )
+            _progress_start(tenant, identifier, job, chat_id, "telegram_finalization", row_id=row_id)
         artifacts = [Path(path) for path in paths]
         archives = [path for path in artifacts if path.suffix.casefold() == ".zip"]
         if len(archives) != 1:
@@ -541,16 +500,8 @@ def notify_documents(
         final_caption = caption
         if job is not None:
             final_status = store.get(identifier)
-            final_notification = (
-                final_status.notification
-                if final_status and isinstance(final_status.notification, dict)
-                else {}
-            )
-            final_score = (
-                final_notification.get("score")
-                if isinstance(final_notification.get("score"), int)
-                else None
-            )
+            final_notification = final_status.notification if final_status and isinstance(final_status.notification, dict) else {}
+            final_score = final_notification.get("score") if isinstance(final_notification.get("score"), int) else None
             final_caption = _notification_caption(job, final_score, final_notification)
             notifier.edit_final_caption(
                 chat_id,
@@ -567,14 +518,7 @@ def notify_documents(
         plan = _retry_plan(self, exc)
         if plan is not None and isinstance(exc, WorkflowError):
             retries, countdown = plan
-            _progress_deferred(
-                tenant,
-                identifier,
-                job,
-                chat_id,
-                "telegram_finalization",
-                countdown,
-            )
+            _progress_deferred(tenant, identifier, job, chat_id, "telegram_finalization", countdown)
             _defer_task(
                 self,
                 exc,
@@ -596,13 +540,7 @@ def notify_documents(
             stage="failed",
             error={"type": type(exc).__name__, "message": str(exc)},
         )
-        _log_terminal_failure(
-            "notification_failed",
-            exc,
-            tenant=tenant,
-            run_id=run_id,
-            stage="notification",
-        )
+        _log_terminal_failure("notification_failed", exc, tenant=tenant, run_id=run_id, stage="notification")
         raise
 
 
@@ -759,13 +697,7 @@ def generate_documents(
             stage="failed",
             error={"type": type(exc).__name__, "message": str(exc)},
         )
-        _log_terminal_failure(
-            "document_generation_failed",
-            exc,
-            tenant=tenant,
-            run_id=run_id,
-            stage="documents",
-        )
+        _log_terminal_failure("document_generation_failed", exc, tenant=tenant, run_id=run_id, stage="documents")
         raise
 
 
@@ -817,7 +749,6 @@ def process_submission(
             country=services.config.apify_proxy_country,
             max_concurrency=services.config.apify_max_concurrency,
         )
-        _ensure_notification(tenant, identifier, job, chat_id)
         _progress_finish(identifier, "normalization")
 
         lock = redis.lock(
@@ -837,13 +768,9 @@ def process_submission(
                     _progress_finish(identifier, stage)
 
             def persisted(row_id: int) -> None:
+                # The row must exist before Telegram is allowed to expose the job.
                 store.merge_notification(identifier, row_id=row_id)
-                update_job_notification.delay(
-                    tenant,
-                    run_id,
-                    job.model_dump(mode="json"),
-                    chat_id or "",
-                )
+                _ensure_notification(tenant, identifier, job, chat_id or "")
 
             qualification = services.workflow.persist_and_qualify(
                 job,
@@ -859,17 +786,8 @@ def process_submission(
             if lock.owned():
                 lock.release()
 
-        store.merge_notification(
-            identifier,
-            row_id=qualification.row_id,
-            score=qualification.score,
-        )
-        update_job_notification.delay(
-            tenant,
-            run_id,
-            job.model_dump(mode="json"),
-            chat_id,
-        )
+        store.merge_notification(identifier, row_id=qualification.row_id, score=qualification.score)
+        update_job_notification.delay(tenant, run_id, job.model_dump(mode="json"), chat_id)
         if not qualification.passed:
             _progress_terminal(
                 tenant,
@@ -969,9 +887,7 @@ def discover_tenant(tenant: str, run_id: str) -> dict[str, int]:
             services.snapshot(),
             ttl_seconds=settings.discovery_snapshot_ttl_seconds,
         )
-        all_criteria = list(
-            services.baserow.iter_rows(services.config.baserow_table_ids["searchCriteria"])
-        )
+        all_criteria = list(services.baserow.iter_rows(services.config.baserow_table_ids["searchCriteria"]))
         criteria = [row for row in all_criteria if search_criteria_active(row)]
         urls = [build_search_url(services.config.linkedin_base_search_url, row) for row in criteria]
         rows = services.discovery.discover(urls, max_items=services.config.linkedin_max_items)
@@ -1004,7 +920,6 @@ def discover_tenant(tenant: str, run_id: str) -> dict[str, int]:
             now = datetime.now(UTC).isoformat()
             store.merge_notification(
                 child.run_id,
-                init_queued=True,
                 processing_state="processing",
                 current_stage="discovery",
                 timeline={
@@ -1014,12 +929,6 @@ def discover_tenant(tenant: str, run_id: str) -> dict[str, int]:
                         "duration_seconds": 0.0,
                     }
                 },
-            )
-            init_job_notification.delay(
-                tenant,
-                str(child.run_id),
-                job.model_dump(mode="json"),
-                services.config.telegram_chat_id,
             )
             payload = {
                 "entry_type": "external",
@@ -1066,12 +975,7 @@ def discover_tenant(tenant: str, run_id: str) -> dict[str, int]:
             counts=counts,
             error=None,
         )
-        logger().info(
-            "discovery_dispatched",
-            tenant=tenant,
-            run_id=run_id,
-            **counts,
-        )
+        logger().info("discovery_dispatched", tenant=tenant, run_id=run_id, **counts)
         return counts
     except Exception as exc:
         store.update(
@@ -1080,13 +984,7 @@ def discover_tenant(tenant: str, run_id: str) -> dict[str, int]:
             stage="failed",
             error={"type": type(exc).__name__, "message": str(exc)},
         )
-        _log_terminal_failure(
-            "discovery_failed",
-            exc,
-            tenant=tenant,
-            run_id=run_id,
-            stage="discovery",
-        )
+        _log_terminal_failure("discovery_failed", exc, tenant=tenant, run_id=run_id, stage="discovery")
         raise
 
 

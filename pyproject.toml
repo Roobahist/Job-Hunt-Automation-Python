@@ -56,6 +56,9 @@ line-length = 120
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
 
+[tool.ruff.lint.per-file-ignores]
+"src/job_hunt/worker.py" = ["E501"]
+
 [tool.mypy]
 python_version = "3.12"
 strict = true

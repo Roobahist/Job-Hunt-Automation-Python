@@ -106,9 +106,11 @@ class TelegramNotifier:
         # remain visible so the underlying error can be diagnosed and retried.
         if _should_cleanup(caption):
             return ""
-        placeholder = (
-            b"Job processing is in progress. This placeholder will be replaced by "
-            b"the application ZIP when complete.\n"
+        placeholder = b" ".join(
+            (
+                b"Job processing is in progress.",
+                b"The application ZIP will replace this placeholder when complete.\n",
+            )
         )
         payload = self._post(
             "/sendDocument",

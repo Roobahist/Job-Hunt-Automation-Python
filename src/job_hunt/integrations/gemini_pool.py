@@ -490,7 +490,9 @@ class PooledGeminiStructuredClient(GeminiStructuredClient):
                     )
                     return final
 
-                failures.append(f"{model_name}/{self._key_id(key)}: {parsing_error or 'Gemini returned an empty response'}")
+                failures.append(
+                    f"{model_name}/{self._key_id(key)}: {parsing_error or 'Gemini returned an empty response'}"
+                )
             except ConfigurationError:
                 raise
             except ProviderError as exc:
