@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import copy
 import hashlib
 import json
 import os
@@ -8,46 +7,16 @@ import time
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-import httpx
+import litellm
 from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
+from litellm import Router
 
 from job_hunt.config import LlmRoute, Settings
 from job_hunt.domain.models import PromptDefinition
 from job_hunt.errors import ConfigurationError, ErrorKind, ProviderError
 from job_hunt.integrations.gemini import GeminiStructuredClient, _validate_json_schema
-from job_hunt.integrations.gemini_pool import PooledGeminiStructuredClient
-from job_hunt.integrations.http import raise_provider_error
 from job_hunt.logging import logger
 from job_hunt.state import RedisState
-
-
-def _cerebras_schema(schema: dict[str, Any]) -> dict[str, Any]:
-    normalized = copy.deepcopy(schema)
-
-    def visit(node: object) -> None:
-        if not isinstance(node, dict):
-            return
-        if node.get("type") == "object" or isinstance(node.get("properties"), dict):
-            node["additionalProperties"] = False
-            properties = node.get("properties")
-            if isinstance(properties, dict):
-                for child in properties.values():
-                    visit(child)
-        items = node.get("items")
-        if isinstance(items, dict):
-            visit(items)
-        for keyword in ("anyOf", "oneOf", "allOf", "prefixItems"):
-            variants = node.get(keyword)
-            if isinstance(variants, list):
-                for child in variants:
-                    visit(child)
-        definitions = node.get("$defs")
-        if isinstance(definitions, dict):
-            for child in definitions.values():
-                visit(child)
-
-    visit(normalized)
-    return normalized
 
 
 def _parse_routes(raw: str, *, variable_name: str) -> list[LlmRoute]:
@@ -60,7 +29,7 @@ def _parse_routes(raw: str, *, variable_name: str) -> list[LlmRoute]:
         model = model.strip().removeprefix("models/")
         if not separator or not provider or not model:
             raise ConfigurationError(
-                f"{variable_name} entries must use provider:model, for example cerebras:gpt-oss-120b"
+                f"{variable_name} entries must use provider:model, for example gemini:gemini-3.5-flash-lite"
             )
         if provider not in {"cerebras", "gemini"}:
             raise ConfigurationError(f"Unsupported LLM provider in {variable_name}: {provider}")
@@ -96,31 +65,77 @@ def _repair_definition(operation: str, schema: dict[str, Any]) -> PromptDefiniti
     )
 
 
-class CerebrasStructuredClient(GeminiStructuredClient):
+def _key_id(key: str) -> str:
+    return hashlib.sha256(key.encode()).hexdigest()[:12]
+
+
+def _provider_model(provider: str, model: str) -> str:
+    # LiteLLM uses provider/model identifiers. Keeping this conversion in one place
+    # makes adding another provider independent from the workflow code.
+    return f"{provider}/{model}"
+
+
+def _error_kind(exc: Exception) -> ErrorKind:
+    if isinstance(exc, litellm.RateLimitError):
+        return ErrorKind.RATE_LIMIT
+    if isinstance(exc, (litellm.AuthenticationError, litellm.PermissionDeniedError)):
+        return ErrorKind.AUTH
+    if isinstance(exc, litellm.BadRequestError):
+        return ErrorKind.MALFORMED_PROVIDER_RESPONSE
+    return ErrorKind.TRANSIENT_PROVIDER
+
+
+class LiteLLMStructuredClient(GeminiStructuredClient):
+    """One logical provider:model route backed by a LiteLLM deployment pool."""
+
     def __init__(
         self,
-        keys: Sequence[str],
+        provider: str,
         model: str,
+        keys: Sequence[str],
         *,
-        base_url: str = "https://api.cerebras.ai/v1",
         timeout_seconds: int = 180,
-        client: httpx.Client | None = None,
         repair_client: GeminiStructuredClient | None = None,
+        router: Router | None = None,
     ) -> None:
-        self.keys = [key for key in keys if key]
+        self.provider = provider
         self.model = model
-        self._client = client or httpx.Client(base_url=base_url.rstrip("/"), timeout=timeout_seconds)
+        self.keys = [key for key in keys if key]
+        self.timeout_seconds = timeout_seconds
         self.repair_client = repair_client
         if not self.keys:
-            raise ValueError("At least one Cerebras API key is required")
-        if not self.model:
-            raise ValueError("A Cerebras model is required")
+            raise ValueError(f"At least one {provider} API key is required")
+        if not model:
+            raise ValueError("A model is required")
 
-    @staticmethod
-    def _key_id(key: str) -> str:
-        return hashlib.sha256(key.encode()).hexdigest()[:12]
+        alias = self.route_name
+        model_list = [
+            {
+                "model_name": alias,
+                "litellm_params": {
+                    "model": _provider_model(provider, model),
+                    "api_key": key,
+                    "timeout": timeout_seconds,
+                },
+                "model_info": {"id": f"{alias}:{_key_id(key)}"},
+            }
+            for key in self.keys
+        ]
+        self.router = router or Router(
+            model_list=model_list,
+            routing_strategy="simple-shuffle",
+            num_retries=0,
+            allowed_fails=1,
+            cooldown_time=65,
+            set_verbose=False,
+        )
 
-    def _repair_via_routes(
+    @property
+    def route_name(self) -> str:
+        safe_model = self.model.replace("/", "-")
+        return f"job-hunt-{self.provider}-{safe_model}"
+
+    def _repair(
         self,
         raw_output: str,
         schema: dict[str, Any],
@@ -130,62 +145,50 @@ class CerebrasStructuredClient(GeminiStructuredClient):
     ) -> dict[str, Any]:
         if self.repair_client is None:
             raise ProviderError(
-                f"Cerebras structured output failed validation: {validation_error}",
+                f"Structured output failed validation: {validation_error}",
                 ErrorKind.MALFORMED_PROVIDER_RESPONSE,
-                provider="cerebras",
+                provider=self.provider,
             )
         return self.repair_client.generate(
             _repair_prompt(raw_output, schema, validation_error),
             _repair_definition(operation, schema),
         )
 
-    def _call(
-        self,
-        key: str,
-        prompt: str,
-        schema: dict[str, Any],
-        temperature: float,
-        *,
-        operation: str,
-    ) -> tuple[dict[str, Any], dict[str, Any]]:
-        payload = {
-            "model": self.model,
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": temperature,
-            "response_format": {
-                "type": "json_schema",
-                "json_schema": {
-                    "name": "job_hunt_response",
-                    "strict": True,
-                    "schema": _cerebras_schema(schema),
-                },
-            },
-        }
+    def generate(self, prompt: str, definition: PromptDefinition) -> dict[str, Any]:
         started = time.perf_counter()
         try:
-            response = self._client.post(
-                "/chat/completions",
-                headers={"Authorization": f"Bearer {key}"},
-                json=payload,
+            response = self.router.completion(
+                model=self.route_name,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=definition.temperature,
+                response_format={
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "job_hunt_response",
+                        "strict": True,
+                        "schema": definition.output_structure,
+                    },
+                },
+                timeout=self.timeout_seconds,
             )
-        except httpx.TransportError as exc:
+        except Exception as exc:
+            kind = _error_kind(exc)
             raise ProviderError(
-                f"Cerebras network request failed: {exc}",
-                ErrorKind.TRANSIENT_PROVIDER,
-                retryable=True,
-                provider="cerebras",
+                f"LiteLLM {self.provider}:{self.model} failed: {exc}",
+                kind,
+                retryable=kind in {ErrorKind.RATE_LIMIT, ErrorKind.TRANSIENT_PROVIDER},
+                provider=self.provider,
             ) from exc
-        raise_provider_error("cerebras", response)
+
         latency_ms = int((time.perf_counter() - started) * 1000)
         try:
-            body = response.json()
-            choices = body["choices"]
-            content = choices[0]["message"]["content"]
-        except (KeyError, IndexError, TypeError, ValueError) as exc:
+            message = response.choices[0].message
+            content = message.content
+        except (AttributeError, IndexError, TypeError) as exc:
             raise ProviderError(
-                "Cerebras returned a malformed chat-completions response",
+                "LiteLLM returned a malformed chat-completions response",
                 ErrorKind.MALFORMED_PROVIDER_RESPONSE,
-                provider="cerebras",
+                provider=self.provider,
             ) from exc
 
         raw_output = json.dumps(content, ensure_ascii=False) if isinstance(content, Mapping) else str(content or "")
@@ -195,77 +198,42 @@ class CerebrasStructuredClient(GeminiStructuredClient):
             try:
                 parsed = json.loads(content)
             except json.JSONDecodeError as exc:
-                fixed = self._repair_via_routes(raw_output, schema, str(exc), operation=operation)
-                return fixed, {
-                    "provider": "cerebras",
-                    "model": self.model,
-                    "account": self._key_id(key),
-                    "latency_ms": latency_ms,
-                    "repaired": True,
-                }
+                parsed = self._repair(raw_output, definition.output_structure, str(exc), operation=definition.key)
         else:
             raise ProviderError(
-                "Cerebras returned empty structured output",
+                "LiteLLM returned empty structured output",
                 ErrorKind.MALFORMED_PROVIDER_RESPONSE,
-                provider="cerebras",
+                provider=self.provider,
             )
 
         try:
-            validated = _validate_json_schema(parsed, schema)
-            was_repaired = False
+            result = _validate_json_schema(parsed, definition.output_structure)
+            repaired = False
         except JsonSchemaValidationError as exc:
-            validated = self._repair_via_routes(raw_output, schema, str(exc), operation=operation)
-            was_repaired = True
-        usage = body.get("usage", {}) if isinstance(body, dict) else {}
-        return validated, {
-            "provider": "cerebras",
-            "model": self.model,
-            "account": self._key_id(key),
-            "latency_ms": latency_ms,
-            "usage": usage if isinstance(usage, dict) else {},
-            "repaired": was_repaired,
-        }
+            result = self._repair(raw_output, definition.output_structure, str(exc), operation=definition.key)
+            repaired = True
 
-    def generate(self, prompt: str, definition: PromptDefinition) -> dict[str, Any]:
-        failures: list[str] = []
-        last_error: ProviderError | None = None
-        for key in self.keys:
-            try:
-                result, metadata = self._call(
-                    key,
-                    prompt,
-                    definition.output_structure,
-                    definition.temperature,
-                    operation=definition.key,
-                )
-                logger().info("llm_generation", prompt_key=definition.key, **metadata)
-                return result
-            except ConfigurationError:
-                raise
-            except ProviderError as exc:
-                last_error = exc
-                failures.append(f"{self._key_id(key)}: {exc}")
-                continue
-            except Exception as exc:
-                failures.append(f"{self._key_id(key)}: {exc}")
-                continue
-        if last_error is not None and all("429" in failure or "rate" in failure.lower() for failure in failures):
-            raise ProviderError(
-                f"Cerebras {self.model} exhausted all configured keys: " + "; ".join(failures),
-                ErrorKind.RATE_LIMIT,
-                retryable=True,
-                provider="cerebras",
-                retry_after=last_error.retry_after,
-            )
-        raise ProviderError(
-            f"Cerebras {self.model} failed across all configured keys: " + "; ".join(failures),
-            ErrorKind.TRANSIENT_PROVIDER,
-            retryable=True,
-            provider="cerebras",
+        hidden = getattr(response, "_hidden_params", {}) or {}
+        deployment = hidden.get("model_id") or hidden.get("api_base") or "litellm"
+        usage = getattr(response, "usage", None)
+        usage_data = usage.model_dump() if hasattr(usage, "model_dump") else {}
+        logger().info(
+            "llm_generation",
+            prompt_key=definition.key,
+            provider=self.provider,
+            model=self.model,
+            deployment=str(deployment),
+            latency_ms=latency_ms,
+            usage=usage_data,
+            repaired=repaired,
+            router="litellm",
         )
+        return result
 
 
 class RoutedStructuredClient(GeminiStructuredClient):
+    """Preserves the explicit route order while LiteLLM manages deployments within each route."""
+
     def __init__(self, routes: Sequence[tuple[LlmRoute, GeminiStructuredClient]]) -> None:
         self.routes = list(routes)
         if not self.routes:
@@ -273,7 +241,6 @@ class RoutedStructuredClient(GeminiStructuredClient):
 
     def generate(self, prompt: str, definition: PromptDefinition) -> dict[str, Any]:
         failures: list[str] = []
-        retry_delays: list[float] = []
         all_rate_limited = True
         for route, client in self.routes:
             try:
@@ -283,6 +250,7 @@ class RoutedStructuredClient(GeminiStructuredClient):
                     prompt_key=definition.key,
                     provider=route.provider,
                     model=route.model,
+                    router="litellm",
                 )
                 return result
             except ConfigurationError:
@@ -290,8 +258,6 @@ class RoutedStructuredClient(GeminiStructuredClient):
             except ProviderError as exc:
                 failures.append(f"{route.provider}:{route.model}: {exc}")
                 all_rate_limited = all_rate_limited and exc.kind == ErrorKind.RATE_LIMIT
-                if exc.retry_after:
-                    retry_delays.append(float(exc.retry_after))
                 logger().warning(
                     "llm_route_failed",
                     prompt_key=definition.key,
@@ -299,8 +265,8 @@ class RoutedStructuredClient(GeminiStructuredClient):
                     model=route.model,
                     error_kind=exc.kind,
                     reason=str(exc),
+                    router="litellm",
                 )
-                continue
             except Exception as exc:
                 all_rate_limited = False
                 failures.append(f"{route.provider}:{route.model}: {exc}")
@@ -310,100 +276,58 @@ class RoutedStructuredClient(GeminiStructuredClient):
                     provider=route.provider,
                     model=route.model,
                     reason=str(exc),
+                    router="litellm",
                 )
-                continue
         kind = ErrorKind.RATE_LIMIT if all_rate_limited else ErrorKind.TRANSIENT_PROVIDER
         raise ProviderError(
             "LLM generation failed across all configured routes: " + "; ".join(failures),
             kind,
             retryable=True,
             provider="llm",
-            retry_after=min(retry_delays) if retry_delays else None,
         )
 
 
-class RoutedGeminiContentClient(PooledGeminiStructuredClient):
-    def __init__(self, *args: Any, repair_client: GeminiStructuredClient, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
-        self.repair_client = repair_client
+def _keys_for(settings: Settings, provider: str) -> list[str]:
+    if provider == "gemini":
+        return settings.shared_gemini_keys(required=False)
+    if provider == "cerebras":
+        return settings.shared_cerebras_keys(required=False)
+    raise ConfigurationError(f"Unsupported LLM provider: {provider}")
 
-    def _pooled_repair(
-        self,
-        raw_output: str,
-        schema: dict[str, Any],
-        validation_error: str,
-        *,
-        operation: str,
-    ) -> tuple[dict[str, Any], dict[str, Any]]:
-        result = self.repair_client.generate(
-            _repair_prompt(raw_output, schema, validation_error),
-            _repair_definition(operation, schema),
-        )
-        return result, {"repaired": True, "model": "repair-route", "account": "repair-route"}
+
+def _timeout_for(settings: Settings, provider: str) -> int:
+    if provider == "gemini":
+        return settings.gemini_request_timeout_seconds
+    if provider == "cerebras":
+        return settings.cerebras_request_timeout_seconds
+    return 180
 
 
 def _build_route_clients(
     settings: Settings,
     specs: Sequence[LlmRoute],
     *,
-    state: RedisState | None,
     repair_client: GeminiStructuredClient | None,
     generation: bool,
 ) -> list[tuple[LlmRoute, GeminiStructuredClient]]:
-    gemini_keys = settings.shared_gemini_keys(required=False)
-    cerebras_keys = settings.shared_cerebras_keys(required=False)
-    gemini_limits = settings.gemini_limits()
     routes: list[tuple[LlmRoute, GeminiStructuredClient]] = []
-
     for route in specs:
-        if route.provider == "gemini":
-            if not gemini_keys:
-                logger().warning("llm_route_skipped", provider="gemini", model=route.model, reason="no keys")
-                continue
-            common: dict[str, Any] = {
-                "quota_cooldown_seconds": settings.gemini_quota_cooldown_seconds,
-                "request_timeout_seconds": settings.gemini_request_timeout_seconds,
-                "state": state,
-                "checkpoint_ttl_seconds": settings.llm_checkpoint_ttl_seconds,
-                "limits": gemini_limits,
-            }
-            if generation:
-                if repair_client is None:
-                    raise ConfigurationError("Generation routes require an independent repair route client")
-                client: GeminiStructuredClient = RoutedGeminiContentClient(
-                    gemini_keys,
-                    [route.model],
-                    [route.model],
-                    repair_client=repair_client,
-                    **common,
-                )
-            else:
-                client = PooledGeminiStructuredClient(
-                    gemini_keys,
-                    [route.model],
-                    [route.model],
-                    **common,
-                )
-            routes.append((route, client))
+        keys = _keys_for(settings, route.provider)
+        if not keys:
+            logger().warning("llm_route_skipped", provider=route.provider, model=route.model, reason="no keys")
             continue
-        if route.provider == "cerebras":
-            if not cerebras_keys:
-                logger().warning("llm_route_skipped", provider="cerebras", model=route.model, reason="no keys")
-                continue
-            routes.append(
-                (
-                    route,
-                    CerebrasStructuredClient(
-                        cerebras_keys,
-                        route.model,
-                        base_url=settings.cerebras_base_url,
-                        timeout_seconds=settings.cerebras_request_timeout_seconds,
-                        repair_client=repair_client if generation else None,
-                    ),
-                )
+        routes.append(
+            (
+                route,
+                LiteLLMStructuredClient(
+                    route.provider,
+                    route.model,
+                    keys,
+                    timeout_seconds=_timeout_for(settings, route.provider),
+                    repair_client=repair_client if generation else None,
+                ),
             )
-            continue
-        raise ConfigurationError(f"Unsupported LLM provider: {route.provider}")
+        )
     return routes
 
 
@@ -412,10 +336,12 @@ def build_routed_structured_client(
     *,
     state: RedisState | None = None,
 ) -> RoutedStructuredClient:
+    # State is retained in the public factory signature so callers do not change. LiteLLM now
+    # owns provider deployment selection and cooldowns; application Redis remains workflow state.
+    del state
     repair_routes = _build_route_clients(
         settings,
         repair_route_specs(settings),
-        state=state,
         repair_client=None,
         generation=False,
     )
@@ -423,7 +349,6 @@ def build_routed_structured_client(
     content_routes = _build_route_clients(
         settings,
         settings.llm_route_specs(),
-        state=state,
         repair_client=repair_client,
         generation=True,
     )
