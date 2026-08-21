@@ -134,6 +134,16 @@ class BaserowJobRepository:
     def reset(self, row_id: int, job: Job) -> Mapping[str, Any]:
         return {"id": row_id}
 
+    def clear_qualification(self, row_id: int) -> None:
+        self.client.update_row(
+            self.table_id,
+            row_id,
+            {
+                "Score": None,
+                "Apply": False,
+            },
+        )
+
     def save_qualification(self, row_id: int, result: Qualification) -> None:
         self.client.update_row(
             self.table_id,
