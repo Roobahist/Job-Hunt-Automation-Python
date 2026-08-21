@@ -112,8 +112,7 @@ def test_generator_expands_every_key_across_discovered_models() -> None:
     powerful = [
         item
         for item in deployments
-        if item["model_name"] == "job-powerful"
-        and item["litellm_params"]["model"] == "groq/openai/gpt-oss-120b"
+        if item["model_name"] == "job-powerful" and item["litellm_params"]["model"] == "groq/openai/gpt-oss-120b"
     ]
     assert len(powerful) == 2
     assert {item["litellm_params"]["api_key"] for item in powerful} == {
@@ -148,22 +147,24 @@ def test_arbitrary_openai_compatible_provider_can_discover_models() -> None:
         calls.append((key, url))
         return ["vendor-70b", "vendor-8b"]
 
+    custom_provider = provider(
+        "vendor",
+        "VENDOR_API_KEY_",
+        litellm_prefix="openai",
+        discovery_url="https://vendor.test/v1/models",
+    )
+    custom_provider["litellm_params"] = {"api_base": "https://vendor.test/v1"}
     config = build_litellm_config(
         env={"VENDOR_API_KEY_1": "secret"},
-        registry=registry(
-            provider(
-                "vendor",
-                "VENDOR_API_KEY_",
-                litellm_prefix="openai",
-                discovery_url="https://vendor.test/v1/models",
-            )
-        ),
+        registry=registry(custom_provider),
         discoverer=discover,
     )
     assert calls == [("secret", "https://vendor.test/v1/models")]
-    models = {item["litellm_params"]["model"] for item in config["model_list"]}
+    deployments = config["model_list"]
+    models = {item["litellm_params"]["model"] for item in deployments}
     assert "openai/vendor-70b" in models
     assert "openai/vendor-8b" in models
+    assert all(item["litellm_params"]["api_base"] == "https://vendor.test/v1" for item in deployments)
 
 
 def test_provider_without_keys_is_skipped() -> None:
