@@ -21,28 +21,45 @@ wait_for_http() {
     return 1
 }
 
+wait_for_litellm() {
+    local attempts="${1:-60}"
+    for ((attempt = 1; attempt <= attempts; attempt++)); do
+        if docker compose exec -T litellm python -c \
+            "import urllib.request; urllib.request.urlopen('http://localhost:4000/health/liveliness', timeout=2)" \
+            >/dev/null 2>&1; then
+            printf 'LiteLLM live\n'
+            return 0
+        fi
+        sleep 1
+    done
+
+    printf 'LiteLLM did not become ready after %s seconds\n' "$attempts" >&2
+    docker compose logs --tail=150 litellm >&2 || true
+    return 1
+}
+
 git pull --ff-only
 
 docker compose build api
 
-# Provider credentials and currently available Groq models are expanded into capability
-# pools before LiteLLM starts. The generated file is intentionally not tracked by Git.
+# Expand numbered provider keys and the current Groq model catalog into capability pools.
+# The generated runtime file is intentionally ignored by Git.
 docker compose run --rm --no-deps api python scripts/generate-litellm-config.py
 
 docker compose build worker-fast
 
-# Compile Mahsa's real CV template with the same TeX-enabled worker image that
-# production document jobs use. Abort deployment before restarting services if
-# deterministic JSON-to-LaTeX rendering cannot produce a PDF.
 docker compose run --rm --no-deps worker-fast python scripts/check-mahsa-latex.py
+
+# Bring the gateway up first so live validation checks the exact model groups workers will use.
+docker compose up -d redis litellm
+wait_for_litellm
 
 docker compose run --rm --no-deps api job-hunt config validate --live
 
 docker compose up -d --force-recreate --remove-orphans \
-    litellm api worker-fast worker-documents worker-notifications beat flower
+    api worker-fast worker-documents worker-notifications beat flower
 
 docker compose ps
-wait_for_http "LiteLLM live" "http://127.0.0.1:8000/health/live"
 wait_for_http "API live" "http://127.0.0.1:8000/health/live"
 wait_for_http "API ready" "http://127.0.0.1:8000/health/ready"
 docker compose exec -T redis redis-cli ping
