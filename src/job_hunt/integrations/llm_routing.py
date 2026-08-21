@@ -22,7 +22,6 @@ from job_hunt.state import RedisState
 
 
 def _cerebras_schema(schema: dict[str, Any]) -> dict[str, Any]:
-    """Make object schemas compatible with Cerebras strict structured outputs."""
     normalized = copy.deepcopy(schema)
 
     def visit(node: object) -> None:
@@ -70,7 +69,6 @@ def _parse_routes(raw: str, *, variable_name: str) -> list[LlmRoute]:
 
 
 def repair_route_specs(settings: Settings) -> list[LlmRoute]:
-    """Return repair routes independently from the normal generation route chain."""
     configured = os.getenv("JOB_HUNT_LLM_REPAIR_ROUTES", "")
     if configured.strip():
         return _parse_routes(configured, variable_name="JOB_HUNT_LLM_REPAIR_ROUTES")
@@ -99,8 +97,6 @@ def _repair_definition(operation: str, schema: dict[str, Any]) -> PromptDefiniti
 
 
 class CerebrasStructuredClient(GeminiStructuredClient):
-    """Structured-output client for Cerebras' OpenAI-compatible chat-completions API."""
-
     def __init__(
         self,
         keys: Sequence[str],
@@ -124,7 +120,7 @@ class CerebrasStructuredClient(GeminiStructuredClient):
     def _key_id(key: str) -> str:
         return hashlib.sha256(key.encode()).hexdigest()[:12]
 
-    def _repair(
+    def _repair_via_routes(
         self,
         raw_output: str,
         schema: dict[str, Any],
@@ -152,7 +148,6 @@ class CerebrasStructuredClient(GeminiStructuredClient):
         *,
         operation: str,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
-        provider_schema = _cerebras_schema(schema)
         payload = {
             "model": self.model,
             "messages": [{"role": "user", "content": prompt}],
@@ -162,7 +157,7 @@ class CerebrasStructuredClient(GeminiStructuredClient):
                 "json_schema": {
                     "name": "job_hunt_response",
                     "strict": True,
-                    "schema": provider_schema,
+                    "schema": _cerebras_schema(schema),
                 },
             },
         }
@@ -200,8 +195,8 @@ class CerebrasStructuredClient(GeminiStructuredClient):
             try:
                 parsed = json.loads(content)
             except json.JSONDecodeError as exc:
-                repaired = self._repair(raw_output, schema, str(exc), operation=operation)
-                return repaired, {
+                fixed = self._repair_via_routes(raw_output, schema, str(exc), operation=operation)
+                return fixed, {
                     "provider": "cerebras",
                     "model": self.model,
                     "account": self._key_id(key),
@@ -217,10 +212,10 @@ class CerebrasStructuredClient(GeminiStructuredClient):
 
         try:
             validated = _validate_json_schema(parsed, schema)
-            repaired = False
+            was_repaired = False
         except JsonSchemaValidationError as exc:
-            validated = self._repair(raw_output, schema, str(exc), operation=operation)
-            repaired = True
+            validated = self._repair_via_routes(raw_output, schema, str(exc), operation=operation)
+            was_repaired = True
         usage = body.get("usage", {}) if isinstance(body, dict) else {}
         return validated, {
             "provider": "cerebras",
@@ -228,7 +223,7 @@ class CerebrasStructuredClient(GeminiStructuredClient):
             "account": self._key_id(key),
             "latency_ms": latency_ms,
             "usage": usage if isinstance(usage, dict) else {},
-            "repaired": repaired,
+            "repaired": was_repaired,
         }
 
     def generate(self, prompt: str, definition: PromptDefinition) -> dict[str, Any]:
@@ -271,8 +266,6 @@ class CerebrasStructuredClient(GeminiStructuredClient):
 
 
 class RoutedStructuredClient(GeminiStructuredClient):
-    """Try provider/model routes in exactly the environment-configured order."""
-
     def __init__(self, routes: Sequence[tuple[LlmRoute, GeminiStructuredClient]]) -> None:
         self.routes = list(routes)
         if not self.routes:
@@ -330,8 +323,6 @@ class RoutedStructuredClient(GeminiStructuredClient):
 
 
 class RoutedGeminiContentClient(PooledGeminiStructuredClient):
-    """Gemini content generation that delegates malformed output to the independent repair route chain."""
-
     def __init__(self, *args: Any, repair_client: GeminiStructuredClient, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.repair_client = repair_client
