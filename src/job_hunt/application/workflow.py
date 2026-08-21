@@ -89,15 +89,17 @@ class ApplicationWorkflow:
         )
         row_id = int(row["id"])
 
-        # Automatic discovery never reprocesses a previously dropped row. Fillout
-        # remains the explicit override and resets the row to New below.
-        if existing and not force and self._dropped(row_id):
+        # Automatic discovery is idempotent. If a row already exists, do not spend
+        # compatibility/qualification/document capacity on it. This is a second
+        # guard behind the discovery-level dedupe and protects overlapping runs.
+        # Fillout/manual force=True is the explicit regeneration override.
+        if existing and not force:
             if persisted is not None:
                 persisted(row_id)
             self._progress(progress, "persistence", "finish")
             existing_score = existing.get("Score")
             score = int(existing_score) if isinstance(existing_score, (int, float)) else None
-            log.info("job_already_dropped", stage="persist", row_id=row_id, score=score)
+            log.info("job_already_tracked", stage="persist", row_id=row_id, score=score)
             return QualificationResult(row_id=row_id, passed=False, score=score)
 
         if existing:
