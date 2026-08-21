@@ -32,7 +32,7 @@ jobs:
       - name: Generate LiteLLM smoke config
         run: >-
           docker run --rm
-          -v "$PWD:/app" -w /app
+          -v "$PWD/config:/app/config"
           -e GROQ_API_KEY_1=dummy-groq-key
           -e LITELLM_MASTER_KEY=sk-ci-litellm
           -e LITELLM_GROQ_DISCOVER_MODELS=false
