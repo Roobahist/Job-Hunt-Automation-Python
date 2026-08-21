@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 import httpx
+import pytest
 
 from job_hunt.config import LlmRoute, Settings
 from job_hunt.domain.models import PromptDefinition
@@ -12,6 +13,7 @@ from job_hunt.integrations.llm_routing import (
     CerebrasStructuredClient,
     RoutedStructuredClient,
     _cerebras_schema,
+    repair_route_specs,
 )
 
 
@@ -34,9 +36,11 @@ class StubClient(GeminiStructuredClient):
         self.result = result
         self.error = error
         self.calls = 0
+        self.prompts: list[str] = []
 
     def generate(self, prompt: str, definition: PromptDefinition) -> dict[str, object]:
         self.calls += 1
+        self.prompts.append(prompt)
         if self.error is not None:
             raise self.error
         assert self.result is not None
@@ -49,6 +53,36 @@ def test_route_parser_preserves_cross_provider_order() -> None:
         ("cerebras", "first"),
         ("gemini", "second"),
         ("cerebras", "third"),
+    ]
+
+
+def test_repair_routes_are_independent_from_generation_routes(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = Settings(
+        llm_routes="cerebras:content-one,gemini:content-two",
+        gemini_repair_models="legacy-one,legacy-two",
+    )
+    monkeypatch.setenv(
+        "JOB_HUNT_LLM_REPAIR_ROUTES",
+        "gemini:repair-one,cerebras:repair-two,gemini:repair-three",
+    )
+
+    assert [(route.provider, route.model) for route in settings.llm_route_specs()] == [
+        ("cerebras", "content-one"),
+        ("gemini", "content-two"),
+    ]
+    assert [(route.provider, route.model) for route in repair_route_specs(settings)] == [
+        ("gemini", "repair-one"),
+        ("cerebras", "repair-two"),
+        ("gemini", "repair-three"),
+    ]
+
+
+def test_repair_routes_fall_back_to_legacy_gemini_models(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("JOB_HUNT_LLM_REPAIR_ROUTES", raising=False)
+    settings = Settings(gemini_repair_models="gemini-repair-a,gemini-repair-b")
+    assert [(route.provider, route.model) for route in repair_route_specs(settings)] == [
+        ("gemini", "gemini-repair-a"),
+        ("gemini", "gemini-repair-b"),
     ]
 
 
@@ -91,6 +125,31 @@ def test_cerebras_tries_multiple_keys_and_uses_strict_schema() -> None:
     client = CerebrasStructuredClient(["bad-key", "good-key"], "test-model", client=http)
     assert client.generate("prompt", definition()) == {"compatible": True}
     assert seen_auth == ["Bearer bad-key", "Bearer good-key"]
+
+
+def test_cerebras_invalid_content_uses_independent_repair_client() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": '{"compatible":"yes"}'}}]},
+        )
+
+    repair = StubClient(result={"compatible": True})
+    http = httpx.Client(
+        base_url="https://api.cerebras.ai/v1",
+        transport=httpx.MockTransport(handler),
+    )
+    client = CerebrasStructuredClient(
+        ["key"],
+        "content-model",
+        client=http,
+        repair_client=repair,
+    )
+
+    assert client.generate("original prompt", definition()) == {"compatible": True}
+    assert repair.calls == 1
+    assert "ORIGINAL OUTPUT" in repair.prompts[0]
+    assert '{"compatible":"yes"}' in repair.prompts[0]
 
 
 def test_cerebras_schema_normalizes_nested_objects_without_mutating_source() -> None:
