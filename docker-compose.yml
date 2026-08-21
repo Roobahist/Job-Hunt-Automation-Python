@@ -1,5 +1,6 @@
 services:
   api:
+    image: job-hunt-automation-api:latest
     build:
       context: .
       target: api
@@ -14,9 +15,7 @@ services:
     restart: unless-stopped
 
   test:
-    build:
-      context: .
-      target: api
+    image: job-hunt-automation-api:latest
     env_file: .env
     command: uv run --frozen --extra dev pytest -q
     volumes:
@@ -31,6 +30,7 @@ services:
     restart: "no"
 
   worker-fast:
+    image: job-hunt-automation-worker:latest
     build:
       context: .
       target: worker
@@ -48,9 +48,7 @@ services:
     restart: unless-stopped
 
   worker-documents:
-    build:
-      context: .
-      target: worker
+    image: job-hunt-automation-worker:latest
     env_file: .env
     command: >-
       celery -A job_hunt.worker.celery_app worker
@@ -65,9 +63,7 @@ services:
     restart: unless-stopped
 
   worker-notifications:
-    build:
-      context: .
-      target: worker
+    image: job-hunt-automation-worker:latest
     env_file: .env
     command: >-
       celery -A job_hunt.worker.celery_app worker
@@ -82,10 +78,9 @@ services:
     restart: unless-stopped
 
   beat:
-    build:
-      context: .
-      target: beat
+    image: job-hunt-automation-api:latest
     env_file: .env
+    command: celery -A job_hunt.worker.celery_app beat --loglevel=INFO
     volumes:
       - ./src:/app/src:ro
       - ./config:/app/config:ro
@@ -94,9 +89,7 @@ services:
     restart: unless-stopped
 
   flower:
-    build:
-      context: .
-      target: api
+    image: job-hunt-automation-api:latest
     env_file: .env
     command: >-
       sh -c 'celery -A job_hunt.worker.celery_app flower --port=5555

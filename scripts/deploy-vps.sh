@@ -23,12 +23,15 @@ wait_for_http() {
 
 git pull --ff-only
 
+# Build only the two actual application images, one at a time. The API image is
+# reused by API, Beat, Flower, and tests. The worker image is reused by all
+# Celery workers, including the TeX-enabled document worker.
+docker compose build api
+docker compose build worker-fast
+
 docker compose run --rm --no-deps api job-hunt config validate --live
 
-# Always ask Compose to build the selected services before starting them.
-# BuildKit reuses cached layers for unchanged images, while this also handles
-# newly added services when the repository was pulled before this script ran.
-docker compose up -d --build --force-recreate --remove-orphans \
+docker compose up -d --force-recreate --remove-orphans \
     api worker-fast worker-documents worker-notifications beat flower
 
 docker compose ps
