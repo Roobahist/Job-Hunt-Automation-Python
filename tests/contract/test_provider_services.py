@@ -7,7 +7,7 @@ import pytest
 
 from job_hunt.domain.models import ArtifactBundle, Job, PromptDefinition
 from job_hunt.errors import ProviderError
-from job_hunt.integrations.artifacts import BaserowArtifactPublisher
+from job_hunt.integrations.artifacts import APPLICATION_ZIP_FIELD, BaserowArtifactPublisher
 from job_hunt.integrations.gemini import GeminiStructuredClient, GeminiWorkflowAI
 
 
@@ -37,7 +37,7 @@ def definition(key: str, schema: dict[str, Any]) -> PromptDefinition:
     )
 
 
-def test_baserow_publisher_uploads_only_final_pdfs(tmp_path: Path) -> None:
+def test_baserow_publisher_uploads_final_pdfs_and_zip(tmp_path: Path) -> None:
     uploaded: list[str] = []
 
     class Base:
@@ -46,9 +46,10 @@ def test_baserow_publisher_uploads_only_final_pdfs(tmp_path: Path) -> None:
             return {"name": path.name}
 
     result = BaserowArtifactPublisher(Base()).publish(bundle(tmp_path))  # type: ignore[arg-type]
-    assert uploaded == ["cv.pdf", "cl.pdf"]
+    assert uploaded == ["cv.pdf", "cl.pdf", "all.zip"]
     assert result["CV"] == [{"name": "cv.pdf"}]
     assert result["Cover Letter"] == [{"name": "cl.pdf"}]
+    assert result[APPLICATION_ZIP_FIELD] == [{"name": "all.zip"}]
 
 
 def test_gemini_schema_failure_calls_auto_fix(monkeypatch: pytest.MonkeyPatch) -> None:
