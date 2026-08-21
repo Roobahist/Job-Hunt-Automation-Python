@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from job_hunt.domain.models import ArtifactBundle
-from job_hunt.integrations.baserow import BaserowClient
+
+if TYPE_CHECKING:
+    from job_hunt.integrations.baserow import BaserowClient
 
 
 APPLICATION_ZIP_FIELD = "Application ZIP"
