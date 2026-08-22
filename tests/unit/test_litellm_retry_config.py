@@ -50,13 +50,15 @@ def _multi_provider_registry() -> dict[str, object]:
     }
 
 
-def test_litellm_retries_across_every_deployment_in_largest_pool() -> None:
+def test_router_uses_failover_instead_of_same_deployment_retries() -> None:
     config = build_litellm_config(
         env={"TEST_API_KEY_1": "one", "TEST_API_KEY_2": "two", "TEST_API_KEY_3": "three"},
         registry=_registry(),
     )
     router = config["router_settings"]
-    assert router["num_retries"] == 2
+    assert router["routing_strategy"] == "simple-shuffle"
+    assert router["enable_weighted_failover"] is True
+    assert router["num_retries"] == 0
     assert router["allowed_fails"] == 0
     assert router["cooldown_time"] == 65
 
@@ -88,7 +90,6 @@ def test_models_and_keys_from_multiple_providers_share_the_capability_pool() -> 
     )
     job_fast = [entry for entry in config["model_list"] if entry["model_name"] == "job-fast"]
     assert len(job_fast) == 5
-    assert config["router_settings"]["num_retries"] == 4
     assert {entry["litellm_params"]["model"] for entry in job_fast} == {
         "openai/alpha-fast",
         "groq/beta-fast",
@@ -100,6 +101,21 @@ def test_models_and_keys_from_multiple_providers_share_the_capability_pool() -> 
         "os.environ/BETA_API_KEY_2",
         "os.environ/BETA_API_KEY_3",
     }
+
+
+def test_failover_budget_scales_with_every_generated_deployment() -> None:
+    config = build_litellm_config(
+        env={
+            "ALPHA_API_KEY_1": "a1",
+            "ALPHA_API_KEY_2": "a2",
+            "BETA_API_KEY_1": "b1",
+            "BETA_API_KEY_2": "b2",
+            "BETA_API_KEY_3": "b3",
+        },
+        registry=_multi_provider_registry(),
+    )
+    assert config["router_settings"]["max_fallbacks"] == len(config["model_list"]) - 1
+    assert config["router_settings"]["max_fallbacks"] > 5
 
 
 def test_capability_fallback_graph_is_delegated_to_litellm() -> None:
@@ -114,29 +130,28 @@ def test_capability_fallback_graph_is_delegated_to_litellm() -> None:
     ]
 
 
-def test_router_tuning_remains_environment_configurable() -> None:
+def test_reliability_critical_router_behavior_cannot_be_disabled_by_old_env_values() -> None:
     config = build_litellm_config(
         env={
             "TEST_API_KEY_1": "one",
             "LITELLM_NUM_RETRIES": "7",
+            "LITELLM_ROUTING_STRATEGY": "latency-based-routing",
             "LITELLM_ALLOWED_FAILS": "2",
             "LITELLM_COOLDOWN_SECONDS": "90",
-            "LITELLM_ROUTING_STRATEGY": "simple-shuffle",
         },
         registry=_registry(),
     )
     router = config["router_settings"]
-    assert router["num_retries"] == 7
+    assert router["num_retries"] == 0
+    assert router["routing_strategy"] == "simple-shuffle"
+    assert router["enable_weighted_failover"] is True
     assert router["allowed_fails"] == 2
     assert router["cooldown_time"] == 90
-    assert router["routing_strategy"] == "simple-shuffle"
 
 
 @pytest.mark.parametrize(
     ("name", "value"),
     [
-        ("LITELLM_NUM_RETRIES", "-1"),
-        ("LITELLM_NUM_RETRIES", "bad"),
         ("LITELLM_ALLOWED_FAILS", "-1"),
         ("LITELLM_COOLDOWN_SECONDS", "-1"),
         ("LITELLM_ALLOWED_FAILS", "bad"),
