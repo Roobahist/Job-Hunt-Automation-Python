@@ -166,27 +166,6 @@ class TenantRuntimeConfig(BaseModel):
         return self
 
 
-class TenantBootstrap(BaseModel):
-    key: str
-    enabled: bool = True
-    renderer: str
-    config_table_id: int = Field(ge=0)
-    baserow_base_url: str = "https://api.baserow.io"
-    tenant_root: Path
-    secrets: SecretAliases
-
-    def secret(self, name: str, *, required: bool = True) -> str:
-        alias = getattr(self.secrets, name)
-        if not alias:
-            if required:
-                raise ConfigurationError(f"Missing secret alias for {name} on tenant {self.key}")
-            return ""
-        value = os.getenv(alias, "")
-        if required and not value:
-            raise ConfigurationError(f"Missing {alias} for tenant {self.key}")
-        return value
-
-
 def load_registry(path: Path) -> dict[str, TenantBootstrap]:
     with path.open("rb") as handle:
         raw = tomllib.load(handle).get("users", {})
