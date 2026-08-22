@@ -50,14 +50,14 @@ def _multi_provider_registry() -> dict[str, object]:
     }
 
 
-def test_litellm_owns_deployment_retries_and_cooldowns() -> None:
+def test_litellm_retries_across_every_deployment_in_largest_pool() -> None:
     config = build_litellm_config(
-        env={"TEST_API_KEY_1": "one", "TEST_API_KEY_2": "two"},
+        env={"TEST_API_KEY_1": "one", "TEST_API_KEY_2": "two", "TEST_API_KEY_3": "three"},
         registry=_registry(),
     )
     router = config["router_settings"]
-    assert "num_retries" not in router
-    assert router["allowed_fails"] == 1
+    assert router["num_retries"] == 2
+    assert router["allowed_fails"] == 0
     assert router["cooldown_time"] == 65
 
 
@@ -88,6 +88,7 @@ def test_models_and_keys_from_multiple_providers_share_the_capability_pool() -> 
     )
     job_fast = [entry for entry in config["model_list"] if entry["model_name"] == "job-fast"]
     assert len(job_fast) == 5
+    assert config["router_settings"]["num_retries"] == 4
     assert {entry["litellm_params"]["model"] for entry in job_fast} == {
         "openai/alpha-fast",
         "groq/beta-fast",
@@ -113,10 +114,11 @@ def test_capability_fallback_graph_is_delegated_to_litellm() -> None:
     ]
 
 
-def test_router_tuning_remains_environment_configurable_without_retry_topology() -> None:
+def test_router_tuning_remains_environment_configurable() -> None:
     config = build_litellm_config(
         env={
             "TEST_API_KEY_1": "one",
+            "LITELLM_NUM_RETRIES": "7",
             "LITELLM_ALLOWED_FAILS": "2",
             "LITELLM_COOLDOWN_SECONDS": "90",
             "LITELLM_ROUTING_STRATEGY": "simple-shuffle",
@@ -124,15 +126,21 @@ def test_router_tuning_remains_environment_configurable_without_retry_topology()
         registry=_registry(),
     )
     router = config["router_settings"]
+    assert router["num_retries"] == 7
     assert router["allowed_fails"] == 2
     assert router["cooldown_time"] == 90
     assert router["routing_strategy"] == "simple-shuffle"
-    assert "num_retries" not in router
 
 
 @pytest.mark.parametrize(
     ("name", "value"),
-    [("LITELLM_ALLOWED_FAILS", "-1"), ("LITELLM_COOLDOWN_SECONDS", "-1"), ("LITELLM_ALLOWED_FAILS", "bad")],
+    [
+        ("LITELLM_NUM_RETRIES", "-1"),
+        ("LITELLM_NUM_RETRIES", "bad"),
+        ("LITELLM_ALLOWED_FAILS", "-1"),
+        ("LITELLM_COOLDOWN_SECONDS", "-1"),
+        ("LITELLM_ALLOWED_FAILS", "bad"),
+    ],
 )
 def test_invalid_router_tuning_fails_config_generation(name: str, value: str) -> None:
     with pytest.raises(ConfigGenerationError, match=name):
