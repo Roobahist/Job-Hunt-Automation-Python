@@ -4,7 +4,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from job_hunt.domain.models import Job, PromptDefinition, Qualification
+from job_hunt.domain.models import Job, PromptDefinition
 from job_hunt.ports import CompatibilityFilter, JobRepository, Qualifier
 
 
