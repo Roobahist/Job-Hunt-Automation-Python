@@ -314,11 +314,19 @@ def _nonnegative_int(env: Mapping[str, str], name: str, default: int) -> int:
     return value
 
 
-def _deployment_retry_budget(model_list: Sequence[Mapping[str, Any]]) -> int:
-    counts = Counter(str(entry["model_name"]) for entry in model_list)
-    generation_counts = [counts[group] for group in CAPABILITY_GROUPS if counts[group]]
-    repair_counts = [counts[group] for group in REPAIR_GROUPS if counts[group]]
-    return max([0, *(count - 1 for count in generation_counts), *(count - 1 for count in repair_counts)])
+def _deployment_counts(model_list: Sequence[Mapping[str, Any]]) -> Counter[str]:
+    return Counter(str(entry["model_name"]) for entry in model_list)
+
+
+def _max_failover_hops(model_list: Sequence[Mapping[str, Any]]) -> int:
+    """Return a safe upper bound that grows automatically with providers and keys.
+
+    Weighted failover excludes each failed deployment for the lifetime of one request.
+    The bound intentionally covers every generated deployment, including cross-group
+    fallbacks and repair groups, so adding another provider or API key cannot silently
+    exceed LiteLLM's default five-hop fallback cap.
+    """
+    return max(1, len(model_list) - 1)
 
 
 def build_litellm_config(
@@ -353,21 +361,23 @@ def build_litellm_config(
     if "repair-fast" in present_groups and "repair-balanced" in present_groups:
         fallbacks.append({"repair-fast": ["repair-balanced"]})
 
-    retry_budget = _deployment_retry_budget(model_list)
-    num_retries = _nonnegative_int(env, "LITELLM_NUM_RETRIES", retry_budget)
+    # Do not use ordinary same-deployment retries for provider/key rotation. LiteLLM's
+    # weighted failover explicitly excludes the failed deployment and selects another
+    # healthy peer in the same model group. This makes key/provider traversal reliable
+    # and leaves Celery as the outer retry layer after all gateway routes are exhausted.
+    router_settings: dict[str, Any] = {
+        "routing_strategy": "simple-shuffle",
+        "enable_weighted_failover": True,
+        "max_fallbacks": _max_failover_hops(model_list),
+        "num_retries": 0,
+        "allowed_fails": _nonnegative_int(env, "LITELLM_ALLOWED_FAILS", 0),
+        "cooldown_time": _nonnegative_int(env, "LITELLM_COOLDOWN_SECONDS", 65),
+        "fallbacks": fallbacks,
+    }
 
-    # A failed deployment must be cooled down immediately so the next retry is routed
-    # to another key/model. The retry budget defaults to enough attempts to traverse
-    # the largest logical pool; callers can override it explicitly when needed.
     return {
         "model_list": model_list,
-        "router_settings": {
-            "routing_strategy": env.get("LITELLM_ROUTING_STRATEGY", "latency-based-routing"),
-            "num_retries": num_retries,
-            "allowed_fails": _nonnegative_int(env, "LITELLM_ALLOWED_FAILS", 0),
-            "cooldown_time": _nonnegative_int(env, "LITELLM_COOLDOWN_SECONDS", 65),
-            "fallbacks": fallbacks,
-        },
+        "router_settings": router_settings,
         "litellm_settings": {"drop_params": True},
         "general_settings": {"master_key": "os.environ/LITELLM_MASTER_KEY"},
     }
