@@ -134,6 +134,7 @@ def group_models(
     excluded: Sequence[str] = (),
     blocklist: Sequence[str] = CHAT_MODEL_BLOCKLIST,
     allowlist: Sequence[str] = (),
+    fill_missing: bool = True,
 ) -> dict[str, list[str]]:
     groups: dict[str, list[str]] = {group: [] for group in CAPABILITY_GROUPS}
     explicit_groups = explicit or {}
@@ -151,7 +152,7 @@ def group_models(
             continue
         groups[classify_model(model)].append(model)
     deduplicated = {group: sorted(set(models)) for group, models in groups.items()}
-    return _fill_missing_groups(deduplicated)
+    return _fill_missing_groups(deduplicated) if fill_missing else deduplicated
 
 
 def deployment(
@@ -245,6 +246,7 @@ def add_provider_deployments(
         excluded=excluded,
         blocklist=blocklist,
         allowlist=allowlist,
+        fill_missing=bool(provider.get("fill_missing_groups", True)),
     )
     provider_prefix = _provider_model_prefix(provider)
     extra_params = _provider_extra_params(provider)
