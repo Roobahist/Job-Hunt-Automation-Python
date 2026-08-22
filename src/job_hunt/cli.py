@@ -14,7 +14,6 @@ from job_hunt.application.runs import RunCoordinator
 from job_hunt.config import Settings, load_registry, read_seed
 from job_hunt.container import Container
 from job_hunt.domain.models import JobSubmission, TailoredContent
-from job_hunt.integrations.gemini_catalog import validate_gemini_models
 from job_hunt.queueing import CeleryQueue
 from job_hunt.run_store import RunStore
 
@@ -37,13 +36,7 @@ def _coordinator(settings: Settings) -> RunCoordinator:
 
 
 def _validate_litellm_groups(settings: Settings) -> None:
-    expected = {
-        route.model
-        for route in [*settings.llm_route_specs(), *settings.llm_repair_route_specs()]
-        if route.provider == "litellm"
-    }
-    if not expected:
-        return
+    expected = {route.model for route in [*settings.llm_route_specs(), *settings.llm_repair_route_specs()]}
     response = httpx.get(
         f"{settings.litellm_base_url.rstrip('/')}/v1/models",
         headers={"Authorization": f"Bearer {settings.shared_litellm_key()}"},
@@ -142,14 +135,6 @@ def validate_configuration(tenant: str | None = None, live: bool = False) -> Non
 
     if live:
         try:
-            routes = settings.llm_route_specs()
-            gemini_models = list(dict.fromkeys(route.model for route in routes if route.provider == "gemini"))
-            gemini_keys = settings.shared_gemini_keys(required=False)
-            if gemini_models and gemini_keys:
-                validate_gemini_models(gemini_keys[0], gemini_models)
-                typer.echo("OK configured Gemini models")
-            if any(route.provider == "cerebras" for route in routes) and settings.shared_cerebras_keys(required=False):
-                typer.echo("OK configured Cerebras routes")
             _validate_litellm_groups(settings)
             typer.echo("OK configured LiteLLM capability groups")
         except Exception as exc:
