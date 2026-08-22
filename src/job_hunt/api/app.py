@@ -74,7 +74,6 @@ def create_app(
     task_queue = queue or CeleryQueue()
     container = container_factory or (lambda: Container(configured))
     coordinator = RunCoordinator(run_store, task_queue, lambda tenant: container().registry.get(tenant))
-    telegram_routes: dict[str, TelegramRoute] = {}
     app = FastAPI(title="Job Hunt Automation", version="0.2.0")
 
     @app.exception_handler(RequestValidationError)
@@ -167,13 +166,9 @@ def create_app(
         )
 
     def telegram_route(chat_id: str) -> TelegramRoute | None:
-        cached = telegram_routes.get(chat_id)
-        if cached is not None:
-            return cached
-        routed = container().telegram_route(chat_id)
-        if routed is not None:
-            telegram_routes[chat_id] = routed
-        return routed
+        # Telegram callback volume is low. Resolve against current Baserow configuration
+        # so changing a tenant chat ID does not require an API restart to invalidate a cache.
+        return container().telegram_route(chat_id)
 
     @app.post("/webhooks/telegram")
     def telegram_webhook(
