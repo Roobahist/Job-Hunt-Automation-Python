@@ -69,8 +69,6 @@ class BaserowClient:
         return cast(dict[str, Any], payload)
 
     def _row_page(self, url: str, query: Mapping[str, Any]) -> dict[str, Any]:
-        # Pagination URLs can already contain their query string. Passing params={}
-        # to HTTPX replaces that query string, so only provide params when non-empty.
         request_kwargs: dict[str, Any] = {"params": dict(query)} if query else {}
         response = self._request("GET", url, **request_kwargs)
         payload = self._json_object(response)
@@ -137,14 +135,47 @@ class BaserowClient:
         )
         return self._json_object(response)
 
-    def upload_file(self, file_path: Path) -> dict[str, Any]:
-        with file_path.open("rb") as handle:
-            response = self._request(
-                "POST",
-                "/api/user-files/upload-file/",
-                files={"file": (file_path.name, handle)},
-            )
+    def upload_via_url(self, url: str) -> dict[str, Any]:
+        response = self._request("POST", "/api/user-files/upload-via-url/", json={"url": url})
         return self._json_object(response)
+
+    def upload_file(self, path: Path) -> dict[str, Any]:
+        try:
+            with path.open("rb") as handle:
+                response = self._request(
+                    "POST",
+                    "/api/user-files/upload-file/",
+                    files={"file": (path.name, handle, "application/octet-stream")},
+                )
+        except OSError as exc:
+            raise ProviderError(
+                f"Could not read artifact for Baserow upload: {path}",
+                ErrorKind.VALIDATION,
+                provider="baserow",
+            ) from exc
+        return self._json_object(response)
+
+    def list_fields(self, table_id: int) -> list[dict[str, Any]]:
+        response = self._request("GET", f"/api/database/fields/table/{table_id}/")
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise ProviderError(
+                "Baserow returned a non-JSON field list",
+                ErrorKind.MALFORMED_PROVIDER_RESPONSE,
+                retryable=True,
+                provider="baserow",
+                status_code=response.status_code,
+            ) from exc
+        if not isinstance(payload, list):
+            raise ProviderError(
+                "Baserow field list response was not an array",
+                ErrorKind.MALFORMED_PROVIDER_RESPONSE,
+                retryable=True,
+                provider="baserow",
+                status_code=response.status_code,
+            )
+        return cast(list[dict[str, Any]], payload)
 
 
 class BaserowJobRepository:
@@ -152,54 +183,101 @@ class BaserowJobRepository:
         self,
         client: BaserowClient,
         table_id: int,
-        status_option_ids: Mapping[str, int],
-        contract_type_option_ids: Mapping[str, int],
+        status_options: Mapping[str, int],
+        contract_type_options: Mapping[str, int] | None = None,
     ) -> None:
         self.client = client
         self.table_id = table_id
-        self.status_option_ids = dict(status_option_ids)
-        self.contract_type_option_ids = dict(contract_type_option_ids)
+        self.status_options = status_options
+        self.contract_type_options = contract_type_options or {}
 
-    def find_existing(self, job: Job) -> dict[str, Any] | None:
+    @staticmethod
+    def _display_job_id(job: Job) -> object:
         if job.external_id:
-            existing = self.client.find_equal(self.table_id, "Job ID", job.external_id)
-            if existing:
-                return existing
-        if job.url:
-            return self.client.find_equal(self.table_id, "Link", job.url)
-        return None
+            return int(job.external_id) if job.external_id.isdigit() else job.external_id
+        return job.internal_id
 
-    def persist(self, job: Job) -> dict[str, Any]:
-        existing = self.find_existing(job)
-        values: dict[str, Any] = {
-            "Company": job.company_name,
-            "Job Title": job.title,
-            "Description": job.description,
-            "Link": job.url,
-            "Location": job.location or "",
-            "Status": self.status_option_ids["new"],
-        }
+    def find(self, job: Job) -> Mapping[str, Any] | None:
         if job.external_id:
-            values["Job ID"] = job.external_id
-        if job.contract_type:
-            option_id = self.contract_type_option_ids.get(job.contract_type.casefold())
-            if option_id:
-                values["Contract Type"] = option_id
-        if job.published_at:
-            values["Published"] = job.published_at.isoformat()
-        if existing:
-            return self.client.update_row(self.table_id, int(existing["id"]), values)
-        return self.client.create_row(self.table_id, values)
+            found = self.client.find_equal(self.table_id, "Job ID", self._display_job_id(job))
+            if found:
+                return found
+        return self.client.find_equal(self.table_id, "Link", job.url)
 
-    def update_status(self, row_id: int, status_key: str) -> dict[str, Any]:
-        return self.client.update_row(self.table_id, row_id, {"Status": self.status_option_ids[status_key]})
+    def create(self, job: Job) -> Mapping[str, Any]:
+        return self.client.create_row(
+            self.table_id,
+            self._job_fields(job) | {"Status": self.status_options["new"]},
+        )
 
-    def save_qualification(self, row_id: int, qualification: Qualification) -> dict[str, Any]:
-        return self.client.update_row(
+    def reset(self, row_id: int, job: Job) -> Mapping[str, Any]:
+        return self.client.update_row(self.table_id, row_id, self._job_fields(job))
+
+    def clear_qualification(self, row_id: int) -> None:
+        self.client.update_row(
             self.table_id,
             row_id,
             {
-                "Match Score": qualification.score,
-                "Qualification Reasoning": qualification.reasoning,
+                "Score": None,
+                "Apply": False,
             },
         )
+
+    def save_qualification(self, row_id: int, result: Qualification) -> None:
+        self.client.update_row(
+            self.table_id,
+            row_id,
+            {
+                "Score": result.score,
+                "Apply": result.should_apply,
+            },
+        )
+
+    def save_artifacts(self, row_id: int, uploaded_files: Mapping[str, Any]) -> None:
+        self.client.update_row(self.table_id, row_id, dict(uploaded_files))
+
+    def set_status(self, row_id: int, status_key: str) -> None:
+        if status_key not in self.status_options:
+            raise KeyError(f"Unknown status key: {status_key}")
+        self.client.update_row(
+            self.table_id,
+            row_id,
+            {"Status": self.status_options[status_key]},
+        )
+
+    def has_status(self, row_id: int, status_key: str) -> bool:
+        if status_key not in self.status_options:
+            raise KeyError(f"Unknown status key: {status_key}")
+        row = self.client.get_row(self.table_id, row_id)
+        current = row.get("Status")
+        expected_id = self.status_options[status_key]
+        if isinstance(current, Mapping):
+            return current.get("id") == expected_id
+        if isinstance(current, int):
+            return current == expected_id
+        return False
+
+    def _job_fields(self, job: Job) -> dict[str, Any]:
+        normalized_contract = "".join(
+            character for character in (job.contract_type or "").casefold() if character.isalnum()
+        )
+        aliases = {
+            "fulltime": "fullTime",
+            "parttime": "partTime",
+            "contract": "contract",
+            "temporary": "temporary",
+            "internship": "internship",
+            "volunteer": "volunteer",
+        }
+        contract_key = aliases.get(normalized_contract)
+        contract_value: object = self.contract_type_options.get(contract_key, "") if contract_key else ""
+        return {
+            "Job ID": self._display_job_id(job),
+            "Company Name": job.company_name,
+            "Title": job.title,
+            "Location": job.location or "",
+            "Job Description": job.description,
+            "Contract Type": contract_value,
+            "Link": job.url,
+            "Date": job.published_at.date().isoformat() if job.published_at else None,
+        }
