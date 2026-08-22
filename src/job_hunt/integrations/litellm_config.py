@@ -23,6 +23,7 @@ CHAT_MODEL_BLOCKLIST = (
 )
 CAPABILITY_GROUPS = ("job-fast", "job-balanced", "job-powerful")
 REPAIR_GROUP_MAP = {"job-fast": "repair-fast", "job-balanced": "repair-balanced"}
+REPAIR_GROUPS = tuple(REPAIR_GROUP_MAP.values())
 DEFAULT_PROVIDER_REGISTRY_PATH = Path("config/llm-providers.json")
 
 
@@ -178,6 +179,16 @@ def _provider_groups(provider: Mapping[str, Any]) -> dict[str, list[str]]:
     }
 
 
+def _provider_repair_groups(provider: Mapping[str, Any]) -> dict[str, list[str]]:
+    raw = provider.get("repair_models", {})
+    if not isinstance(raw, Mapping):
+        raise ConfigGenerationError(f"Provider {provider.get('name', '<unknown>')} repair_models must be an object")
+    return {
+        "repair-fast": [str(item) for item in raw.get("fast", [])],
+        "repair-balanced": [str(item) for item in raw.get("balanced", [])],
+    }
+
+
 def _provider_enabled(provider: Mapping[str, Any], env: Mapping[str, str]) -> bool:
     flag = str(provider.get("enabled_env", "")).strip()
     if not flag:
@@ -222,6 +233,21 @@ def _provider_extra_params(provider: Mapping[str, Any]) -> dict[str, Any]:
     return {str(key): value for key, value in raw.items()}
 
 
+def _append_provider_models(
+    model_list: list[dict[str, Any]],
+    groups: Mapping[str, Sequence[str]],
+    *,
+    provider_prefix: str,
+    keys: Sequence[tuple[str, str]],
+    extra_params: Mapping[str, Any],
+) -> None:
+    for group, models in groups.items():
+        for model in models:
+            provider_model = model if model.startswith(f"{provider_prefix}/") else f"{provider_prefix}/{model}"
+            for key_name, _ in keys:
+                model_list.append(deployment(group, provider_model, key_name, extra_params=extra_params))
+
+
 def add_provider_deployments(
     model_list: list[dict[str, Any]],
     provider: Mapping[str, Any],
@@ -240,7 +266,7 @@ def add_provider_deployments(
     excluded = [str(item) for item in provider.get("exclude_models", [])]
     blocklist = [str(item) for item in provider.get("blocklist", CHAT_MODEL_BLOCKLIST)]
     allowlist = [str(item) for item in provider.get("discovery_allowlist", [])]
-    groups = group_models(
+    generation_groups = group_models(
         discovered,
         explicit=explicit,
         excluded=excluded,
@@ -248,14 +274,24 @@ def add_provider_deployments(
         allowlist=allowlist,
         fill_missing=bool(provider.get("fill_missing_groups", True)),
     )
+    repair_groups = _provider_repair_groups(provider)
     provider_prefix = _provider_model_prefix(provider)
     extra_params = _provider_extra_params(provider)
 
-    for group, models in groups.items():
-        for model in models:
-            provider_model = model if model.startswith(f"{provider_prefix}/") else f"{provider_prefix}/{model}"
-            for key_name, _ in keys:
-                model_list.append(deployment(group, provider_model, key_name, extra_params=extra_params))
+    _append_provider_models(
+        model_list,
+        generation_groups,
+        provider_prefix=provider_prefix,
+        keys=keys,
+        extra_params=extra_params,
+    )
+    _append_provider_models(
+        model_list,
+        repair_groups,
+        provider_prefix=provider_prefix,
+        keys=keys,
+        extra_params=extra_params,
+    )
 
 
 def add_repair_deployments(model_list: list[dict[str, Any]]) -> None:
@@ -281,7 +317,7 @@ def _nonnegative_int(env: Mapping[str, str], name: str, default: int) -> int:
 def _deployment_retry_budget(model_list: Sequence[Mapping[str, Any]]) -> int:
     counts = Counter(str(entry["model_name"]) for entry in model_list)
     generation_counts = [counts[group] for group in CAPABILITY_GROUPS if counts[group]]
-    repair_counts = [counts[group] for group in REPAIR_GROUP_MAP.values() if counts[group]]
+    repair_counts = [counts[group] for group in REPAIR_GROUPS if counts[group]]
     return max([0, *(count - 1 for count in generation_counts), *(count - 1 for count in repair_counts)])
 
 
@@ -301,7 +337,8 @@ def build_litellm_config(
             raise ConfigGenerationError("Every provider registry entry must be an object")
         add_provider_deployments(model_list, provider, env=env, discoverer=discoverer)
 
-    if not model_list:
+    generation_entries = [item for item in model_list if str(item["model_name"]) in CAPABILITY_GROUPS]
+    if not generation_entries:
         raise ConfigGenerationError("No LiteLLM chat-model deployments were generated from configured provider keys")
     add_repair_deployments(model_list)
 
