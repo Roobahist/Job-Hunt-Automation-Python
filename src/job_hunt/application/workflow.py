@@ -87,6 +87,19 @@ class ApplicationWorkflow:
         existing_row_id = int(existing["id"]) if existing is not None else None
         resuming = resume_row_id is not None
 
+        # A fresh automatic run must treat an existing row as a true no-op. Do
+        # this before reset/update calls so the race-condition duplicate guard
+        # does not mutate source metadata or qualification state.
+        if existing is not None and not force and not resuming:
+            row_id = int(existing["id"])
+            if persisted is not None:
+                persisted(row_id)
+            self._progress(progress, "persistence", "finish")
+            existing_score = existing.get("Score")
+            score = int(existing_score) if isinstance(existing_score, (int, float)) else None
+            log.info("job_already_tracked", stage="persist", row_id=row_id, score=score)
+            return QualificationResult(row_id=row_id, passed=False, score=score)
+
         if resuming:
             # A Celery retry may reuse only the Baserow row that this same run
             # recorded after persistence. Merely finding a matching row is not
@@ -107,25 +120,10 @@ class ApplicationWorkflow:
             raise WorkflowError("Baserow persistence returned no row", ErrorKind.MALFORMED_PROVIDER_RESPONSE)
         row_id = int(row["id"])
 
-        # Automatic discovery is idempotent across independent runs. If a row
-        # already exists, do not spend compatibility/qualification/document
-        # capacity on it. The exception is a retry of the same run, identified by
-        # resume_row_id, which must continue instead of treating its own row as a
-        # duplicate. Fillout/manual force=True remains the explicit fresh
-        # regeneration override.
-        if existing and not force and not resuming:
-            if persisted is not None:
-                persisted(row_id)
-            self._progress(progress, "persistence", "finish")
-            existing_score = existing.get("Score")
-            score = int(existing_score) if isinstance(existing_score, (int, float)) else None
-            log.info("job_already_tracked", stage="persist", row_id=row_id, score=score)
-            return QualificationResult(row_id=row_id, passed=False, score=score)
-
         # Destructive refresh operations belong only to the first attempt of a
         # forced run. A retry resumes the row after the last durable boundary and
         # must not clear qualification or reset status again.
-        if existing and not resuming:
+        if existing is not None and not resuming:
             retry_transient(self.repository.clear_qualification, row_id)
         if force and not resuming:
             retry_transient(self.repository.set_status, row_id, "new")
