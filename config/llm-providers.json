@@ -1,39 +1,6 @@
 {
   "providers": [
     {
-      "name": "groq",
-      "litellm_prefix": "groq",
-      "api_key_prefix": "GROQ_API_KEY_",
-      "enabled": false,
-      "discovery": {
-        "enabled": true,
-        "url": "https://api.groq.com/openai/v1/models"
-      },
-      "models": {
-        "fast": [],
-        "balanced": [],
-        "powerful": []
-      },
-      "discovery_allowlist": [
-        "openai/gpt-oss-20b",
-        "openai/gpt-oss-120b",
-        "qwen/qwen3.6-27b"
-      ],
-      "exclude_models": [],
-      "blocklist": [
-        "whisper",
-        "speech",
-        "tts",
-        "orpheus",
-        "guard",
-        "safeguard",
-        "moderation",
-        "embedding",
-        "embed",
-        "rerank"
-      ]
-    },
-    {
       "name": "gemini-fast",
       "litellm_prefix": "gemini",
       "api_key_prefix": "GEMINI_API_KEY_",
