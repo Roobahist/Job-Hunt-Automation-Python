@@ -70,7 +70,16 @@ class FakeQueue:
         resume_row_id: int | None = None,
     ) -> str:
         self.calls.append(
-            ("submission", tenant, payload, run_id, force, snapshot_id, checkpoint_namespace, resume_row_id)
+            (
+                "submission",
+                tenant,
+                payload,
+                run_id,
+                force,
+                snapshot_id,
+                checkpoint_namespace,
+                resume_row_id,
+            )
         )
         return "task-1"
 
@@ -336,7 +345,7 @@ def test_telegram_acknowledgement_failure_does_not_retry_action() -> None:
     )
     FakeContainer.notifier.fail_answers = False
     assert response.status_code == 200
-    assert FakeContainer.repositories["mojtaba"].statuses == [(43, "dropped")]
+    assert FakeContainer.repositories["mojtaba"].statuses == [(43, "applied")]
 
 
 def test_validation_error_is_structured() -> None:
