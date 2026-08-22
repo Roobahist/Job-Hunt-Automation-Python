@@ -66,6 +66,7 @@ _STAGE_ORDER = (
     "discovery",
     "normalization",
     "persistence",
+    "compatibility_filter",
     "qualification",
     "documents_queue",
     "document_check",
@@ -79,6 +80,7 @@ _STAGE_LABELS = {
     "discovery": "Discovered",
     "normalization": "Normalize job",
     "persistence": "Persist to Baserow",
+    "compatibility_filter": "Compatibility filter",
     "qualification": "Qualification",
     "documents_queue": "Waiting for document worker",
     "document_check": "Check current Baserow status",
@@ -181,6 +183,16 @@ def _retry_plan(task: Any, exc: Exception) -> tuple[int, int] | None:
     if retries >= _TASK_MAX_RETRIES:
         return None
     return retries, _retry_countdown(exc, retries)
+
+
+def _resume_row_id(store: RunStore, run_id: UUID, retries: int) -> int | None:
+    """Return the persisted row owned by this run only when Celery is retrying it."""
+    if retries <= 0:
+        return None
+    status = store.get(run_id)
+    notification = status.notification if status and isinstance(status.notification, dict) else {}
+    row_id = notification.get("row_id")
+    return row_id if isinstance(row_id, int) and not isinstance(row_id, bool) else None
 
 
 def _defer_task(
@@ -721,10 +733,13 @@ def process_submission(
     redis = store.redis
     job: Job | None = None
     chat_id: str | None = None
+    active_stage = "normalization"
+    retry_number = int(getattr(self.request, "retries", 0))
+    resume_row_id = _resume_row_id(store, identifier, retry_number)
     store.update(
         identifier,
         state=RunState.RUNNING,
-        stage="normalization",
+        stage=active_stage,
         task_id=self.request.id,
         error=None,
     )
@@ -741,7 +756,8 @@ def process_submission(
         store.merge_notification(
             identifier,
             processing_state="processing",
-            current_stage="normalization",
+            current_stage=active_stage,
+            retry_in_seconds=None,
             timeline={"normalization": {"started_at": now}},
         )
         job = services.normalizer.normalize(
@@ -751,6 +767,7 @@ def process_submission(
         )
         _progress_finish(identifier, "normalization")
 
+        active_stage = "persistence"
         lock = redis.lock(
             f"job-hunt:lock:{tenant}:{job.identity}",
             timeout=settings.job_lock_timeout_seconds,
@@ -759,16 +776,19 @@ def process_submission(
         if not lock.acquire(blocking=True):
             raise TimeoutError("Timed out waiting for an in-progress run of the same job")
         try:
-            store.update(identifier, stage="qualification")
+            store.update(identifier, stage=active_stage)
 
             def progress(stage: str, event: str) -> None:
+                nonlocal active_stage
                 if event == "start":
+                    active_stage = stage
                     _progress_start(tenant, identifier, job, chat_id or "", stage)
                 else:
                     _progress_finish(identifier, stage)
 
             def persisted(row_id: int) -> None:
                 # The row must exist before Telegram is allowed to expose the job.
+                # This row_id also establishes same-run ownership for Celery retry.
                 store.merge_notification(identifier, row_id=row_id)
                 _ensure_notification(tenant, identifier, job, chat_id or "")
 
@@ -781,6 +801,7 @@ def process_submission(
                 force=force,
                 progress=progress,
                 persisted=persisted,
+                resume_row_id=resume_row_id,
             )
         finally:
             if lock.owned():
@@ -808,6 +829,7 @@ def process_submission(
         if qualification.score is None:
             raise RuntimeError("Passing qualification result must include a score")
 
+        active_stage = "documents_queue"
         store.update(identifier, state=RunState.RUNNING, stage="documents_queued", error=None)
         _progress_start(
             tenant,
@@ -836,11 +858,11 @@ def process_submission(
         plan = _retry_plan(self, exc)
         if plan is not None and isinstance(exc, WorkflowError):
             retries, countdown = plan
-            _progress_deferred(tenant, identifier, job, chat_id, "qualification", countdown)
+            _progress_deferred(tenant, identifier, job, chat_id, active_stage, countdown)
             store.update(
                 identifier,
                 state=RunState.RUNNING,
-                stage="qualification_deferred",
+                stage=f"{active_stage}_deferred",
                 error={
                     "type": type(exc).__name__,
                     "message": str(exc),
@@ -852,7 +874,7 @@ def process_submission(
                 exc,
                 tenant=tenant,
                 run_id=run_id,
-                stage="qualification",
+                stage=active_stage,
                 retries=retries,
                 countdown=countdown,
             )
@@ -870,7 +892,7 @@ def process_submission(
             stage="failed",
             error={"type": type(exc).__name__, "message": str(exc)},
         )
-        _log_terminal_failure("job_failed", exc, tenant=tenant, run_id=run_id, stage="worker")
+        _log_terminal_failure("job_failed", exc, tenant=tenant, run_id=run_id, stage=active_stage)
         raise
 
 
