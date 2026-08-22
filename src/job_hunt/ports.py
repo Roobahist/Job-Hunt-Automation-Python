@@ -13,6 +13,14 @@ from job_hunt.domain.models import (
 )
 
 
+class StructuredClient(Protocol):
+    def generate(self, prompt: str, definition: PromptDefinition) -> dict[str, Any]: ...
+
+
+class JobExtractor(Protocol):
+    def extract_job(self, content: str, source_url: str) -> Job: ...
+
+
 class JobRepository(Protocol):
     def find(self, job: Job) -> Mapping[str, Any] | None: ...
     def create(self, job: Job) -> Mapping[str, Any]: ...
