@@ -49,7 +49,8 @@
       },
       "litellm_params": {
         "rpm": 15,
-        "tpm": 250000
+        "tpm": 250000,
+        "additional_drop_params": ["temperature", "top_p", "top_k"]
       },
       "observed_daily_request_limit": 500,
       "exclude_models": []
@@ -70,7 +71,8 @@
       },
       "litellm_params": {
         "rpm": 5,
-        "tpm": 250000
+        "tpm": 250000,
+        "additional_drop_params": ["temperature", "top_p", "top_k"]
       },
       "observed_daily_request_limit": 20,
       "exclude_models": []
@@ -131,7 +133,7 @@
       },
       "repair_models": {
         "fast": ["mistral-small-latest"],
-        "balanced": []
+        "balanced": ["mistral-small-latest"]
       },
       "litellm_params": {
         "rpm": 50,
