@@ -13,16 +13,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from job_hunt.errors import ConfigurationError
 
-_DEFAULT_GEMINI_LIMITS = {
-    "gemini-3.6-flash": {"rpm": 5, "tpm": 250000, "rpd": 20},
-    "gemini-3.5-flash": {"rpm": 5, "tpm": 250000, "rpd": 20},
-    "gemini-3-flash-preview": {"rpm": 5, "tpm": 250000, "rpd": 20},
-    "gemini-2.5-flash": {"rpm": 5, "tpm": 250000, "rpd": 20},
-    "gemini-3.5-flash-lite": {"rpm": 15, "tpm": 250000, "rpd": 500},
-    "gemini-3.1-flash-lite": {"rpm": 15, "tpm": 250000, "rpd": 500},
-    "gemini-2.5-flash-lite": {"rpm": 10, "tpm": 250000, "rpd": 20},
-}
-
 
 class LlmRoute(BaseModel):
     provider: str
@@ -46,8 +36,6 @@ class Settings(BaseSettings):
 
     # Operational timing is environment-configurable. A task time limit of zero disables
     # Celery's global deadline so long document jobs are not killed mid-generation.
-    gemini_request_timeout_seconds: int = Field(default=180, ge=1)
-    cerebras_request_timeout_seconds: int = Field(default=180, ge=1)
     litellm_request_timeout_seconds: int = Field(default=180, ge=1)
     telegram_request_timeout_seconds: int = Field(default=120, ge=1)
     baserow_request_timeout_seconds: int = Field(default=60, ge=1)
@@ -60,30 +48,17 @@ class Settings(BaseSettings):
     transient_base_delay_seconds: int = Field(default=5, ge=1)
     transient_max_delay_seconds: int = Field(default=300, ge=1)
 
-    # Existing provider settings remain for backward compatibility with old deployments.
     apify_tokens: str = ""
-    gemini_api_keys: str = ""
-    cerebras_api_keys: str = ""
-    cerebras_base_url: str = "https://api.cerebras.ai/v1"
     telegram_bot_token: str = ""
     telegram_webhook_secret: str = ""
 
-    # Job-hunt workers now call a centralized LiteLLM Proxy using logical model aliases.
+    # Job-hunt workers call a centralized LiteLLM Proxy using logical model aliases.
     litellm_base_url: str = "http://litellm:4000"
     litellm_api_key: str = ""
     llm_routes: str = ""
     llm_repair_routes: str = ""
 
-    # Legacy Gemini-only settings remain available for migration compatibility.
-    gemini_content_models: str = (
-        "gemini-3.6-flash,gemini-3.5-flash,gemini-3-flash-preview,gemini-2.5-flash,"
-        "gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-2.5-flash-lite"
-    )
-    gemini_repair_models: str = "gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-2.5-flash-lite"
-    gemini_limits_json: str = json.dumps(_DEFAULT_GEMINI_LIMITS, separators=(",", ":"))
     provider_quota_cooldown_seconds: int = Field(default=3600, ge=1)
-    gemini_quota_cooldown_seconds: int = Field(default=65, ge=1)
-    cerebras_quota_cooldown_seconds: int = Field(default=65, ge=1)
 
     @staticmethod
     def _split_csv(value: str) -> list[str]:
@@ -94,18 +69,6 @@ class Settings(BaseSettings):
         if not tokens:
             raise ConfigurationError("JOB_HUNT_APIFY_TOKENS must contain at least one token")
         return tokens
-
-    def shared_gemini_keys(self, *, required: bool = True) -> list[str]:
-        keys = self._split_csv(self.gemini_api_keys)
-        if required and not keys:
-            raise ConfigurationError("JOB_HUNT_GEMINI_API_KEYS must contain at least one API key")
-        return keys
-
-    def shared_cerebras_keys(self, *, required: bool = True) -> list[str]:
-        keys = self._split_csv(self.cerebras_api_keys)
-        if required and not keys:
-            raise ConfigurationError("JOB_HUNT_CEREBRAS_API_KEYS must contain at least one API key")
-        return keys
 
     def shared_litellm_key(self) -> str:
         if not self.litellm_api_key:
@@ -144,43 +107,6 @@ class Settings(BaseSettings):
         if not routes:
             raise ConfigurationError("JOB_HUNT_LLM_REPAIR_ROUTES must contain at least one LiteLLM model alias")
         return routes
-
-    def content_models(self) -> list[str]:
-        models = [model.removeprefix("models/") for model in self._split_csv(self.gemini_content_models)]
-        if not models:
-            raise ConfigurationError("JOB_HUNT_GEMINI_CONTENT_MODELS must contain at least one model")
-        return models
-
-    def repair_models(self) -> list[str]:
-        models = [model.removeprefix("models/") for model in self._split_csv(self.gemini_repair_models)]
-        if not models:
-            raise ConfigurationError("JOB_HUNT_GEMINI_REPAIR_MODELS must contain at least one model")
-        return models
-
-    def gemini_limits(self) -> dict[str, dict[str, int]]:
-        try:
-            raw = json.loads(self.gemini_limits_json)
-        except json.JSONDecodeError as exc:
-            raise ConfigurationError("JOB_HUNT_GEMINI_LIMITS_JSON must be valid JSON") from exc
-        if not isinstance(raw, dict):
-            raise ConfigurationError("JOB_HUNT_GEMINI_LIMITS_JSON must be a JSON object")
-        result: dict[str, dict[str, int]] = {}
-        for model, limits in raw.items():
-            if not isinstance(model, str) or not isinstance(limits, dict):
-                raise ConfigurationError("Every Gemini limits entry must map a model to an object")
-            normalized: dict[str, int] = {}
-            for name in ("rpm", "tpm", "rpd"):
-                value = limits.get(name)
-                if value is not None:
-                    try:
-                        integer = int(value)
-                    except (TypeError, ValueError) as exc:
-                        raise ConfigurationError(f"Gemini limit {model}.{name} must be an integer") from exc
-                    if integer < 1:
-                        raise ConfigurationError(f"Gemini limit {model}.{name} must be positive")
-                    normalized[name] = integer
-            result[model.removeprefix("models/")] = normalized
-        return result
 
 
 class SecretAliases(BaseModel):
@@ -229,7 +155,6 @@ class TenantRuntimeConfig(BaseModel):
     title_exclusions: list[str] = Field(default_factory=list)
     qualification_threshold: int = Field(default=33, ge=0, le=100)
     telegram_chat_id: str
-    gemini_model: str | None = None
     project_selection_count: int | None = None
     work_experience_selection_count: int = Field(default=3, ge=1)
 
@@ -239,6 +164,27 @@ class TenantRuntimeConfig(BaseModel):
         if missing:
             raise ValueError(f"baserow_table_ids missing: {sorted(missing)}")
         return self
+
+
+class TenantBootstrap(BaseModel):
+    key: str
+    enabled: bool = True
+    renderer: str
+    config_table_id: int = Field(ge=0)
+    baserow_base_url: str = "https://api.baserow.io"
+    tenant_root: Path
+    secrets: SecretAliases
+
+    def secret(self, name: str, *, required: bool = True) -> str:
+        alias = getattr(self.secrets, name)
+        if not alias:
+            if required:
+                raise ConfigurationError(f"Missing secret alias for {name} on tenant {self.key}")
+            return ""
+        value = os.getenv(alias, "")
+        if required and not value:
+            raise ConfigurationError(f"Missing {alias} for tenant {self.key}")
+        return value
 
 
 def load_registry(path: Path) -> dict[str, TenantBootstrap]:
