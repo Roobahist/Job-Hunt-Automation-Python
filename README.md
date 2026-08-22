@@ -2,7 +2,7 @@
 
 A Python 3.12 multi-tenant job discovery and application-generation system. It replaces the earlier Mahsa and Mojtaba n8n workflows with one shared application that accepts jobs, normalizes and deduplicates them, qualifies them with structured LLM calls, generates tailored CV and cover-letter artifacts, persists business state to Baserow, and reports progress through Telegram.
 
-This README is the codebase guide. It explains how the runtime is assembled, where different kinds of changes belong, the major design decisions, and the invariants that should be preserved when extending the system.
+This README is the main codebase guide. It explains the active runtime architecture, the major design decisions, where different kinds of changes belong, how the workflow behaves, and how production deployments should be selected.
 
 ## Table of contents
 
@@ -27,6 +27,7 @@ This README is the codebase guide. It explains how the runtime is assembled, whe
 - [Testing strategy](#testing-strategy)
 - [Local development](#local-development)
 - [Production deployment](#production-deployment)
+- [Deployment levels](#deployment-levels)
 - [Operational debugging](#operational-debugging)
 - [Design invariants](#design-invariants)
 - [Legacy and migration code](#legacy-and-migration-code)
@@ -38,17 +39,17 @@ The running system is composed of:
 - **FastAPI** for Fillout webhooks, operator endpoints, run status, retries, health checks, and the shared Telegram callback endpoint.
 - **Celery** for asynchronous discovery, normalization, qualification, document generation, and notifications.
 - **Celery Beat** for scheduled tenant discovery dispatch.
-- **Redis** for Celery transport/backend, run state, replay data, discovery snapshots, locks, cooldowns, and other shared ephemeral coordination state.
+- **Redis** for Celery transport/backend, run state, replay data, discovery snapshots, locks, cooldowns, and shared runtime coordination.
 - **Baserow** as the business system of record for tenant configuration, prompt definitions, jobs, qualification results, statuses, and final PDF attachments.
 - **Apify** for LinkedIn search and single-job retrieval.
 - **LiteLLM Proxy** as the active LLM gateway. Application code asks for logical capability groups such as `job-fast`, `job-balanced`, and `job-powerful`; LiteLLM chooses concrete provider/model/key deployments and performs deployment failover.
-- **Groq and Gemini** as currently configured upstream LLM providers. The provider registry is extensible.
+- **Groq and Gemini** as currently configured upstream LLM providers. The registry is extensible.
 - **LaTeX / pdfLaTeX** for deterministic CV and cover-letter rendering.
 - **Telegram** for processing updates, completed bundles, and workflow actions.
-- **Flower** for Celery task visibility.
-- **Langfuse** as optional tracing infrastructure where supported by the active client path.
+- **Flower** for Celery visibility.
+- **Langfuse** as optional tracing where supported by the active client path.
 
-At a high level:
+High-level flow:
 
 ```text
 Fillout / Operator / Scheduler
@@ -91,24 +92,22 @@ Fillout / Operator / Scheduler
 
 ## Active runtime architecture
 
-The most important architectural fact is that the current runtime is **capability routed through LiteLLM**.
-
-The active dependency path is:
+The current production LLM path is capability-routed through LiteLLM:
 
 ```text
 Container
   -> build_routed_structured_client()
   -> CapabilityRoutedStructuredClient
   -> LiteLLMGatewayClient
-  -> internal LiteLLM Proxy
+  -> LiteLLM Proxy
   -> provider/model/key deployment
 ```
 
-The application does not normally choose a concrete Gemini or Groq API key. It selects an operation-level capability group. LiteLLM owns deployment selection, cooldown, retries, and fallback among concrete deployments.
+The application does not normally choose a concrete provider API key. It chooses an operation-level capability group. LiteLLM owns concrete deployment selection, cooldown, retries inside a logical group, and configured fallback between groups.
 
-Examples of default operation routing:
+Default operation routing is approximately:
 
-| Operation | Default capability group |
+| Operation | Capability group |
 | --- | --- |
 | compatibility | `job-fast` |
 | content extraction | `job-fast` |
@@ -122,43 +121,43 @@ Examples of default operation routing:
 | cover letter | `job-powerful` |
 | structure repair | `repair-fast` |
 
-These mappings are defaults, not hard-coded provider choices. `JOB_HUNT_LLM_OPERATION_GROUPS_JSON` can override operation-to-group routing without changing application code.
+`JOB_HUNT_LLM_OPERATION_GROUPS_JSON` can override operation-to-group mapping without putting provider names into workflow code.
 
 ## Repository layout
 
 ```text
 .
 ├── config/
-│   ├── llm-providers.json       # provider discovery, model pools, key prefixes
+│   ├── llm-providers.json       # provider/model/key-prefix registry
 │   ├── users.toml               # tenant bootstrap registry
-│   └── seeds/                   # Baserow configuration and prompt seed CSVs
+│   └── seeds/                   # Baserow seed/reference CSVs
 ├── deploy/
-│   └── nginx/                   # production reverse-proxy configuration
+│   └── nginx/                   # production reverse-proxy config
 ├── docs/
 │   ├── operations.md
 │   ├── queue-architecture.md
 │   ├── tenant-onboarding.md
 │   └── vps-deployment.md
 ├── scripts/
-│   ├── deploy-vps.sh            # normal production deployment entry point
+│   ├── deploy-vps.sh            # change-aware production deployment
 │   ├── generate-litellm-config.py
 │   ├── check-mahsa-latex.py
 │   └── test-vps.sh
 ├── src/job_hunt/
 │   ├── api/                     # HTTP boundary
 │   ├── application/             # use cases and orchestration
-│   ├── domain/                  # domain models and job identity rules
-│   ├── integrations/            # provider and persistence adapters
-│   ├── rendering/               # safe LaTeX rendering and compilation
+│   ├── domain/                  # domain models and job identity
+│   ├── integrations/            # provider/persistence adapters
+│   ├── rendering/               # safe LaTeX rendering/compilation
 │   ├── tenants/                 # tenant registry and renderer selection
 │   ├── cli.py                   # operator CLI
-│   ├── config.py                # typed settings and tenant config models
-│   ├── container.py             # composition root / dependency wiring
+│   ├── config.py                # typed settings/config models
+│   ├── container.py             # composition root
 │   ├── ports.py                 # protocol interfaces
-│   ├── queueing.py              # Celery queue adapter
-│   ├── run_store.py             # run state and replay storage
-│   ├── state.py                 # shared Redis coordination primitives
-│   └── worker.py                # Celery tasks and queue handoffs
+│   ├── queueing.py              # queue adapter
+│   ├── run_store.py             # run/replay state
+│   ├── state.py                 # shared Redis primitives
+│   └── worker.py                # Celery tasks and handoffs
 ├── tenants/
 │   ├── mahsa/
 │   │   ├── master_cv.json
@@ -178,134 +177,118 @@ These mappings are defaults, not hard-coded provider choices. `JOB_HUNT_LLM_OPER
 
 ### What belongs where
 
-Use the layer boundaries rather than putting new behavior wherever it is easiest to access a dependency.
+- Pure job concepts, state models, and identity rules: `domain/`
+- Use-case sequencing and workflow decisions: `application/`
+- Interfaces needed by application code: `ports.py`
+- Baserow, Apify, Telegram, HTTP-provider, and LLM implementations: `integrations/`
+- Dependency wiring: `container.py`
+- HTTP-specific behavior: `api/`
+- Celery task boundaries and queue handoffs: `worker.py`, `queueing.py`
+- Tenant-specific files: `tenants/<key>/`
+- Provider/model pools: `config/llm-providers.json`
+- Tenant bootstrap information: `config/users.toml`
 
-- Put **pure job concepts, state models, and identity rules** in `domain/`.
-- Put **use-case sequencing** in `application/`.
-- Put **interfaces required by application code** in `ports.py`.
-- Put **Baserow, Apify, Telegram, HTTP, and LLM implementation details** in `integrations/`.
-- Put **construction and dependency wiring** in `container.py`.
-- Put **HTTP-specific behavior** in `api/`.
-- Put **Celery task boundaries, queue routing, task retries, and asynchronous handoffs** in `worker.py` and `queueing.py`.
-- Put **tenant-specific file assets** under `tenants/<key>/`.
-- Add Python tenant-specific behavior only when the tenant really has a different data/rendering contract. Do not fork the whole workflow per tenant.
+Do not fork the complete workflow per tenant unless the underlying data contract genuinely differs.
 
 ## End-to-end job lifecycle
 
 ### 1. Ingress
 
-Jobs can enter through several paths:
+Jobs can enter through:
 
 - `POST /webhooks/fillout/{tenant}`
 - `POST /v1/tenants/{tenant}/jobs`
 - `job-hunt submit`
-- scheduled or operator-triggered discovery
+- scheduled discovery
+- operator-triggered discovery
 - retry/regeneration from stored run data
 
-The domain supports four submission types:
+Supported submission types are:
 
-- `linkedin`: a LinkedIn job ID
+- `linkedin`: LinkedIn job ID
 - `external`: already structured job fields
-- `ai_content`: raw page content that must be extracted into a job
-- `url`: a URL that is either recognized as LinkedIn or safely fetched and extracted
+- `ai_content`: raw page content that must be extracted
+- `url`: a LinkedIn or generic public job URL
 
-The HTTP layer validates authentication and request shape, then delegates to `RunCoordinator`. The API intentionally returns `202 Accepted` with a run UUID instead of executing the workflow inside the request.
+HTTP requests return `202 Accepted` with a run UUID instead of waiting for scraping, LLM calls, or LaTeX.
 
-**Reasoning:** provider calls, scraping, LLM generation, and LaTeX can take much longer than a safe HTTP request lifetime. A run ID makes execution observable and retryable without holding client connections open.
+**Reasoning:** these operations can outlive a safe HTTP request. A run ID makes the work observable and retryable.
 
 ### 2. Run creation and replay data
 
-`RunCoordinator` creates a `RunStatus` in Redis and separately stores the replay request. It then asks the `Queue` protocol to enqueue either a submission or discovery task.
+`RunCoordinator` creates a `RunStatus` in Redis, stores replay input separately, and enqueues a Celery task through the `Queue` protocol.
 
-A retry creates a new run linked through `original_run_id`. For ordinary retry, the stored checkpoint namespace can be retained. A fresh regeneration uses a new namespace and forces reprocessing.
-
-**Reasoning:** run state and replay input are separate concepts. The user can inspect historical execution state while the system still has enough information to enqueue a new attempt.
+Retries create a new run linked to `original_run_id`. Normal retry can preserve the checkpoint namespace. Fresh regeneration uses a new namespace and forces the submission path.
 
 ### 3. Normalization
 
-`SubmissionNormalizer` converts every supported input into the canonical `Job` model.
+`SubmissionNormalizer` converts all ingress shapes to canonical `Job` objects.
 
-- LinkedIn IDs are fetched using the tenant's single-job Apify actor.
-- LinkedIn URLs are recognized and converted to the same single-job path.
-- External jobs already contain canonical business fields.
-- Generic URLs are fetched through the public-text security boundary and then sent to the extraction operation.
-- Raw AI content is sent directly to extraction.
+- LinkedIn IDs use the configured Apify single-job actor.
+- LinkedIn URLs are normalized to the same path.
+- External submissions already contain canonical business fields.
+- Generic URLs go through the public-text security boundary and structured extraction.
+- Raw AI content goes directly to structured extraction.
 
-Provider field variants such as `jobId`, `job_id`, `jobTitle`, `job_title`, `publishedAt`, and similar aliases are normalized centrally.
-
-**Reasoning:** downstream workflow code should not care how a job entered the system or how a provider happened to name a field.
+Provider-specific field aliases are normalized centrally so downstream code does not branch on provider response shape.
 
 ### 4. Stable identity and deduplication
 
-Every normalized `Job` receives:
+Each normalized job receives:
 
-- a stable textual `identity`
-- a deterministic integer `internal_id`
-- a canonical URL
+- stable textual identity
+- deterministic integer internal ID
+- canonical URL
 
-If the source supplies a stable external ID, identity is `source:external_id`. Otherwise it falls back to the canonicalized URL. The internal ID is derived from SHA-256 and limited to JavaScript-safe integer range.
+External source IDs are preferred. Canonical URL is the fallback identity.
 
-Automatic discovery also deduplicates the batch by identity before jobs are queued.
+Deduplication happens both at discovery-batch level and at persistence level. Existing automatically discovered jobs are not requalified or regenerated unless processing is explicitly forced.
 
-The workflow performs a second persistence-level duplicate check in Baserow. Existing automatically discovered jobs are not requalified or regenerated unless processing is explicitly forced.
+**Reasoning:** provider duplicates, overlapping discoveries, task redelivery, and retries mean exactly-once delivery cannot be assumed.
 
-**Reasoning:** discovery runs can overlap, providers can return the same posting through different searches, and worker delivery is not exactly-once. Idempotency therefore exists at more than one layer.
+### 5. Persistence and cancellation
 
-### 5. Persistence
+`ApplicationWorkflow.persist_and_qualify()` finds or creates the Baserow row.
 
-`ApplicationWorkflow.persist_and_qualify()` asks `JobRepository` to find or create the job row.
+Baserow is user-owned business state. A row manually set to `Dropped` is treated as a cancellation and checked at expensive stage boundaries.
 
-Baserow is treated as user-owned business state. In particular, a manually selected `Dropped` status is checked before and after expensive stages.
-
-**Reasoning:** if a user cancels a job while a worker is running, the automation should stop spending provider quota rather than overwrite the user's decision later.
+**Reasoning:** automation must not override a user's explicit decision or keep spending quota after cancellation.
 
 ### 6. Compatibility filter
 
-Unless force-processing bypasses it, the compatibility filter performs a relatively cheap structured LLM check before the full qualification and tailoring workload.
-
-An incompatible job is marked `Dropped` without entering document generation.
-
-**Reasoning:** reject obvious mismatches before spending stronger-model capacity on them.
+The compatibility filter is intentionally cheaper than the full application-generation pipeline. Incompatible jobs are dropped before expensive tailoring work.
 
 ### 7. Qualification
 
-The `qualification_scoring` prompt returns structured data containing a score, `should_apply`, and reasoning.
+`qualification_scoring` returns structured score, `should_apply`, and reasoning.
 
-Document gating is based on the numeric qualification threshold:
+Document gating is:
 
 ```text
 passed = force OR score >= qualification_threshold
 ```
 
-`should_apply` is persisted as metadata in Baserow but is not the threshold calculation itself.
+`should_apply` remains stored metadata; numeric threshold is the document-generation gate.
 
-If a non-forced job fails the threshold, its status becomes `Dropped`.
+### 8. Queue handoff
 
-### 8. Document queue handoff
-
-A job that passes qualification is handed from the `fast` queue to the `documents` queue. The fast worker does not wait for document generation.
-
-**Reasoning:** discovery and qualification should remain responsive even when a LaTeX compile or long LLM call occupies a document worker.
+Passing jobs move from the `fast` queue to the `documents` queue. The fast worker returns without waiting for document generation.
 
 ### 9. Tailoring
 
-Each tenant uses a shared workflow interface but a profile-specific tailoring pipeline.
+Mojtaba runs project, work-experience, and skills branches concurrently. Summary waits for those outputs, then the cover letter sees the final CV.
 
-For Mojtaba, independent project, work-experience, and skills branches execute concurrently. Summary generation waits for those outputs. The cover letter then receives the completed tailored CV.
+Mahsa runs work-experience, skills, and references-decision branches concurrently. Summary then consumes their results before the section-based CV is rebuilt.
 
-For Mahsa, work-experience tailoring, skills tailoring, and the references decision execute concurrently. Summary generation then uses the completed outputs before the section-based CV is rebuilt.
+`JOB_HUNT_LLM_PARALLELISM` bounds parallel work.
 
-`JOB_HUNT_LLM_PARALLELISM` bounds the thread pool used inside one tailoring task.
-
-**Reasoning:** only dependency-independent calls are parallelized. Dependent generation remains ordered, which reduces latency without making prompt data flow ambiguous.
+Only dependency-independent calls run concurrently.
 
 ### 10. Rendering and artifacts
 
-The LLM never writes arbitrary LaTeX structure directly into the final template.
+The model does not write arbitrary LaTeX structure into final templates. It returns structured JSON, which reviewed renderer code maps to known LaTeX commands after escaping values.
 
-Structured JSON is rendered by explicit profile renderers. Text values are escaped, known structures are converted into known LaTeX commands, required markers are injected exactly once, and pdfLaTeX compiles the result.
-
-The run directory contains:
+Generated artifacts include:
 
 - CV JSON
 - CV TeX
@@ -315,21 +298,17 @@ The run directory contains:
 - cover-letter PDF
 - ZIP bundle
 
-The final CV and cover-letter PDFs are uploaded to Baserow. Telegram receives the ZIP bundle.
+Final PDFs persist to Baserow. Telegram receives the ZIP bundle.
 
-**Reasoning:** generated content is untrusted data. Keeping document structure in reviewed templates and renderer code gives predictable output and prevents model text from becoming executable LaTeX structure.
+### 11. Notifications
 
-### 11. Notification handoff
-
-Notification work runs on its own queue. Telegram failures do not turn successful document generation into a failed application result.
-
-**Reasoning:** Telegram is a delivery channel, not the business transaction. A temporary messaging outage should not trigger another expensive LLM generation cycle.
+Telegram is isolated on the `notifications` queue. Notification failure cannot turn successful document generation into a failed business result.
 
 ## Application boundaries and dependency direction
 
-The project follows a lightweight ports-and-adapters approach.
+The project uses a lightweight ports-and-adapters design.
 
-`ports.py` defines protocols for:
+`ports.py` defines protocols such as:
 
 - `JobRepository`
 - `CompatibilityFilter`
@@ -340,31 +319,22 @@ The project follows a lightweight ports-and-adapters approach.
 - `Notifier`
 - `DiscoveryProvider`
 
-`ApplicationWorkflow` depends on these protocols, not on Baserow, Gemini, LiteLLM, Apify, or Telegram classes directly.
+`ApplicationWorkflow` depends on these protocols rather than provider SDKs. `Container` is the composition root that binds protocols to concrete implementations.
 
-`Container` is the composition root that binds protocols to concrete implementations.
-
-This matters for two reasons:
-
-1. Core workflow tests can replace external services with fakes without changing application logic.
-2. Replacing a provider should normally require an adapter change plus container wiring, not a rewrite of the workflow.
-
-When adding a new external service, prefer this pattern:
+Preferred dependency direction:
 
 ```text
 application need
-   -> protocol
-   -> integration adapter
-   -> Container wiring
+    -> protocol
+    -> integration adapter
+    -> Container wiring
 ```
 
-Avoid importing provider SDKs into `application/` or `domain/`.
+Do not import provider SDKs into `application/` or `domain/` unless there is a deliberate architectural reason.
 
 ## Tenant architecture
 
-Tenant differences are deliberately narrow.
-
-`config/users.toml` contains bootstrap information that must be known before Baserow can be queried:
+`config/users.toml` contains the small bootstrap set needed before Baserow can be reached:
 
 - tenant key
 - enabled flag
@@ -372,139 +342,106 @@ Tenant differences are deliberately narrow.
 - Baserow configuration table ID
 - Baserow base URL
 - tenant asset root
-- environment-variable names for tenant Baserow and Fillout secrets
+- names of environment variables containing tenant secrets
 
-The larger tenant runtime configuration is stored in Baserow and validated into `TenantRuntimeConfig`.
+The larger tenant runtime configuration lives in Baserow and is validated into `TenantRuntimeConfig`.
 
-Each tenant asset directory contains a master CV plus LaTeX templates.
+Current renderer profiles:
 
-Current renderer profiles are:
-
-- `mojtaba`: fixed top-level CV sections with project and work-experience pipelines
-- `mahsa`: dynamic section-oriented CV structure with a required education section and optional references
+- `mojtaba`: fixed top-level sections with project/work pipelines
+- `mahsa`: dynamic section-oriented CV with required education and optional references
 
 ### Why configuration is split
 
-The bootstrap registry is intentionally small and local because the application needs enough information to reach Baserow. Everything that operators may reasonably change without redeploying code, such as table IDs, search settings, thresholds, exclusions, actor IDs, and Telegram chat IDs, lives in Baserow.
+The local bootstrap is intentionally small. Operator-editable values such as table IDs, search settings, thresholds, exclusions, actor IDs, and Telegram chat IDs belong in Baserow rather than being duplicated into code or many environment variables.
 
-This avoids putting every tenant setting into environment variables while still keeping secrets out of Baserow seed files and source control.
+Secrets remain in `.env` or a deployment secret manager.
 
 ## Configuration model
 
-There are four configuration layers.
+There are four main layers.
 
-### 1. Application environment
+### Application environment
 
-`Settings` loads `JOB_HUNT_*` variables from `.env` and defines infrastructure-wide values such as:
+`Settings` loads `JOB_HUNT_*` values from `.env`, including:
 
 - Redis URL
 - operator token
-- request and compile timeouts
+- timeouts
 - Celery retry settings
 - scheduler timezone
-- LLM gateway routes
+- LiteLLM logical routes
 - artifact root
 - shared Apify tokens
-- Telegram bot credentials
+- Telegram credentials
 
-### 2. LiteLLM provider registry
+### LiteLLM provider registry
 
-`config/llm-providers.json` describes upstream providers without putting secrets in source control.
-
-A provider entry can specify:
+`config/llm-providers.json` defines provider behavior without storing live keys:
 
 - provider name and LiteLLM prefix
-- numbered API-key environment prefix
+- numbered API-key prefix
 - enabled state
-- optional model-discovery endpoint
+- optional model discovery endpoint
 - explicit fast/balanced/powerful model assignments
 - discovery allowlist
-- model exclusions
-- blocklist
-- extra LiteLLM parameters
+- exclusions and blocklist
+- provider-specific LiteLLM parameters
 
-Example key naming:
+Numbered keys such as `GROQ_API_KEY_1`, `GROQ_API_KEY_2`, `GEMINI_API_KEY_1`, and `GEMINI_API_KEY_2` are discovered from the environment.
 
-```text
-GROQ_API_KEY_1
-GROQ_API_KEY_2
-GEMINI_API_KEY_1
-GEMINI_API_KEY_2
-```
+### Tenant bootstrap
 
-The config generator scans indexed keys. Adding more independent accounts does not require adding Python variables one by one.
+`config/users.toml` points each tenant at its configuration table, asset root, renderer, and tenant secret aliases.
 
-### 3. Tenant bootstrap
+### Tenant runtime configuration
 
-`config/users.toml` points each tenant at its configuration table, asset root, renderer profile, and tenant-specific secret environment variables.
-
-### 4. Tenant runtime data in Baserow
-
-The Baserow Configuration table is parsed into `TenantRuntimeConfig`. Important values include:
-
-- jobs, search-criteria, and prompts table IDs
-- Baserow option IDs
-- Fillout form and field IDs
-- Apify actor IDs
-- LinkedIn proxy/search settings
-- discovery schedule interval
-- company/title exclusions
-- qualification threshold
-- Telegram chat ID
-- selection counts
-
-The application fails configuration validation early when required table contracts or prompt contracts are missing.
+The Baserow Configuration table controls jobs/search/prompts table IDs, option IDs, Fillout IDs, Apify actors, LinkedIn settings, exclusions, qualification threshold, Telegram chat ID, and selection counts.
 
 ## LLM architecture
 
-### Capability groups instead of provider names
+### Capability groups
 
-Application operations target capability groups, not concrete provider models. This is the main abstraction to preserve.
+Application operations request logical capability rather than a hard-coded provider model:
 
 ```text
-application operation
-      |
-      v
- job-fast / job-balanced / job-powerful
-      |
-      v
-    LiteLLM
-      |
-      v
+operation
+   |
+   v
+job-fast / job-balanced / job-powerful
+   |
+   v
+LiteLLM
+   |
+   v
 provider + model + account
 ```
 
-This lets the system change providers, keys, and concrete models independently from prompt orchestration.
+This keeps model/provider changes out of prompt orchestration.
 
 ### Runtime config generation
 
-`scripts/generate-litellm-config.py` reads `config/llm-providers.json` and the current environment to generate `config/litellm.runtime.yaml`.
+`scripts/generate-litellm-config.py` builds `config/litellm.runtime.yaml` from the provider registry and live environment.
 
-For providers with discovery enabled, the generator queries the provider model catalog using configured keys. Models are filtered and classified into logical capability groups. Explicit assignments can override automatic classification.
+Each model/account pair becomes a separate LiteLLM deployment.
 
-Each model/account pair becomes a separate LiteLLM deployment. If a provider has three independent keys for one model, LiteLLM receives three deployments for that logical model group.
+### Retry ownership
 
-### Retry and failover ownership
+LiteLLM is the first retry/failover layer for LLM calls. The generated router config:
 
-LiteLLM is the first retry/failover layer for LLM requests.
+- derives a default retry budget from the largest logical deployment pool
+- defaults `allowed_fails` to `0`
+- cools failed deployments
+- defines capability fallback chains
+- supports environment overrides such as `LITELLM_NUM_RETRIES`
 
-The generated router configuration:
+Celery is the outer task-level retry layer. It should run only after the LLM gateway surfaces a retryable failure it could not resolve internally.
 
-- calculates a default `num_retries` from the largest generated logical deployment pool
-- defaults `allowed_fails` to `0`, so a failing deployment can be cooled immediately
-- uses the configured cooldown interval
-- defines capability fallback chains such as `job-powerful -> job-balanced -> job-fast`
-- defines repair fallback from `repair-fast` to `repair-balanced` when both exist
+**Reasoning:** retrying a whole Celery task is much more expensive than trying another healthy model/key deployment inside the same LLM request.
 
-`LITELLM_NUM_RETRIES`, `LITELLM_ALLOWED_FAILS`, `LITELLM_COOLDOWN_SECONDS`, and `LITELLM_ROUTING_STRATEGY` remain environment-level controls.
+### Structured-output contract
 
-Celery retry is the outer safety net. It should run only after the LLM gateway has surfaced a retryable failure that it could not resolve internally.
-
-**Reasoning:** deployment rotation belongs closest to the provider gateway. Celery retries an entire workflow task and is much more expensive than trying another healthy model/key deployment inside the same LLM request.
-
-### Structured output contract
-
-Prompts are stored in Baserow. An active prompt contains:
+Baserow prompts contain:
 
 ```text
 Prompt Key
@@ -516,144 +453,50 @@ Status
 Enabled
 ```
 
-Only rows with `Status = Active` and `Enabled = true` are loaded. Duplicate active prompt keys are rejected.
+Only active/enabled prompt rows are loaded. `Output Structure` is JSON Schema. Returned model data is independently validated before downstream use.
 
-`Output Structure` is JSON Schema. The gateway is instructed to return JSON, and the application independently validates the response against the schema. If validation fails, the raw result can be sent to the repair capability group with the exact schema and validation error.
-
-**Reasoning:** prompt text alone is not an API contract. Independent schema validation prevents malformed model output from silently flowing into renderers or persistence.
-
-### Prompt ownership
-
-The required prompt set differs by renderer profile.
-
-Common prompts:
-
-- `job_compatibility_filter`
-- `job_page_content_extraction`
-- `qualification_scoring`
-- `cover_letter_generation`
-
-Mojtaba additionally requires:
-
-- `cv_project_selection`
-- `cv_project_rewrite`
-- `cv_work_experience_selection`
-- `cv_work_experience_rewrite`
-- `cv_skills_tailoring`
-- `cv_summary_rewrite`
-
-Mahsa additionally requires:
-
-- `cv_work_experience_selection`
-- `cv_work_experience_rewrite`
-- `cv_skills_tailoring`
-- `cv_summary_rewrite`
-- `cv_references_inclusion`
-
-Changing a prompt's schema is a code-contract change even though the row is stored outside the repository. Update tests and downstream assumptions when changing field shapes.
+Malformed structured output can go through a separate repair capability group, then must pass the same schema again.
 
 ## Discovery and normalization
 
-Scheduled discovery loads active Search Criteria rows from Baserow and turns them into LinkedIn search URLs. A row can either supply a pre-generated URL or fields used to construct one.
+Scheduled discovery reads active Search Criteria rows, constructs or reuses LinkedIn search URLs, calls the configured Apify search actor, normalizes results, applies company/title exclusions, deduplicates them, and queues canonical jobs.
 
-Discovery then:
-
-1. calls the configured Apify search actor
-2. normalizes provider records into `Job`
-3. skips malformed provider records
-4. applies company and title exclusion terms
-5. deduplicates by stable identity
-6. queues canonical submissions
-
-The Apify adapter accepts a pool of independent tokens. Quota/capacity failures cool down the affected token and try another token. Redis-backed cooldown state makes exhaustion visible across worker processes.
-
-This token pool remains application-wide rather than tenant-specific.
-
-**Reasoning:** provider capacity is infrastructure capacity. Tying free-tier accounts to tenants would strand unused capacity and duplicate failover logic.
+Apify tokens form an application-wide pool shared by tenants. Quota/capacity failure cools a token and tries another available token. Redis-backed cooldown state coordinates workers.
 
 ## Persistence and Baserow
 
-Baserow has two roles:
+Baserow has two responsibilities:
 
-1. user-facing business state
-2. tenant-controlled configuration and prompt source
+1. user-facing durable business state
+2. tenant-controlled configuration/prompt source
 
-The Jobs table is expected to expose at least:
+The Jobs table contract includes fields such as Job ID, Company Name, Title, Job Description, Link, Status, Score, Apply, CV, Cover Letter, Date, Location, and Contract Type.
 
-- Job ID
-- Company Name
-- Title
-- Job Description
-- Link
-- Status
-- Score
-- Apply
-- CV
-- Cover Letter
-- Date
-- Location
-- Contract Type
+Qualification writes score and Apply metadata separately from status transitions.
 
-Live tenant loading validates this contract.
-
-### Repository behavior
-
-`BaserowJobRepository` finds jobs by external Job ID first and URL second. New rows start with the configured `new` status.
-
-Qualification writes only score and Apply metadata. Status transitions are separate operations.
-
-Artifact persistence writes the uploaded Baserow file objects after successful generation.
-
-Existing working documents are not cleared before a new document generation succeeds.
-
-**Reasoning:** regeneration should be transactional from the user's perspective. A failed replacement must not destroy the last known-good CV or cover letter.
+Replacement document generation does not clear the last known-good documents before the new artifacts succeed.
 
 ## Redis state and run tracking
 
-Redis is used intentionally for coordination state that is shared by workers but is not the long-term business system of record.
+`RunStore` stores run state, replay data, and notification progress.
 
-### `RunStore`
+Updates use Redis WATCH/MULTI transactions so concurrent workers do not silently overwrite each other's progress.
 
-Stores:
+`RedisState` provides reusable primitives for snapshots, JSON state, checkpoints, cooldowns, and counters.
 
-- `RunStatus`
-- replay request data
-- notification metadata and stage timing
-
-Concurrent run updates use Redis WATCH/MULTI transactions with retry, preventing one worker from blindly overwriting progress written by another worker.
-
-### `RedisState`
-
-Provides reusable primitives for:
-
-- JSON objects with TTL
-- snapshots
-- checkpoints where active clients use them
-- provider cooldowns
-- shared counters
-- checkpoint namespaces
-
-Provider coordination state is global, while checkpoint namespaces can be isolated by run lineage.
-
-### Discovery snapshots
-
-Discovery can serialize tenant runtime configuration and active prompts once and let every child job refer to that snapshot.
-
-**Reasoning:** all jobs from one discovery batch should evaluate against the same configuration/prompt version, and repeated Baserow reads should be avoided.
-
-If a snapshot is unavailable by the time a child runs, the worker can fall back to current configuration rather than fail solely because an optimization expired.
+Redis is coordination/runtime state. It is not the long-term business source of truth.
 
 ## Celery and queue design
 
-The queue split is based on workload characteristics, not arbitrary feature boundaries.
+Queues are split by workload characteristics:
 
 | Queue | Work |
 | --- | --- |
-| `fast` | discovery dispatch, discovery, normalization, persistence, compatibility, qualification |
+| `fast` | discovery, normalization, persistence, compatibility, qualification |
 | `documents` | tailoring, rendering, artifact upload |
-| `notifications` | Telegram progress, final delivery, callback-related message work |
+| `notifications` | Telegram progress/final delivery |
 
-Default Compose concurrency is conservative:
+Default concurrency is conservative:
 
 ```text
 FAST_WORKER_CONCURRENCY=3
@@ -661,56 +504,49 @@ DOCUMENT_WORKER_CONCURRENCY=1
 NOTIFICATION_WORKER_CONCURRENCY=1
 ```
 
-`worker_prefetch_multiplier=1` is important because task durations are uneven. A worker should not reserve a large batch of long document jobs that another idle worker could process.
-
-`task_acks_late=True` and `task_reject_on_worker_lost=True` favor recoverability if a worker dies while processing a task.
-
-Global Celery time limits default to disabled because legitimate document jobs can be long-running. Individual provider and compiler operations have their own timeouts.
+`worker_prefetch_multiplier=1` prevents one worker from reserving a large set of long jobs.
 
 ## Document generation
 
-The worker Docker image is intentionally heavier than the API image because only document generation needs TeX packages.
+The document worker is intentionally isolated because it needs TeX packages and document compilation while the other runtime processes do not.
 
-Docker stages are split into:
+### Image design
 
-- dependency base
-- lightweight API/Beat image
-- worker dependency image with TeX packages
-- worker image
+The production image topology is now:
 
-**Reasoning:** FastAPI, Beat, and other non-rendering processes should not carry the size and attack surface of a full LaTeX installation.
+```text
+lightweight application image
+  -> api
+  -> worker-fast
+  -> worker-notifications
+  -> beat
+  -> flower
 
-### Renderer strategies
+document image with TeX
+  -> worker-documents
+```
 
-The renderer interface is stable even though CV shapes differ.
+Only `worker-documents` carries the LaTeX packages.
 
-Mojtaba uses named template markers for fixed sections. Mahsa renders a list of typed sections and requires exactly one education section.
+The TeX installation is kept in a stable Docker layer. Rebuilding the document image after a source-only change can reuse that layer unless the TeX package list or an earlier Dockerfile stage changed.
 
-Cover letters require exactly three non-empty paragraphs plus date and company name.
-
-Template markers are injected exactly once. Missing or duplicated marker contracts are rendering errors rather than silently producing malformed documents.
+**Reasoning:** the TeX toolchain is large and slow to install. Non-document services should not pay that cost.
 
 ## Telegram architecture
 
-The application uses one shared Telegram bot and one shared webhook endpoint:
+The application uses one shared bot and one shared callback endpoint:
 
 ```text
 POST /webhooks/telegram
 ```
 
-`JOB_HUNT_TELEGRAM_WEBHOOK_SECRET` authenticates Telegram requests.
+`JOB_HUNT_TELEGRAM_WEBHOOK_SECRET` authenticates webhook requests. Tenant routing uses the incoming chat ID and each tenant's configured `telegram_chat_id`.
 
-Tenant routing is resolved from the incoming chat ID. The container loads tenant configuration until the matching `telegram_chat_id` is found, then caches that route in the API process.
-
-Telegram actions can update Baserow status or request regeneration. A manual `Dropped` action also attempts to update the existing progress message to show that processing was stopped.
-
-Notification state lives inside the run record but is deliberately separate from core generation success.
+Telegram actions can update Baserow status or request regeneration.
 
 ## Error handling and retries
 
-Provider and workflow errors are classified through typed error kinds instead of being treated as one generic exception class.
-
-Important categories include:
+Errors are classified instead of being treated as generic exceptions. Important categories include:
 
 - validation
 - business condition
@@ -721,211 +557,156 @@ Important categories include:
 - configuration failure
 - document rendering failure
 
-Celery retry only applies to retryable workflow/provider failures. Retry delay uses:
+Retry ownership should stay explicit:
 
-1. provider supplied `retry_after` when available
-2. configured rate-limit fallback for rate-limit errors
-3. bounded exponential backoff for other transient failures
-
-This distinction matters. A malformed configuration or invalid business input should fail visibly rather than consume repeated retries.
+- deployment/model/key failover: LiteLLM or provider adapter
+- whole-stage transient failure: Celery
+- invalid business/config input: no retry
+- notification failure: notifications queue only
 
 ## Security boundaries
 
 ### Secrets
 
-Provider and tenant secrets belong in `.env` or a deployment secret manager, not in committed configuration files.
-
-`config/users.toml` stores environment-variable names for tenant secrets, not secret values.
+Secrets belong in `.env` or a secret manager. Committed files contain secret aliases/prefixes, not live credentials.
 
 ### Operator API
 
-Operator endpoints require `Authorization: Bearer <JOB_HUNT_OPERATOR_TOKEN>`.
+Operator endpoints require the configured bearer token.
 
 ### Fillout
 
-Each tenant has its own Fillout bearer secret and expected form ID. A valid token for one tenant is not sufficient to submit to another tenant.
+Each tenant has its own Fillout bearer secret and expected form ID.
 
 ### Telegram
 
-The shared Telegram webhook uses constant-time secret comparison.
+The shared webhook secret is compared using constant-time comparison.
 
-### Generic URL ingestion
+### Generic URLs
 
-Generic URLs pass through the public-text fetch security boundary rather than being handed directly to an unrestricted HTTP client. Preserve SSRF protections when changing URL ingestion.
+Generic URL ingestion must continue through the public-text fetch security boundary. Do not replace it with unrestricted server-side HTTP fetches.
 
 ### LaTeX
 
-Model-generated values are data, not trusted template code. Preserve escaping and structured renderer commands when adding new document fields.
+Model output is data, not trusted template source. Preserve escaping and renderer-owned structure.
 
 ## How to work with the codebase
 
-### Start by locating the owning layer
-
-Before changing code, classify the change:
+Before making a change, identify the owning layer.
 
 | Change | Primary location |
 | --- | --- |
-| new job field or invariant | `domain/` plus normalization/persistence adapters |
-| workflow order or gating | `application/` |
-| new external provider implementation | `integrations/` |
-| provider wiring | `container.py` |
-| new HTTP endpoint/auth behavior | `api/` |
-| new async stage or queue boundary | `worker.py` / `queueing.py` |
-| new tenant assets | `tenants/<key>/` |
-| new renderer structure | `rendering/` |
-| application setting | `config.py` and `.env.example` |
+| new job invariant | `domain/` |
+| workflow sequencing/gating | `application/` |
+| new external provider adapter | `integrations/` |
+| dependency wiring | `container.py` |
+| new HTTP behavior | `api/` |
+| async task/queue boundary | `worker.py`, `queueing.py` |
+| renderer/document structure | `rendering/` |
+| tenant assets | `tenants/<key>/` |
+| provider/model pool | `config/llm-providers.json` |
+| application setting | `config.py`, `.env.example` |
 | tenant-editable setting | Baserow Configuration contract/seed |
-| LLM provider/model pool | `config/llm-providers.json` |
-| LLM operation strength | operation-to-capability mapping |
 
-### Keep orchestration provider-neutral
+### Preserve provider neutrality
 
-If `ApplicationWorkflow` needs a new capability, add or extend a protocol and inject it. Do not make application code instantiate an SDK client.
+If `ApplicationWorkflow` needs a new external capability, add or extend a protocol and inject an implementation. Do not instantiate SDK clients inside orchestration code.
 
-### Keep business state and transient state separate
+### Preserve business/runtime state separation
 
-Use Baserow for user-owned durable workflow data. Use Redis for execution coordination and TTL-bound runtime state.
-
-Do not move Baserow status semantics into Redis just because Redis is faster.
-
-### Treat retries as part of the architecture
-
-Before adding a retry, decide what layer owns the failure:
-
-- another API key/model deployment: LiteLLM or provider adapter
-- transient whole-stage failure: Celery
-- HTTP client transport retry: adapter only when it cannot duplicate business side effects
-- invalid input/configuration: no retry
-
-Blindly stacking retries at every layer can multiply calls and make failures take much longer to surface.
+Use Baserow for durable user-owned workflow data. Use Redis for runtime coordination and TTL-bound execution state.
 
 ### Preserve idempotency
 
-Any new discovery or processing path must assume:
+Assume duplicate provider records, overlapping discovery windows, task redelivery, and partial retries.
 
-- duplicate provider records exist
-- tasks can be redelivered
-- discovery windows can overlap
-- retries can occur after partial success
+### Preserve cancellation checks
 
-Use stable job identity, repository checks, and stage-safe persistence rather than relying on queue delivery being exactly-once.
+When adding expensive work after a Baserow row exists, consider checking whether it has been manually dropped before and after that work.
 
-### Preserve cancellation checks around expensive work
+### Treat retry placement as architecture
 
-If a new expensive stage is added after a job row exists, consider whether a manually dropped Baserow row should be checked before and after the stage.
-
-### Prefer configuration over tenant forks
-
-If two tenants differ only by thresholds, table IDs, actor IDs, prompt values, model strength, or search settings, keep the difference in configuration.
-
-Add Python tenant-specific behavior only when the data contract or rendering strategy truly differs.
+Do not add retries at every layer. Decide which component owns the failure first.
 
 ## Common extension workflows
 
-### Add a new tenant using an existing renderer
+### Add a tenant using an existing renderer
 
 1. Create `tenants/<key>/master_cv.json`.
-2. Add `templates/cv_template.tex` and `templates/cover_letter_template.tex`.
+2. Add CV and cover-letter templates.
 3. Add `[users.<key>]` to `config/users.toml`.
-4. Reuse `renderer = "mahsa"` or `renderer = "mojtaba"` if the data shape is compatible.
-5. Create/import the tenant Baserow Configuration table.
-6. Import the matching prompt seed and ensure only one active row exists for each required prompt key.
-7. Add tenant Baserow and Fillout secrets to the deployment environment.
-8. Set the tenant Telegram chat ID in Baserow.
-9. Run local configuration validation.
-10. Run live configuration validation.
-11. Test a manual job, a threshold-gated job, and a discovery before enabling schedule-driven production use.
+4. Import/create the Baserow Configuration rows.
+5. Import the matching prompt contract.
+6. Configure tenant Baserow and Fillout secrets.
+7. Set Telegram chat ID in Baserow.
+8. Run static and live config validation.
+9. Test one manual job, one threshold-gated job, and one discovery.
 
-### Add a genuinely new renderer profile
+### Add a new renderer profile
 
 1. Define the master-CV JSON contract.
-2. Add a `CvRenderer` implementation in `rendering/profiles.py`.
-3. Add a cover-letter renderer only if its structure is actually different.
-4. Extend `TenantRegistry.get()` to select the profile.
-5. Define required prompt keys for the new profile.
-6. Update container prompt validation and tailoring strategy.
-7. Add renderer unit tests for valid data, missing sections, escaping, and template marker errors.
-8. Add a compile-level integration test when practical.
+2. Add a `CvRenderer` implementation.
+3. Add a cover-letter strategy only if needed.
+4. Extend `TenantRegistry` selection.
+5. Define required prompt keys.
+6. Update container validation/tailoring strategy.
+7. Add renderer unit tests and compile-level integration coverage.
 
-Do not copy the entire Mojtaba or Mahsa pipeline to create a third tenant unless the underlying workflow contract really differs.
+### Add an LLM provider
 
-### Add another LLM provider
-
-Normally no application Python change is required.
+Usually no application Python change is required.
 
 1. Add a provider object to `config/llm-providers.json`.
-2. Choose a unique indexed key prefix such as `OPENROUTER_API_KEY_`.
-3. Configure explicit model groups or a discovery endpoint and allowlist.
-4. Add `OPENROUTER_API_KEY_1`, `OPENROUTER_API_KEY_2`, etc. to the environment.
-5. Generate the LiteLLM runtime config.
-6. Run the LiteLLM smoke/live validation.
-7. Add config-generation tests if provider behavior introduces a new registry feature.
+2. Choose a unique numbered API-key prefix.
+3. Configure explicit groups or model discovery.
+4. Add numbered keys to the VPS environment.
+5. Regenerate LiteLLM runtime config.
+6. Run live capability validation.
+7. Add registry/config-generation tests if the provider introduces new behavior.
 
-The application should continue to request `job-fast`, `job-balanced`, `job-powerful`, and repair groups.
+### Add an LLM operation
 
-### Change model selection
-
-Prefer changing capability-group membership or operation-to-group mapping instead of putting model IDs into application logic.
-
-Model IDs are infrastructure decisions. Prompt operations express required capability.
-
-### Add a new LLM operation
-
-1. Create the Baserow prompt and JSON Schema.
-2. Add the prompt key to the appropriate contract set if required for every run of that profile.
-3. Add the application/tailoring method that renders the prompt values.
-4. Decide its default capability group in `llm_routing.py` or configure an operation override.
-5. Validate the output before downstream use.
+1. Add the Baserow prompt and JSON Schema.
+2. Add the prompt key to the appropriate required contract if always required.
+3. Implement prompt rendering/orchestration.
+4. Choose the default capability group or add an environment override.
+5. Validate output before downstream use.
 6. Add tests for prompt rendering and output assumptions.
 
-### Add a new submission type
+### Add a submission type
 
-1. Add a discriminated Pydantic submission model in `domain/models.py`.
+1. Add a discriminated Pydantic submission model.
 2. Add it to `JobSubmission`.
-3. Extend `SubmissionNormalizer.normalize()`.
-4. Update Fillout mapping only if Fillout can submit that type.
-5. Add API validation and normalization tests.
-6. Keep the output as the same canonical `Job` model.
+3. Extend `SubmissionNormalizer`.
+4. Update Fillout mapping only if Fillout can produce the new type.
+5. Add API and normalization tests.
+6. Keep the result as canonical `Job`.
 
-### Add a new Baserow field
+### Add a Baserow field
 
-Decide whether it is:
+Decide whether it is a required infrastructure contract, optional business metadata, or tenant configuration. Update the typed model/repository mapping/tests accordingly. Required job fields belong in `REQUIRED_JOB_FIELDS` so live validation fails early.
 
-- required infrastructure contract
-- optional business metadata
-- configuration
+### Add a Celery stage
 
-Then update the appropriate Pydantic model/repository mapping and tests. If it is required on the Jobs table, add it to `REQUIRED_JOB_FIELDS` so live validation fails before production processing.
-
-### Add a new Celery stage
-
-Only create a new queue when its resource or failure characteristics differ materially from existing queues.
-
-For a stage inside an existing workload class, prefer keeping it in the current task and exposing progress boundaries.
-
-A separate queue is appropriate when you need independent concurrency, isolation, or service-level behavior.
+Create a new queue only if workload characteristics justify separate concurrency or failure isolation. Otherwise keep the stage inside an existing task and expose progress boundaries.
 
 ## Testing strategy
 
-The repository uses three broad test groups.
+The repository uses unit, contract, and integration tests.
 
 ### Unit tests
 
-`tests/unit/` covers domain rules, configuration parsing, API behavior, workflow decisions, discovery normalization, rendering, provider selection/config generation, run state, and worker behavior.
-
-Unit tests should be the default location for new decision logic.
+Use for domain rules, configuration parsing, workflow decisions, rendering, run state, and provider-selection/config-generation logic.
 
 ### Contract tests
 
-`tests/contract/` tests adapter behavior and external-service assumptions with controlled HTTP/provider boundaries. Current coverage includes Apify, Baserow, Telegram, provider services, and the retained Gemini pool behavior.
-
-Use contract tests when the important question is "does this adapter speak the expected external contract?" rather than "does this pure function return the right value?"
+Use when the important question is whether an adapter speaks the expected external contract.
 
 ### Integration tests
 
-Integration-marked tests exercise local infrastructure such as Redis or pdfLaTeX. They are intentionally separate from ordinary pure tests because they depend on installed services/tools.
+Use for local infrastructure such as Redis or real pdfLaTeX.
 
-Tests marked `live` can call configured external providers and should never be run casually with production credentials.
+Tests marked `live` may call configured external services and should not be run casually against production credentials.
 
 ### Quality gates
 
@@ -938,213 +719,296 @@ uv run mypy
 uv run pytest
 ```
 
-Pytest enforces at least 70 percent coverage on the measured package set. `cli.py`, `container.py`, and `worker.py` are excluded from the coverage calculation because they are composition/runtime boundary modules, although they still have targeted tests where behavior warrants it.
-
-Mypy runs in strict mode for the package, with narrow overrides for dynamic Celery/provider integration areas.
-
-### Before opening a PR
-
-Run at minimum:
-
-```bash
-uv sync --extra dev
-uv run ruff check .
-uv run ruff format --check .
-uv run mypy
-uv run pytest
-```
-
-If you changed provider routing, Docker, Compose, runtime config generation, or document rendering, also run the relevant smoke/integration path rather than relying on unit tests alone.
+CI also validates deployment-script shell syntax, Docker Compose configuration, the API image, LiteLLM smoke routing, the TeX-enabled document image, and a real Mahsa LaTeX compile.
 
 ## Local development
 
-### Requirements
+Requirements:
 
 - Python 3.12+
 - `uv`
 - Docker Engine / Docker Compose
-- provider and tenant credentials for live operation
-- local TeX only if rendering outside the worker container
 
-### Install
+Setup:
 
 ```bash
 uv sync --extra dev
 cp .env.example .env
 ```
 
-Populate `.env` with the required secrets.
-
-### Validate static tenant assets
+Validate local tenant assets:
 
 ```bash
 uv run job-hunt config validate
 ```
 
-This verifies tenant registry entries and required local tenant files.
-
-### Validate live configuration
-
-With Baserow and LiteLLM available:
+Validate live Baserow/LiteLLM configuration:
 
 ```bash
 uv run job-hunt config validate --live
 ```
 
-This loads live tenant configuration, validates Baserow table/prompt contracts, and verifies configured LiteLLM capability groups are exposed by the gateway.
-
-### Generate LiteLLM runtime configuration
-
-For local gateway work, use the same generator used by deployment:
-
-```bash
-python scripts/generate-litellm-config.py
-```
-
-The generated file is `config/litellm.runtime.yaml` unless configured otherwise.
-
-### Start the stack
+Start the stack:
 
 ```bash
 docker compose up --build -d
 ```
 
-Inspect:
+Useful logs:
 
 ```bash
-docker compose ps
 docker compose logs -f api
 docker compose logs -f worker-fast
 docker compose logs -f worker-documents
+docker compose logs -f worker-notifications
 docker compose logs -f litellm
 ```
 
-FastAPI docs are available at:
-
-```text
-http://127.0.0.1:8000/docs
-```
-
-Flower is bound locally at:
-
-```text
-http://127.0.0.1:5555
-```
-
-### CLI examples
-
-Submit a job:
+CLI examples:
 
 ```bash
 uv run job-hunt submit mahsa --input examples/job.json
-```
-
-Force a manual regeneration:
-
-```bash
 uv run job-hunt submit mahsa --input examples/job.json --force
-```
-
-Run discovery:
-
-```bash
 uv run job-hunt discover mojtaba
-```
-
-Inspect a run:
-
-```bash
 uv run job-hunt status RUN_UUID
-```
-
-Retry using stored replay data:
-
-```bash
 uv run job-hunt retry RUN_UUID
 ```
 
-Render already-tailored JSON locally:
-
-```bash
-uv run job-hunt render mahsa --input tailored.json --output ./render-test
-```
-
-### API example
-
-```bash
-curl -X POST http://127.0.0.1:8000/v1/tenants/mahsa/jobs \
-  -H "Authorization: Bearer $JOB_HUNT_OPERATOR_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"entry_type":"linkedin","linkedin_job_id":123456}'
-```
-
-The response contains a run UUID. Query `/v1/runs/{uuid}` rather than expecting the application files in the initial HTTP response.
-
 ## Production deployment
 
-The supported normal VPS deployment path is:
+The supported VPS entry point is:
 
 ```bash
 bash scripts/deploy-vps.sh
 ```
 
-Do not replace this with an ad hoc sequence of `docker compose down`, `build`, and `up` unless you are intentionally debugging the deployment script.
+Do not replace it with an ad hoc sequence of `docker compose down`, `build`, and `up` unless debugging the deployment mechanism itself.
 
-The deployment script performs the repository-specific sequence:
+The script now performs change-aware deployment. It fetches the upstream branch, compares the current VPS commit with the upstream commit, selects the lowest safe deployment level, fast-forwards the checkout, and performs only the actions required by that level.
 
-1. `git pull --ff-only`
-2. build the API image
-3. generate a fresh LiteLLM runtime configuration from current provider keys and registry
-4. atomically replace the runtime config on the host
-5. build the worker image
-6. validate Mahsa LaTeX compatibility
-7. start Redis
-8. force-recreate LiteLLM so the new deployment pools are loaded
-9. wait for LiteLLM liveliness
-10. run live application configuration validation
-11. force-recreate API, workers, Beat, and Flower
-12. show Compose state
-13. verify API liveness and readiness
-14. verify Redis responds to `PING`
-
-**Reasoning:** model/provider pools are generated from the live VPS environment. Restarting containers without regenerating and reloading the LiteLLM config can leave the running gateway out of sync with configured keys.
-
-The tracked nginx configuration is under `deploy/nginx/job-hunt-automation.conf`. VPS-specific `.env`, DNS, TLS certificates, and host installation state must not be committed.
-
-Run VPS tests with:
+Preview the decision without changing the checkout or containers:
 
 ```bash
-bash scripts/test-vps.sh
+bash scripts/deploy-vps.sh --dry-run
 ```
 
-The Compose test service mounts the current source and tests so it does not accidentally execute stale test files baked into an older image.
+Force a deployment level:
+
+```bash
+bash scripts/deploy-vps.sh --level 0
+bash scripts/deploy-vps.sh --level 1
+bash scripts/deploy-vps.sh --level 2
+bash scripts/deploy-vps.sh --level 3
+```
+
+## Deployment levels
+
+Deployment levels are part of the development workflow. After every code/config change, identify the required level. Auto mode should normally be used, but the level should still be stated in handoff/deployment instructions.
+
+### Level 0: pull-only
+
+Use for changes that do not affect the running application:
+
+- `README.md`
+- `docs/**`
+- `tests/**`
+- `.env.example`
+- `config/seeds/**`
+
+Actions:
+
+```text
+fetch
+fast-forward checkout
+no Docker build
+no container restart
+no LiteLLM reload
+no LaTeX validation
+```
+
+Example:
+
+```bash
+bash scripts/deploy-vps.sh --level 0
+```
+
+In normal auto mode these changes finish after the Git fast-forward.
+
+### Level 1: runtime refresh, no image build
+
+Use for runtime files that are mounted from the host or for VPS-local environment changes:
+
+- `config/users.toml`
+- `config/llm-providers.json`
+- `tenants/**`
+- VPS-local `.env` changes
+
+Actions as needed:
+
+- no application/document image build
+- reload generated LiteLLM configuration when provider/runtime config requires it
+- run LaTeX validation when document assets require it
+- recreate application services so mounted runtime state is refreshed
+- run health checks
+
+For VPS-local `.env` changes Git cannot detect the reason, so explicitly use:
+
+```bash
+bash scripts/deploy-vps.sh --level 1
+```
+
+### Level 2: application rebuild
+
+Use for code that affects only the lightweight application/operator boundary and does not require rebuilding document-worker code. Auto mode currently recognizes paths such as:
+
+- `src/job_hunt/api/**`
+- `src/job_hunt/cli.py`
+- `src/job_hunt/queueing.py`
+- `scripts/generate-litellm-config.py`
+
+Actions:
+
+- rebuild `job-hunt-automation-api:latest`
+- restart API, fast worker, notification worker, Beat, and Flower
+- leave `worker-documents` on its existing TeX-enabled image
+- reload/validate LiteLLM
+- run API/Redis health checks
+
+This is the main optimization for ordinary API/operator changes.
+
+### Level 3: full deployment
+
+Use for changes that affect shared worker code, document generation, dependencies, build topology, or anything where the document worker must receive new Python code:
+
+- most `src/**` changes outside the narrow Level 2 paths
+- `src/job_hunt/rendering/**`
+- `src/job_hunt/worker.py`
+- `src/job_hunt/container.py`
+- shared `application/`, `domain/`, and `integrations/` changes
+- `pyproject.toml`
+- `uv.lock`
+- `Dockerfile`
+- `docker-compose.yml`
+- `scripts/deploy-vps.sh`
+- uncertain runtime/build changes
+
+Actions:
+
+- build application and document targets in one Compose build invocation
+- reuse cached TeX layers whenever possible
+- regenerate/restart/validate LiteLLM
+- run LaTeX validation
+- recreate all application services
+- run API and Redis health checks
+
+Use:
+
+```bash
+bash scripts/deploy-vps.sh --level 3
+```
+
+### Why the levels exist
+
+The old deployment path rebuilt the API and TeX-enabled worker image and ran all validations on every deploy, even for documentation-only commits. That was safe but unnecessarily expensive.
+
+The new design separates deployment cost by change type:
+
+```text
+docs only
+   -> Git pull
+
+mounted config / tenant assets
+   -> runtime refresh without build
+
+API/operator code
+   -> lightweight app rebuild
+
+shared worker/rendering/build changes
+   -> full rebuild
+```
+
+Only the document worker carries TeX. Fast workers, notification workers, API, Beat, and Flower reuse the lightweight API image.
+
+### Auto mode and overrides
+
+Default:
+
+```bash
+bash scripts/deploy-vps.sh
+```
+
+Auto mode intentionally errs toward the safer level for unknown/shared runtime files.
+
+Use `--dry-run` before deployment when you want to inspect the selected level and changed paths:
+
+```bash
+bash scripts/deploy-vps.sh --dry-run
+```
+
+Use an explicit level when:
+
+- the change exists only in VPS-local `.env`
+- you deliberately want a full validation/rebuild
+- you are recovering from a failed or partially migrated deployment
+- the deployment topology itself just changed
+
+### Deployment-level reporting rule
+
+For future repository changes, the handoff should state the required deployment level explicitly, for example:
+
+```text
+Deployment level: 2 (application rebuild)
+Reason: only FastAPI/operator code changed; document-worker image is unaffected.
+Command: bash scripts/deploy-vps.sh --level 2
+```
+
+If several changed files require different levels, use the highest required level.
+
+For normal ongoing work, auto mode is still preferred after the level is understood:
+
+```bash
+bash scripts/deploy-vps.sh
+```
+
+### First deployment after this optimization
+
+The Docker/Compose topology and deployment script itself changed as part of this optimization, so the first VPS deployment that adopts it must be **Level 3**. After that one migration deploy, return to normal auto mode.
+
+If the VPS still has the old deployment script checked out, update the checkout first and then invoke the new script explicitly:
+
+```bash
+git pull --ff-only
+bash scripts/deploy-vps.sh --level 3
+```
+
+Subsequent deployments can simply use:
+
+```bash
+bash scripts/deploy-vps.sh
+```
 
 ## Operational debugging
 
-### Check overall state
+Check services:
 
 ```bash
 docker compose ps
 ```
 
-### Check API
+Check API:
 
 ```bash
 curl http://127.0.0.1:8000/health/live
 curl http://127.0.0.1:8000/health/ready
 ```
 
-`live` only proves the process is serving. `ready` also verifies Redis connectivity.
-
-### Check LiteLLM
+Check LiteLLM:
 
 ```bash
 docker compose logs --tail=200 litellm
 ```
 
-The deployment script also checks LiteLLM's internal liveliness endpoint from inside the container.
-
-### Check workers separately
+Check workers independently:
 
 ```bash
 docker compose logs --tail=200 worker-fast
@@ -1152,60 +1016,57 @@ docker compose logs --tail=200 worker-documents
 docker compose logs --tail=200 worker-notifications
 ```
 
-Do not debug a document queue backlog by looking only at `worker-fast`.
-
-### Check a specific run
+Check a run:
 
 ```bash
 uv run job-hunt status RUN_UUID
 ```
 
-The run record exposes the current state/stage, task ID, error metadata, and notification progress.
+Typical ownership:
 
-### Typical failure ownership
-
-| Symptom | First place to inspect |
+| Symptom | Inspect first |
 | --- | --- |
 | provider/model 429 | LiteLLM logs and generated deployment pool |
 | all Apify accounts exhausted | fast worker and Redis cooldown state |
-| malformed structured LLM output | prompt schema, LLM logs, repair route |
-| missing Baserow fields | live config validation |
-| job keeps getting skipped as duplicate | stable identity and existing Baserow row |
-| dropped job still spending work | cancellation checks around the new stage |
-| TeX/PDF failure | document worker, generated JSON/TEX, template markers |
-| Telegram failure after PDFs exist | notification worker only |
-| API ready fails | Redis availability |
-| new key/model not used after deploy | regenerated `litellm.runtime.yaml` and LiteLLM recreation |
+| malformed structured output | prompt schema, LiteLLM logs, repair route |
+| missing Baserow fields | live configuration validation |
+| duplicate job skip | stable identity and existing Baserow row |
+| dropped job still doing work | cancellation checks around new stage |
+| PDF failure | document worker, generated JSON/TEX, template markers |
+| Telegram failure after PDFs | notification worker only |
+| new model/key not active | regenerated `litellm.runtime.yaml` and LiteLLM recreation |
+| slow deployment | inspect selected deployment level with `--dry-run` |
 
 ## Design invariants
 
-These are not incidental implementation details. Treat them as architecture constraints unless there is a deliberate migration plan.
+Treat these as architectural constraints unless there is a deliberate migration plan:
 
-1. **One shared application, narrow tenant differences.** Do not recreate separate end-to-end workflows per user.
-2. **Application logic depends on ports, not provider SDKs.** External services stay behind adapters.
-3. **Canonical `Job` is the boundary after normalization.** Downstream stages should not branch on every ingress format.
-4. **Automatic processing is idempotent.** Duplicate discovery should not consume qualification/document capacity.
-5. **Baserow status is user-owned.** Manual cancellation must be respected during long workflows.
-6. **Numeric qualification threshold gates document generation.** `should_apply` is persisted metadata, not the gate itself.
-7. **LLM code asks for capability groups, not concrete provider keys.** Provider/model deployment belongs in LiteLLM configuration.
-8. **LiteLLM handles immediate deployment failover.** Celery is the outer task-level safety net.
-9. **Structured LLM output is independently schema validated.** Never trust model formatting alone.
-10. **Only dependency-independent tailoring calls run in parallel.** Preserve data dependencies between selection/rewrite/summary/cover-letter stages.
-11. **Generated content does not control LaTeX structure.** Render known JSON shapes into reviewed commands/templates.
-12. **Notification failure is not generation failure.** Keep Telegram isolated from document-worker success.
-13. **Previous good artifacts survive failed regeneration.** Do not clear working attachments before replacements are safely stored.
-14. **Queue separation reflects workload isolation.** Long document tasks must not starve discovery and qualification.
-15. **Provider capacity is shared infrastructure.** Do not reintroduce per-tenant LLM or Apify key pools without a strong reason.
-16. **Deployment regenerates the LiteLLM runtime config.** Provider registry plus VPS secrets are the source of deployment pools.
-17. **Secrets stay outside committed config.** Source files may contain secret aliases, never live tokens.
+1. One shared application, narrow tenant differences.
+2. Application logic depends on protocols, not provider SDKs.
+3. Canonical `Job` is the boundary after normalization.
+4. Automatic processing is idempotent.
+5. Baserow status is user-owned.
+6. Numeric qualification threshold gates document generation.
+7. LLM code asks for capability groups, not concrete provider keys.
+8. LiteLLM handles immediate deployment failover; Celery is the outer task retry layer.
+9. Structured LLM output is independently schema validated.
+10. Only dependency-independent tailoring calls run in parallel.
+11. Generated content does not control LaTeX structure.
+12. Notification failure is not generation failure.
+13. Last known-good documents survive failed regeneration.
+14. Queue separation reflects workload isolation.
+15. Provider capacity is shared infrastructure.
+16. Deployment regenerates LiteLLM runtime config when required.
+17. Secrets stay outside committed configuration.
+18. Only the document worker carries TeX.
+19. Deployment level must match the highest-impact changed file.
+20. Documentation-only changes must not trigger application rebuilds.
 
 ## Legacy and migration code
 
-The repository still contains modules from the earlier direct-Gemini routing architecture, including `gemini_pool.py`, `gemini_catalog.py`, and related compatibility helpers/tests.
+The repository still contains modules from the earlier direct-Gemini routing architecture, including `gemini_pool.py`, `gemini_catalog.py`, and related compatibility code/tests.
 
-The active production composition path is defined by `Container`, which currently constructs the structured LLM client through `build_routed_structured_client()` in `integrations/llm_routing.py`. That client talks to LiteLLM.
-
-When changing current production LLM behavior, follow the active path first:
+The active production composition path is defined by `Container` and currently follows:
 
 ```text
 container.py
@@ -1215,15 +1076,13 @@ container.py
   -> LiteLLM Proxy
 ```
 
-Do not add new production behavior to a retained direct-Gemini pool merely because a similarly named test or older documentation exists. First confirm the module is actually wired by the composition root.
-
-Retained code can still be useful for migration reference and tests, but architecture documentation should describe what `Container`, `worker.py`, and Docker Compose actually instantiate today.
+Do not add new production behavior to retained direct-Gemini pool code simply because a similarly named module or test exists. Confirm what `Container`, `worker.py`, and Docker Compose actually instantiate.
 
 ## Additional documentation
 
-- `docs/operations.md`: run lifecycle and troubleshooting details
+- `docs/operations.md`: run lifecycle and troubleshooting
 - `docs/queue-architecture.md`: queue isolation rationale
 - `docs/tenant-onboarding.md`: tenant setup checklist
-- `docs/vps-deployment.md`: VPS-specific deployment notes
+- `docs/vps-deployment.md`: deployment levels and VPS-specific deployment notes
 
-When these documents disagree with current wiring, treat executable configuration and the composition root as the source of truth, then update the stale documentation as part of the same change.
+When documentation disagrees with executable wiring, treat the composition root, runtime configuration, and Compose topology as the source of truth, then update the stale documentation as part of the same change.
