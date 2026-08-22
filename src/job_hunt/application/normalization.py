@@ -16,7 +16,7 @@ from job_hunt.domain.models import (
     LinkedInSubmission,
     UrlSubmission,
 )
-from job_hunt.ports import DiscoveryProvider
+from job_hunt.ports import DiscoveryProvider, JobExtractor
 from job_hunt.security import fetch_public_text
 
 _LINKEDIN_JOB_ID = re.compile(r"(?:^|[-/])(\d{6,})(?:/)?$")
@@ -24,7 +24,8 @@ _LINKEDIN_JOB_ID = re.compile(r"(?:^|[-/])(\d{6,})(?:/)?$")
 
 def linkedin_job_id_from_url(url: str) -> int | None:
     parts = urlsplit(url)
-    if not (parts.hostname or "").lower().endswith("linkedin.com"):
+    host = (parts.hostname or "").lower()
+    if host != "linkedin.com" and not host.endswith(".linkedin.com"):
         return None
     if "/jobs/view/" not in parts.path:
         return None
@@ -108,7 +109,7 @@ def job_from_provider(data: Mapping[str, Any], *, source: str = "linkedin") -> J
 
 
 class SubmissionNormalizer:
-    def __init__(self, discovery: DiscoveryProvider, extractor: Any, linkedin_template: str) -> None:
+    def __init__(self, discovery: DiscoveryProvider, extractor: JobExtractor, linkedin_template: str) -> None:
         self.discovery = discovery
         self.extractor = extractor
         self.linkedin_template = linkedin_template
