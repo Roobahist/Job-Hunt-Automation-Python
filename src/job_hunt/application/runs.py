@@ -17,6 +17,7 @@ class Queue(Protocol):
         force: bool,
         snapshot_id: str | None = None,
         checkpoint_namespace: str | None = None,
+        resume_row_id: int | None = None,
     ) -> str: ...
 
     def discovery(self, tenant: str, run_id: UUID) -> str: ...
@@ -41,6 +42,7 @@ class RunCoordinator:
         force: bool,
         snapshot_id: str | None,
         checkpoint_namespace: str,
+        resume_row_id: int | None = None,
     ) -> str:
         return self.queue.submission(
             tenant,
@@ -49,6 +51,7 @@ class RunCoordinator:
             force,
             snapshot_id=snapshot_id,
             checkpoint_namespace=checkpoint_namespace,
+            resume_row_id=resume_row_id,
         )
 
     def enqueue_submission(
@@ -94,6 +97,12 @@ class RunCoordinator:
         self.store.update(run.run_id, task_id=task_id)
         return EnqueueResponse(run_id=run.run_id)
 
+    @staticmethod
+    def _persisted_row_id(status: RunStatus) -> int | None:
+        notification = status.notification if isinstance(status.notification, dict) else {}
+        row_id = notification.get("row_id")
+        return row_id if isinstance(row_id, int) and not isinstance(row_id, bool) else None
+
     def retry(self, run_id: UUID, *, fresh: bool = False) -> RetryResponse:
         original = self.store.get(run_id)
         request = self.store.get_request(run_id)
@@ -101,10 +110,17 @@ class RunCoordinator:
             raise KeyError(str(run_id))
         retry = RunStatus(tenant=original.tenant, kind=original.kind, original_run_id=run_id)
         replay = dict(request)
+        resume_row_id: int | None = None
         if replay["kind"] != "discovery":
             replay["checkpoint_namespace"] = (
                 str(retry.run_id) if fresh else str(replay.get("checkpoint_namespace") or original.run_id)
             )
+            if not fresh:
+                resume_row_id = self._persisted_row_id(original)
+                if resume_row_id is not None:
+                    replay["resume_row_id"] = resume_row_id
+            else:
+                replay.pop("resume_row_id", None)
         self.store.save(retry)
         self.store.save_request(retry.run_id, replay)
         if replay["kind"] == "discovery":
@@ -120,6 +136,7 @@ class RunCoordinator:
                 fresh or bool(replay.get("force", False)),
                 str(replay["snapshot_id"]) if replay.get("snapshot_id") else None,
                 str(replay["checkpoint_namespace"]),
+                resume_row_id=resume_row_id,
             )
         self.store.update(retry.run_id, task_id=task_id)
         return RetryResponse(original_run_id=run_id, run_id=retry.run_id)
