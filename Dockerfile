@@ -16,12 +16,8 @@ FROM app-base AS api
 USER app
 CMD ["uvicorn", "job_hunt.api.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
 
-FROM app-base AS beat
-USER app
-CMD ["celery", "-A", "job_hunt.worker.celery_app", "beat", "--loglevel=INFO"]
-
 # TeX is isolated in a stable base layer. Source-only rebuilds of the document worker reuse this
-# expensive layer unless the TeX package list or an earlier Dockerfile layer changes.
+# expensive layer unless the TeX package list or an earlier Dockerfile stage changes.
 FROM deps AS worker-deps
 USER root
 ENV DEBIAN_FRONTEND=noninteractive
