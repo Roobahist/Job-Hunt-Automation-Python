@@ -27,7 +27,7 @@ def minimum_rows() -> list[dict[str, object]]:
         "linkedin_base_search_url": ("text", "https://linkedin.example/search"),
         "linkedin_job_url_template": ("text", "https://linkedin.example/{jobId}"),
         "telegram_chat_id": ("text", "1"),
-        "gemini_model": ("text", "legacy-row-is-ignored-by-provider-pool"),
+        "gemini_model": ("text", "legacy-row-is-ignored"),
     }
     return [
         {
@@ -47,41 +47,34 @@ def test_decode_and_parse_configuration() -> None:
     config = parse_configuration_rows(minimum_rows())
     assert config.baserow_table_ids["jobs"] == 1
     assert config.qualification_threshold == 33
+    assert not hasattr(config, "gemini_model")
 
 
-def test_shared_provider_settings_are_ordered_and_required() -> None:
+def test_shared_settings_are_ordered_and_required() -> None:
     settings = Settings(
         apify_tokens="a1, a2,a3",
-        gemini_api_keys="g1,g2",
+        litellm_api_key="llm",
         telegram_bot_token="bot",
         telegram_webhook_secret="webhook",
-        gemini_content_models="models/best,second",
-        gemini_repair_models="fast,cheaper",
-        gemini_limits_json='{"best":{"rpm":5,"tpm":1000,"rpd":20}}',
     )
     assert settings.shared_apify_tokens() == ["a1", "a2", "a3"]
-    assert settings.shared_gemini_keys() == ["g1", "g2"]
+    assert settings.shared_litellm_key() == "llm"
     assert settings.shared_telegram_token() == "bot"
     assert settings.shared_telegram_webhook_secret() == "webhook"
-    assert settings.content_models() == ["best", "second"]
-    assert settings.repair_models() == ["fast", "cheaper"]
-    assert settings.gemini_limits()["best"] == {"rpm": 5, "tpm": 1000, "rpd": 20}
 
     with pytest.raises(ConfigurationError, match="APIFY_TOKENS"):
         Settings(apify_tokens="").shared_apify_tokens()
-    with pytest.raises(ConfigurationError, match="GEMINI_API_KEYS"):
-        Settings(gemini_api_keys="").shared_gemini_keys()
+    with pytest.raises(ConfigurationError, match="LITELLM_API_KEY"):
+        Settings(litellm_api_key="").shared_litellm_key()
     with pytest.raises(ConfigurationError, match="TELEGRAM_BOT_TOKEN"):
         Settings(telegram_bot_token="").shared_telegram_token()
     with pytest.raises(ConfigurationError, match="TELEGRAM_WEBHOOK_SECRET"):
         Settings(telegram_webhook_secret="").shared_telegram_webhook_secret()
-    with pytest.raises(ConfigurationError, match="LIMITS_JSON"):
-        Settings(gemini_limits_json="not-json").gemini_limits()
 
 
 def test_operational_limits_are_configurable() -> None:
     settings = Settings(
-        gemini_request_timeout_seconds=240,
+        litellm_request_timeout_seconds=240,
         telegram_request_timeout_seconds=150,
         baserow_request_timeout_seconds=90,
         latex_compile_timeout_seconds=210,
@@ -93,9 +86,8 @@ def test_operational_limits_are_configurable() -> None:
         transient_base_delay_seconds=7,
         transient_max_delay_seconds=420,
         provider_quota_cooldown_seconds=3601,
-        gemini_quota_cooldown_seconds=71,
     )
-    assert settings.gemini_request_timeout_seconds == 240
+    assert settings.litellm_request_timeout_seconds == 240
     assert settings.telegram_request_timeout_seconds == 150
     assert settings.baserow_request_timeout_seconds == 90
     assert settings.latex_compile_timeout_seconds == 210
@@ -107,9 +99,7 @@ def test_operational_limits_are_configurable() -> None:
     assert settings.transient_base_delay_seconds == 7
     assert settings.transient_max_delay_seconds == 420
     assert settings.provider_quota_cooldown_seconds == 3601
-    assert settings.gemini_quota_cooldown_seconds == 71
     assert Settings().provider_quota_cooldown_seconds == 3600
-    assert Settings().gemini_quota_cooldown_seconds == 65
 
 
 def test_invalid_configuration_is_actionable() -> None:
