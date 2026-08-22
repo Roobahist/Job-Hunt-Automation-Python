@@ -6,6 +6,8 @@ COPY pyproject.toml uv.lock* ./
 RUN uv sync --no-dev --no-install-project
 ENV PATH="/app/.venv/bin:$PATH" PYTHONUNBUFFERED=1
 
+# Lightweight application image used by API, fast worker, notification worker, Beat, and Flower.
+# Keeping TeX out of this image makes ordinary application rebuilds much faster and smaller.
 FROM deps AS app-base
 COPY . .
 RUN uv sync --no-dev && mkdir -p /app/runs && chown -R app:app /app
@@ -18,6 +20,8 @@ FROM app-base AS beat
 USER app
 CMD ["celery", "-A", "job_hunt.worker.celery_app", "beat", "--loglevel=INFO"]
 
+# TeX is isolated in a stable base layer. Source-only rebuilds of the document worker reuse this
+# expensive layer unless the TeX package list or an earlier Dockerfile layer changes.
 FROM deps AS worker-deps
 USER root
 ENV DEBIAN_FRONTEND=noninteractive
