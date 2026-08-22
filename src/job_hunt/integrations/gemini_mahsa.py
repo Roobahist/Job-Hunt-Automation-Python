@@ -53,18 +53,14 @@ class MahsaGeminiWorkflowAI(GeminiWorkflowAI):
                 "experience_inputs_json": inputs,
             },
         )
-        indices = selection.get("selected_indices")
-        if not isinstance(indices, list) or any(
-            not isinstance(index, int) or isinstance(index, bool) for index in indices
-        ):
-            raise ValueError("cv_work_experience_selection must return integer selected_indices")
-        if len(indices) != count:
-            raise ValueError(f"Work selection must contain exactly {count} indices")
-        if len(indices) != len(set(indices)) or indices != sorted(indices):
-            raise ValueError("Selected work-experience indices must be unique and ordered")
-        for index in indices:
-            if index < 0 or index >= len(experiences):
-                raise ValueError(f"Invalid work-experience index: {index}")
+        indices = self._selection_indices(
+            selection.get("selected_indices"),
+            prompt_key="cv_work_experience_selection",
+            item_label="work-experience",
+            available_count=len(experiences),
+            max_count=count,
+            exact_count=count,
+        )
 
         title_to_main_index = {
             experience.get("title"): index
