@@ -102,7 +102,7 @@ def test_mojtaba_renderer_keeps_visible_entries_and_drops_empty_neighbors() -> N
         ]
     )
     assert rendered.startswith("\\CVEntries{")
-    assert rendered.count("\\CVEntry") == 2  # one wrapper plus one actual entry
+    assert rendered.count("\\CVEntry{") == 1
     assert "Visible" in rendered
     assert "\\CVContent{Did useful work}" in rendered
     assert "\\CVContent{}" not in rendered
