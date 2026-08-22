@@ -41,6 +41,16 @@ def _repair_prompt(raw_output: str, schema: dict[str, Any], validation_error: st
     )
 
 
+def _structured_prompt(prompt: str, schema: Mapping[str, Any]) -> str:
+    return (
+        f"{prompt}\n\n"
+        "OUTPUT CONTRACT:\n"
+        "Return exactly one JSON object and no surrounding prose or Markdown. "
+        "The JSON object must conform to this JSON Schema:\n"
+        f"{json.dumps(schema, ensure_ascii=False)}"
+    )
+
+
 def _repair_definition(operation: str, schema: dict[str, Any]) -> PromptDefinition:
     return PromptDefinition(
         key=f"{operation}:repair",
@@ -187,16 +197,14 @@ class LiteLLMGatewayClient(GeminiStructuredClient):
                 "/v1/chat/completions",
                 json={
                     "model": self.model,
-                    "messages": [{"role": "user", "content": prompt}],
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": _structured_prompt(prompt, definition.output_structure),
+                        }
+                    ],
                     "temperature": definition.temperature,
-                    "response_format": {
-                        "type": "json_schema",
-                        "json_schema": {
-                            "name": "job_hunt_response",
-                            "strict": True,
-                            "schema": definition.output_structure,
-                        },
-                    },
+                    "response_format": {"type": "json_object"},
                 },
             )
         except httpx.HTTPError as exc:
