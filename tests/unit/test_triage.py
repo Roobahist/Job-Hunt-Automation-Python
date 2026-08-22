@@ -83,6 +83,7 @@ def test_triage_filters_new_rows_and_reuses_existing_scores() -> None:
     assert summary.scored == 1
     assert summary.reused_scores == 1
     assert summary.errors == 0
+    assert summary.next_after_id == 3
     assert summary.decisions[1].action == "keep_new"
     assert summary.decisions[1].score == 85
 
@@ -108,19 +109,20 @@ def test_triage_dry_run_scores_but_never_writes() -> None:
     assert repository.status_changes == []
     assert repository.saved_qualifications == []
     assert summary.dropped == 1
+    assert summary.next_after_id == 1
     assert summary.decisions[0].action == "would_drop"
     assert summary.decisions[0].score == 20
 
 
-def test_triage_keeps_processing_after_invalid_row() -> None:
+def test_triage_stops_at_invalid_row_without_advancing_cursor_past_it() -> None:
     repository = Repository()
-    compatibility = Compatibility({2: True})
-    qualifier = Qualifier({2: 90})
-    invalid = row(1)
+    compatibility = Compatibility({1: True})
+    qualifier = Qualifier({1: 90})
+    invalid = row(2)
     invalid["Job Description"] = ""
 
     summary = triage_new_jobs(
-        rows=[invalid, row(2)],
+        rows=[row(3), invalid, row(1)],
         new_status_id=1,
         threshold=70,
         compatibility_filter=compatibility,
@@ -130,8 +132,51 @@ def test_triage_keeps_processing_after_invalid_row() -> None:
         master_cv={},
     )
 
+    assert compatibility.calls == [1]
+    assert qualifier.calls == [1]
     assert summary.processed == 2
     assert summary.errors == 1
     assert summary.kept == 1
-    assert summary.decisions[0].action == "error"
-    assert summary.decisions[1].action == "keep_new"
+    assert summary.next_after_id == 1
+    assert summary.decisions[0].row_id == 1
+    assert summary.decisions[1].row_id == 2
+    assert summary.decisions[1].action == "error"
+
+
+def test_triage_after_id_and_limit_produce_non_overlapping_sorted_batches() -> None:
+    repository = Repository()
+    compatibility = Compatibility({2: True, 3: True, 4: True, 5: True})
+    qualifier = Qualifier({2: 90, 3: 90, 4: 90, 5: 90})
+    rows = [row(5), row(2), row(4), row(1), row(3)]
+
+    first = triage_new_jobs(
+        rows=rows,
+        new_status_id=1,
+        threshold=70,
+        compatibility_filter=compatibility,
+        qualifier=qualifier,
+        repository=repository,  # type: ignore[arg-type]
+        prompts={},
+        master_cv={},
+        limit=2,
+        after_id=1,
+    )
+
+    assert [decision.row_id for decision in first.decisions] == [2, 3]
+    assert first.next_after_id == 3
+
+    second = triage_new_jobs(
+        rows=rows,
+        new_status_id=1,
+        threshold=70,
+        compatibility_filter=compatibility,
+        qualifier=qualifier,
+        repository=repository,  # type: ignore[arg-type]
+        prompts={},
+        master_cv={},
+        limit=2,
+        after_id=first.next_after_id,
+    )
+
+    assert [decision.row_id for decision in second.decisions] == [4, 5]
+    assert second.next_after_id == 5
