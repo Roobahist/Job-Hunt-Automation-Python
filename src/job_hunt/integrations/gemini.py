@@ -194,6 +194,31 @@ class GeminiWorkflowAI:
         }
 
     @staticmethod
+    def _selection_indices(
+        raw_indices: object,
+        *,
+        prompt_key: str,
+        item_label: str,
+        available_count: int,
+        max_count: int,
+        exact_count: int | None = None,
+    ) -> list[int]:
+        if not isinstance(raw_indices, list) or any(
+            not isinstance(index, int) or isinstance(index, bool) for index in raw_indices
+        ):
+            raise ValueError(f"{prompt_key} must return selected_indices as integers")
+        if exact_count is not None and len(raw_indices) != exact_count:
+            raise ValueError(f"{item_label} selection must contain exactly {exact_count} indices")
+        if len(raw_indices) != len(set(raw_indices)):
+            raise ValueError(f"Selected {item_label} indices must be unique")
+        if len(raw_indices) > max_count:
+            raise ValueError(f"Selected {item_label} count exceeds configured count")
+        for index in raw_indices:
+            if index < 0 or index >= available_count:
+                raise ValueError(f"Invalid {item_label} index: {index}")
+        return sorted(raw_indices)
+
+    @staticmethod
     def _runtime_definition(
         definition: PromptDefinition,
         values: Mapping[str, object],
@@ -284,18 +309,13 @@ class GeminiWorkflowAI:
                 "project_inputs_json": inputs,
             },
         )
-        indices = selection.get("selected_indices")
-        if not isinstance(indices, list) or any(
-            not isinstance(index, int) or isinstance(index, bool) for index in indices
-        ):
-            raise ValueError("cv_project_selection must return selected_indices as integers")
-        if len(indices) != len(set(indices)):
-            raise ValueError("Selected project indices must be unique")
-        if len(indices) > count:
-            raise ValueError("Selected project count exceeds project_selection_count")
-        for index in indices:
-            if index < 0 or index >= len(projects):
-                raise ValueError(f"Invalid project index: {index}")
+        indices = self._selection_indices(
+            selection.get("selected_indices"),
+            prompt_key="cv_project_selection",
+            item_label="project",
+            available_count=len(projects),
+            max_count=count,
+        )
         selected = [projects[index] for index in indices]
         rewrite_inputs = [
             {"title": project.get("title", ""), "content": project.get("content", [])} for project in selected
@@ -352,20 +372,13 @@ class GeminiWorkflowAI:
                 "experience_inputs_json": inputs,
             },
         )
-        indices = selection.get("selected_indices")
-        if not isinstance(indices, list) or any(
-            not isinstance(index, int) or isinstance(index, bool) for index in indices
-        ):
-            raise ValueError("cv_work_experience_selection must return selected_indices as integers")
-        if len(indices) != len(set(indices)):
-            raise ValueError("Selected work-experience indices must be unique")
-        if indices != sorted(indices):
-            raise ValueError("Selected work-experience indices must preserve original order")
-        if len(indices) > count:
-            raise ValueError("Selected work-experience count exceeds configured count")
-        for index in indices:
-            if index < 0 or index >= len(experiences):
-                raise ValueError(f"Invalid work-experience index: {index}")
+        indices = self._selection_indices(
+            selection.get("selected_indices"),
+            prompt_key="cv_work_experience_selection",
+            item_label="work-experience",
+            available_count=len(experiences),
+            max_count=count,
+        )
         selected = [experiences[index] for index in indices]
         rewrite_inputs = [
             {
