@@ -98,10 +98,13 @@ class RunCoordinator:
         return EnqueueResponse(run_id=run.run_id)
 
     @staticmethod
-    def _persisted_row_id(status: RunStatus) -> int | None:
+    def _row_id(value: object) -> int | None:
+        return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+    @classmethod
+    def _persisted_row_id(cls, status: RunStatus) -> int | None:
         notification = status.notification if isinstance(status.notification, dict) else {}
-        row_id = notification.get("row_id")
-        return row_id if isinstance(row_id, int) and not isinstance(row_id, bool) else None
+        return cls._row_id(notification.get("row_id"))
 
     def retry(self, run_id: UUID, *, fresh: bool = False) -> RetryResponse:
         original = self.store.get(run_id)
@@ -116,7 +119,11 @@ class RunCoordinator:
                 str(retry.run_id) if fresh else str(replay.get("checkpoint_namespace") or original.run_id)
             )
             if not fresh:
-                resume_row_id = self._persisted_row_id(original)
+                # Prefer the durable row recorded by the run itself. A replay may
+                # also already carry ownership from an earlier replay in the chain,
+                # which keeps repeated operator retries safe before the task reaches
+                # its persistence callback again.
+                resume_row_id = self._persisted_row_id(original) or self._row_id(replay.get("resume_row_id"))
                 if resume_row_id is not None:
                     replay["resume_row_id"] = resume_row_id
             else:
