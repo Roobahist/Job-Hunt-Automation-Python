@@ -132,7 +132,9 @@ class BaserowJobRepository:
         )
 
     def reset(self, row_id: int, job: Job) -> Mapping[str, Any]:
-        return {"id": row_id}
+        # Refresh source metadata while deliberately leaving qualification and artifact
+        # fields alone. Later workflow stages replace those only after new work succeeds.
+        return self.client.update_row(self.table_id, row_id, self._job_fields(job))
 
     def clear_qualification(self, row_id: int) -> None:
         self.client.update_row(
