@@ -116,7 +116,7 @@ classify_path() {
 
     # HTTP/operator-only code can use the lightweight application image without rebuilding TeX.
     case "$path" in
-        src/job_hunt/api/*|src/job_hunt/cli.py|src/job_hunt/queueing.py|scripts/generate-litellm-config.py)
+        src/job_hunt/api/*|src/job_hunt/cli.py|src/job_hunt/queueing.py|src/job_hunt/application/triage.py|scripts/generate-litellm-config.py)
             printf '2'
             return
             ;;
