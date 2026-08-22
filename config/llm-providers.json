@@ -88,6 +88,30 @@
         "tpm": 250000
       },
       "exclude_models": []
+    },
+    {
+      "name": "mistral-small-repair",
+      "litellm_prefix": "mistral",
+      "api_key_prefix": "MISTRAL_API_KEY_",
+      "enabled": true,
+      "fill_missing_groups": false,
+      "discovery": {
+        "enabled": false
+      },
+      "models": {
+        "fast": [],
+        "balanced": [],
+        "powerful": []
+      },
+      "repair_models": {
+        "fast": ["mistral-small-latest"],
+        "balanced": []
+      },
+      "litellm_params": {
+        "rpm": 50,
+        "tpm": 50000
+      },
+      "exclude_models": []
     }
   ]
 }
