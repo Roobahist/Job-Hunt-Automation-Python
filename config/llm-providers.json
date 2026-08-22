@@ -88,25 +88,6 @@
         "tpm": 250000
       },
       "exclude_models": []
-    },
-    {
-      "name": "mistral-glm",
-      "litellm_prefix": "mistral",
-      "api_key_prefix": "MISTRAL_API_KEY_",
-      "enabled": true,
-      "fill_missing_groups": false,
-      "discovery": {
-        "enabled": false
-      },
-      "models": {
-        "fast": [],
-        "balanced": [],
-        "powerful": ["zai-glm-5-2"]
-      },
-      "litellm_params": {
-        "rpm": 60
-      },
-      "exclude_models": []
     }
   ]
 }
