@@ -370,6 +370,24 @@ class CapabilityRoutedStructuredClient(GeminiStructuredClient):
 RoutedStructuredClient = CapabilityRoutedStructuredClient
 
 
+def _gateway_client(
+    settings: Settings,
+    route: LlmRoute,
+    *,
+    repair_client: GeminiStructuredClient | None,
+    state: RedisState | None,
+) -> LiteLLMGatewayClient:
+    return LiteLLMGatewayClient(
+        settings.litellm_base_url,
+        settings.shared_litellm_key(),
+        route.model,
+        timeout_seconds=settings.litellm_request_timeout_seconds,
+        repair_client=repair_client,
+        state=state,
+        checkpoint_ttl_seconds=settings.llm_checkpoint_ttl_seconds,
+    )
+
+
 def _build_gateway_routes(
     settings: Settings,
     specs: Sequence[LlmRoute],
@@ -378,20 +396,35 @@ def _build_gateway_routes(
     state: RedisState | None,
 ) -> list[tuple[LlmRoute, GeminiStructuredClient]]:
     return [
-        (
-            route,
-            LiteLLMGatewayClient(
-                settings.litellm_base_url,
-                settings.shared_litellm_key(),
-                route.model,
-                timeout_seconds=settings.litellm_request_timeout_seconds,
-                repair_client=repair_client,
-                state=state,
-                checkpoint_ttl_seconds=settings.llm_checkpoint_ttl_seconds,
-            ),
-        )
+        (route, _gateway_client(settings, route, repair_client=repair_client, state=state))
         for route in specs
     ]
+
+
+def _build_repair_routes(
+    settings: Settings,
+    *,
+    state: RedisState | None,
+) -> list[tuple[LlmRoute, GeminiStructuredClient]]:
+    """Build repair tiers so schema-invalid repair output can escalate to the next tier.
+
+    LiteLLM already handles provider/key failures and group fallback. This chain covers a
+    different case: a provider returns HTTP 200 but the repair result still fails schema
+    validation. Repair routes are ordered from first choice to final validation fallback.
+    """
+    specs = settings.llm_repair_route_specs()
+    validation_fallback: GeminiStructuredClient | None = None
+    reversed_routes: list[tuple[LlmRoute, GeminiStructuredClient]] = []
+    for route in reversed(specs):
+        client = _gateway_client(
+            settings,
+            route,
+            repair_client=validation_fallback,
+            state=state,
+        )
+        reversed_routes.append((route, client))
+        validation_fallback = client
+    return list(reversed(reversed_routes))
 
 
 def build_routed_structured_client(
@@ -400,12 +433,7 @@ def build_routed_structured_client(
     state: RedisState | None = None,
 ) -> CapabilityRoutedStructuredClient:
     repair_client = CapabilityRoutedStructuredClient(
-        _build_gateway_routes(
-            settings,
-            settings.llm_repair_route_specs(),
-            repair_client=None,
-            state=state,
-        ),
+        _build_repair_routes(settings, state=state),
         repair=True,
     )
     return CapabilityRoutedStructuredClient(
