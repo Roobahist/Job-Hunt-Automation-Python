@@ -2,141 +2,110 @@
 
 ## Run lifecycle
 
-API calls return HTTP 202 and a UUID. Query `/v1/runs/{uuid}` or use `job-hunt status`. States are `queued`, `running`, `succeeded`, `failed`, or `skipped`. The `stage` field identifies the last workflow boundary. Notification delivery has its own `notification` state and does not change a successfully generated application back to failed.
+API calls return HTTP 202 and a UUID. Query `/v1/runs/{uuid}` or use `job-hunt status`. States are `queued`, `running`, `succeeded`, `failed`, or `skipped`. The `stage` field identifies the current/last workflow boundary. Notification state is separate from successful application generation.
 
-Development logs are readable console events. Non-development environments emit structured JSON. Active LLM generation logs include the logical LiteLLM capability group, upstream provider/model when available, deployment ID, latency, repair usage, and provider usage metadata.
+Non-development environments emit structured logs. Active LLM generation logs include logical group, upstream provider/model when LiteLLM exposes it, deployment ID, latency, repair usage, and provider usage metadata.
 
 ## Discovery snapshots
 
-Scheduled discovery loads each tenant's runtime configuration and active Baserow prompts once. The serialized snapshot is stored in Redis and the same snapshot ID is attached to every child job from that discovery. This avoids repeated prompt/configuration reads and guarantees one discovery batch uses one prompt/configuration version.
+Scheduled discovery loads tenant runtime configuration and active prompts once. The serialized snapshot is stored in Redis and attached to every child job in that batch. This avoids repeated Baserow reads and keeps one discovery batch on one prompt/configuration version.
 
-If a snapshot expires before a child job starts, the worker falls back to live Baserow configuration rather than failing the job. `JOB_HUNT_DISCOVERY_SNAPSHOT_TTL_SECONDS` controls the normal snapshot lifetime.
+If the snapshot expires before a child starts, the worker falls back to live Baserow configuration. `JOB_HUNT_DISCOVERY_SNAPSHOT_TTL_SECONDS` controls normal retention.
 
 ## LLM checkpoints
 
-Structured LLM operations may be checkpointed after schema validation. The checkpoint key is derived from the rendered prompt, prompt key, prompt version, and JSON Schema, and retries preserve the original checkpoint namespace unless a fresh regeneration is explicitly requested.
+Validated structured LLM results are checkpointed in Redis by the active LiteLLM gateway client. The digest includes logical model group, prompt key, prompt version, rendered prompt, and JSON Schema.
 
-`JOB_HUNT_LLM_CHECKPOINT_TTL_SECONDS` controls retention for checkpoint-capable clients. Checkpoints contain generated structured content, so Redis persistence and access should be protected like the rest of the application data.
+Normal retry preserves the original checkpoint namespace. Fresh regeneration creates a new namespace. `JOB_HUNT_LLM_CHECKPOINT_TTL_SECONDS` controls retention.
 
 ## Active LLM routing
 
-The production path is centralized through LiteLLM Proxy:
-
 ```text
-application workflow
-    -> capability group selected in integrations/llm_routing.py
-    -> LiteLLM Proxy
-    -> concrete deployment from config/llm-providers.json
-    -> provider account/model
+application operation
+  -> logical capability group
+  -> LiteLLM Proxy
+  -> concrete key/model deployment
 ```
 
-Workers do not select individual provider API keys. Application code selects only logical capability groups such as `job-fast`, `job-balanced`, and `job-powerful`. LiteLLM owns deployment selection, retry within a group, cooldown, and configured fallbacks between groups.
+Workers never select provider API keys directly. The current registry uses Gemini and Mistral.
 
-The generated LiteLLM configuration creates one deployment for each configured provider model and API key. `allowed_fails` defaults to zero so a retryable failure cools the failed deployment immediately. The default `num_retries` is derived from the largest configured deployment pool, allowing alternative keys/models in that pool to be tried before an error is returned to Celery. `LITELLM_NUM_RETRIES` can override that derived value when necessary.
+Immediate LLM recovery belongs to LiteLLM:
 
-Celery is the outer recovery layer. It retries only after the LiteLLM request has failed at the gateway level or another retryable workflow/provider error escapes the current task. This separation prevents a single exhausted key from turning directly into a long Celery retry while healthy LiteLLM deployments remain available.
+```text
+same-group deployments/keys
+  -> configured fallback group
+  -> that group's deployments/keys
+  -> return error only after immediate routes fail
+```
 
-Apify remains an application-wide token pool shared by all tenants. Its cooldown state is stored in Redis so workers coordinate exhausted Apify accounts.
+Current generation fallback is `job-powerful -> job-balanced -> job-fast`. Repair is `repair-fast -> repair-balanced`; `repair-balanced` already has Gemini, Mistral Medium, and Mistral Small capacity.
 
-Legacy direct-Gemini pooling modules remain in the repository for migration/history, but they are not the active production routing path created by `Container`.
+Celery is the outer recovery layer and retries only after the current LiteLLM request or another retryable provider/workflow operation escapes the task.
 
-## Structured-output contract and repair
+## Apify routing
 
-Every active Baserow prompt provides an `Output Structure` JSON Schema. The worker sends the schema as the output contract and validates the returned object independently.
+Apify remains an application-wide token pool shared by tenants. Capacity errors cool the failing token and try other currently available tokens. If all tokens are already cooling down, the adapter returns a retryable rate-limit error with the shortest known remaining cooldown instead of sending another request to a known-unavailable token.
 
-If the primary result cannot be parsed or does not validate, the active routing layer sends a repair request through the configured repair capability group. The repaired object must pass the same JSON Schema. Repair is not permitted to invent facts that were absent from the original output.
+## Structured-output repair
+
+Every active Baserow prompt provides an `Output Structure` JSON Schema. The worker parses and validates the provider result independently. Invalid JSON/schema output is sent to a repair capability group and validated again against the same schema.
 
 ## Common failures
 
 | Error/stage | Likely cause | Check |
-|---|---|---|
-| `configuration_error` | Missing/duplicate prompt, invalid Output Structure, missing LiteLLM group, missing table field, or missing secret | `job-hunt config validate TENANT --live`, Baserow Prompts/Configuration tables, `.env`, `config/users.toml`, generated LiteLLM config |
-| `authentication` | Expired or invalid provider credential | Provider keys in `.env`, tenant Baserow/Fillout credentials, shared Telegram credentials |
-| `rate_limit` | LiteLLM exhausted currently usable deployments or Apify capacity is unavailable | LiteLLM logs, provider dashboards, generated deployment pools, Apify cooldown state, Celery retry metadata |
-| `malformed_provider_response` | Structured generation and repair did not satisfy the active schema | Prompt key/version, Output Structure, LiteLLM/upstream logs, Langfuse trace when enabled |
-| `document_rendering` | Invalid tailored content, template marker, or LaTeX | Run JSON/TEX files and document-worker logs |
-| `notification.state=failed` | Telegram failed after application completion | Telegram token/connectivity; generation does not need to be repeated |
-| URL validation | Non-public host, redirect, oversized/non-text response | Posting URL and response type |
-| Redis readiness | Redis unavailable | `docker compose ps`, `docker compose logs redis` |
+| --- | --- | --- |
+| `configuration_error` | missing prompt/schema/group/table field/secret | `job-hunt config validate TENANT --live`, Baserow, `.env`, registry |
+| `authentication` | invalid provider/tenant credential | `.env` and tenant secret aliases |
+| `rate_limit` | current LiteLLM deployments or Apify tokens exhausted | LiteLLM/provider logs, cooldown state, Celery retry metadata |
+| `malformed_provider_response` | generation and repair failed schema contract | prompt/version/schema and LiteLLM logs |
+| `document_rendering` | invalid content/template/LaTeX | document-worker logs and generated JSON/TEX |
+| notification failure | Telegram failure after generation | notification-worker logs; do not regenerate documents unnecessarily |
+| URL validation | unsafe host/redirect/content/size | source posting URL and security logs |
+| Redis readiness | Redis unavailable | `docker compose ps`, Redis logs |
 
 ## Safe reprocessing and cancellation
 
-Automatic discovery is idempotent. If a job row already exists, normal automatic processing does not spend compatibility, qualification, tailoring, or rendering capacity on it again. Manual/operator flows can use `force=true` to explicitly regenerate.
+Automatic discovery is idempotent. Existing jobs are normally skipped before expensive LLM/document stages.
 
-When forced reprocessing starts, qualification fields may be refreshed, but existing CV and cover-letter attachments are not cleared before replacement artifacts succeed. The previous documents therefore remain available if a later generation or upload fails.
+Forced reprocessing refreshes source job fields in Baserow, then qualification/document fields are replaced by their owning stages. Existing document attachments remain until replacement artifacts succeed.
 
-Baserow status is treated as user-owned workflow state. If a row is manually changed to `Dropped`, workers check that state at expensive boundaries and stop further compatibility, qualification, tailoring, rendering, or upload work where applicable. A manual drop is a cancellation, not a workflow error.
-
-Successful document persistence saves replacement artifact fields but does not implicitly advance a `New` row to another workflow status. Status transitions remain explicit through workflow/user actions rather than being coupled to artifact upload.
-
-The ZIP sent through Telegram contains the generated JSON/TEX/PDF bundle. Baserow receives the persistent document attachments used by the job record.
+A row manually changed to `Dropped` is treated as cancellation. Workers check status at expensive boundaries and stop further work where applicable.
 
 ## Monitoring
 
-Flower is available on port 5555 in Docker Compose. Configure `FLOWER_BASIC_AUTH` before exposing it outside a trusted network. Celery task events are enabled so Flower can show queued/running/completed tasks and worker state.
+Flower is available on port 5555 and should be protected with `FLOWER_BASIC_AUTH` before exposure outside a trusted network.
 
-LiteLLM is an internal service in Docker Compose and exposes its API only to the application network. Use its container logs when investigating routing, fallback, or upstream-provider failures.
-
-Langfuse is optional. Set `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, and optionally `LANGFUSE_BASE_URL` to trace supported LLM calls. Leave the keys blank to disable it. Observability failures must not turn an otherwise successful LLM completion into a failed job.
-
-## Telegram controls
-
-The application uses one shared Telegram bot and one shared webhook secret for all tenants. Register the bot webhook at:
-
-```text
-/webhooks/telegram
-```
-
-Configure `JOB_HUNT_TELEGRAM_BOT_TOKEN` and `JOB_HUNT_TELEGRAM_WEBHOOK_SECRET`. Telegram must send the same shared secret in `X-Telegram-Bot-Api-Secret-Token`.
-
-Callback routing is resolved from the incoming Telegram `message.chat.id`. The application loads tenant runtime configuration and matches that chat ID against each tenant's Baserow `telegram_chat_id`. Tenant-specific Telegram webhook URLs and tenant-specific webhook secrets are not part of the current design.
-
-Generated application messages can expose workflow actions such as opening the job, changing job status, or requesting regeneration. Telegram processing is isolated on the `notifications` queue so notification failures do not consume document-worker capacity or invalidate successfully generated application artifacts.
+LiteLLM is internal to the Compose network. Use its logs and `/v1/model/info` from another application container when investigating deployments or fallbacks.
 
 ## Recovery rules
 
-- Retry failed generation through the API, CLI, or Telegram regeneration action.
-- Normal retry keeps the stored checkpoint namespace so already completed checkpoint-capable LLM operations can be reused.
-- A fresh regeneration creates a new checkpoint namespace and forces the submission path.
-- A tenant/job lock prevents concurrent processing of the same job identity.
-- LiteLLM should exhaust healthy deployments before Celery performs task-level retry.
-- Telegram retries happen independently from generation.
-- Do not run tests marked `live` without explicit non-production provider credentials.
+- normal retry keeps the checkpoint namespace
+- fresh regeneration creates a new checkpoint namespace
+- tenant/job lock prevents concurrent processing of the same job identity
+- LiteLLM should exhaust immediate deployment/fallback capacity before Celery retry
+- Telegram retries are independent from generation
+- do not run tests marked `live` with production provider credentials casually
 
 ## Deployment checks
 
-Normal VPS deployment uses the change-aware deployment script:
+Normal deployment:
 
 ```bash
 bash scripts/deploy-vps.sh
 ```
 
-Preview its decision without changing the checkout or containers:
+Preview:
 
 ```bash
 bash scripts/deploy-vps.sh --dry-run
 ```
 
-The script selects the lowest safe level from the changed paths:
+Use explicit levels when the reason is not visible to Git, especially after a VPS-local `.env` change or after deliberately resetting the checkout before deployment.
 
-- Level 0: Git fast-forward only for documentation/tests/example configuration.
-- Level 1: runtime refresh without image builds for mounted configuration/tenant assets or explicit VPS-local `.env` changes.
-- Level 2: rebuild the lightweight application image for API/operator-only code while leaving the TeX document image untouched.
-- Level 3: full application + document image rebuild and validations for shared worker/rendering/dependency/build changes.
-
-Only `worker-documents` uses the TeX-enabled image. `api`, `worker-fast`, `worker-notifications`, Beat, and Flower reuse the lightweight application image.
-
-When forcing an explicit level:
-
-```bash
-bash scripts/deploy-vps.sh --level 1
-bash scripts/deploy-vps.sh --level 2
-bash scripts/deploy-vps.sh --level 3
-```
-
-Use Level 1 after a VPS-local `.env` change because Git cannot detect it. Use Level 3 after Dockerfile, Compose, dependency, deployment-script, shared worker, or rendering changes. The first deployment after changing the deployment topology itself must be Level 3.
-
-The deployment script performs LiteLLM regeneration/reload and LaTeX validation only when the selected path requires them, then checks Compose state, API liveness/readiness, and Redis.
+- Level 0: pull only
+- Level 1: mounted runtime/config refresh, no image build
+- Level 2: lightweight application rebuild
+- Level 3: shared Python/rendering/dependency/Docker/deployment changes
 
 Run repository tests on the VPS with:
 
