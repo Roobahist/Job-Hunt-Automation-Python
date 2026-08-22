@@ -280,8 +280,12 @@ def test_generated_config_contains_generation_and_repair_fallbacks() -> None:
             "llama-8b",
         ],
     )
-    assert config["router_settings"]["routing_strategy"] == "latency-based-routing"
-    assert config["router_settings"]["fallbacks"] == [
+    router = config["router_settings"]
+    assert router["routing_strategy"] == "simple-shuffle"
+    assert router["enable_weighted_failover"] is True
+    assert router["num_retries"] == 0
+    assert router["max_fallbacks"] >= 1
+    assert router["fallbacks"] == [
         {"job-powerful": ["job-balanced", "job-fast"]},
         {"job-balanced": ["job-fast"]},
         {"repair-fast": ["repair-balanced"]},
