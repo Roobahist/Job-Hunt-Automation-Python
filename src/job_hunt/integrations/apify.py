@@ -86,22 +86,33 @@ class ApifyProvider:
             available = [token for token in self.tokens if state.available("apify", self._token_id(token))]
             if available:
                 return available
-            return sorted(
-                self.tokens,
-                key=lambda token: state.remaining_cooldown("apify", self._token_id(token)),
-            )[:1]
+            retry_after = min(
+                max(1, state.remaining_cooldown("apify", self._token_id(token))) for token in self.tokens
+            )
+            raise ProviderError(
+                "Apify capacity is cooling down for all configured accounts",
+                ErrorKind.RATE_LIMIT,
+                retryable=True,
+                provider="apify",
+                retry_after=retry_after,
+            )
 
         now = time.monotonic()
         with self._lock:
             available = [token for token in self.tokens if self._unavailable_until.get(self._token_id(token), 0) <= now]
             if available:
                 return available
-            return [
-                min(
-                    self.tokens,
-                    key=lambda token: self._unavailable_until.get(self._token_id(token), 0),
-                )
-            ]
+            retry_after = min(
+                max(1, int(self._unavailable_until.get(self._token_id(token), now) - now) + 1)
+                for token in self.tokens
+            )
+        raise ProviderError(
+            "Apify capacity is cooling down for all configured accounts",
+            ErrorKind.RATE_LIMIT,
+            retryable=True,
+            provider="apify",
+            retry_after=retry_after,
+        )
 
     def _cooldown(self, token: str, seconds: int) -> None:
         token_id = self._token_id(token)
@@ -131,6 +142,7 @@ class ApifyProvider:
         self, actor_id: str, run_input: Mapping[str, Any], max_items: int | None = None
     ) -> Iterable[dict[str, Any]]:
         failures: list[str] = []
+        cooldowns: list[int] = []
         for token in self._available_tokens():
             try:
                 yield from self._run_with_client(ApifyClient(token), actor_id, run_input, max_items)
@@ -140,7 +152,9 @@ class ApifyProvider:
             except Exception as exc:
                 failures.append(f"{self._token_id(token)}: {exc}")
                 if self._is_capacity_error(exc):
-                    self._cooldown(token, self._cooldown_seconds(exc))
+                    cooldown = self._cooldown_seconds(exc)
+                    cooldowns.append(cooldown)
+                    self._cooldown(token, cooldown)
                     continue
                 raise ProviderError(
                     f"Apify request failed: {exc}",
@@ -153,6 +167,7 @@ class ApifyProvider:
             ErrorKind.RATE_LIMIT,
             retryable=True,
             provider="apify",
+            retry_after=min(cooldowns) if cooldowns else None,
         )
 
     @staticmethod
