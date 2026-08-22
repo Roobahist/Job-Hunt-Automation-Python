@@ -102,7 +102,7 @@ def application_job() -> Job:
     )
 
 
-def qualify(workflow: ApplicationWorkflow, *, force: bool = False) -> object:
+def qualify(workflow: ApplicationWorkflow, *, force: bool = False, resume_row_id: int | None = None) -> object:
     return workflow.persist_and_qualify(
         application_job(),
         run_id=uuid4(),
@@ -110,6 +110,7 @@ def qualify(workflow: ApplicationWorkflow, *, force: bool = False) -> object:
         prompts={},
         threshold=33,
         force=force,
+        resume_row_id=resume_row_id,
     )
 
 
@@ -157,6 +158,47 @@ def test_existing_dropped_row_is_not_requalified_automatically() -> None:
     assert ai.qualify_calls == 0
     assert ("clear_qualification", 7) not in repo.calls
     assert ("status", "new") not in repo.calls
+
+
+def test_retry_resumes_matching_row_instead_of_treating_it_as_duplicate() -> None:
+    repo = Repository(existing=True, dropped=False, existing_score=None)
+    workflow, _, ai, _ = make_workflow(repo, Qualification(score=90, should_apply=True, reasoning="good"))
+
+    result = qualify(workflow, resume_row_id=7)
+
+    assert result.passed  # type: ignore[attr-defined]
+    assert result.score == 90  # type: ignore[attr-defined]
+    assert ai.qualify_calls == 1
+    assert ("reset", 7) not in repo.calls
+    assert ("clear_qualification", 7) not in repo.calls
+    assert ("qualification", 90) in repo.calls
+
+
+def test_retry_refuses_to_claim_row_owned_by_another_run() -> None:
+    repo = Repository(existing=True, dropped=False)
+    workflow, _, ai, _ = make_workflow(repo, Qualification(score=90, should_apply=True, reasoning="unused"))
+
+    with pytest.raises(WorkflowError) as caught:
+        qualify(workflow, resume_row_id=8)
+
+    assert caught.value.kind == ErrorKind.BUSINESS
+    assert ai.qualify_calls == 0
+    assert ("reset", 7) not in repo.calls
+    assert all(call[0] != "qualification" for call in repo.calls)
+
+
+def test_forced_retry_resumes_without_resetting_or_clearing_row_again() -> None:
+    repo = Repository(existing=True, dropped=False, existing_score=None)
+    workflow, _, ai, _ = make_workflow(repo, Qualification(score=1, should_apply=False, reasoning="forced"))
+
+    result = qualify(workflow, force=True, resume_row_id=7)
+
+    assert result.passed  # type: ignore[attr-defined]
+    assert ai.qualify_calls == 1
+    assert ("reset", 7) not in repo.calls
+    assert ("clear_qualification", 7) not in repo.calls
+    assert ("status", "new") not in repo.calls
+    assert ("qualification", 1) in repo.calls
 
 
 def test_manual_drop_after_persistence_stops_before_qualification() -> None:
