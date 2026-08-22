@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import time
@@ -109,12 +110,16 @@ class LiteLLMGatewayClient(GeminiStructuredClient):
         *,
         timeout_seconds: int = 180,
         repair_client: GeminiStructuredClient | None = None,
+        state: RedisState | None = None,
+        checkpoint_ttl_seconds: int = 604800,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
         if not model:
             raise ValueError("A LiteLLM model alias is required")
         self.model = model
         self.repair_client = repair_client
+        self.state = state
+        self.checkpoint_ttl_seconds = checkpoint_ttl_seconds
         self.client = httpx.Client(
             base_url=base_url.rstrip("/"),
             headers={"Authorization": f"Bearer {api_key}"},
@@ -190,7 +195,34 @@ class LiteLLMGatewayClient(GeminiStructuredClient):
             return provider, payload_model, deployment_id
         return None, None, deployment_id
 
+    def _checkpoint_digest(self, prompt: str, definition: PromptDefinition) -> str:
+        payload = json.dumps(
+            {
+                "model_group": self.model,
+                "key": definition.key,
+                "version": definition.version,
+                "prompt": prompt,
+                "schema": definition.output_structure,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return hashlib.sha256(payload.encode()).hexdigest()
+
     def generate(self, prompt: str, definition: PromptDefinition) -> dict[str, Any]:
+        checkpoint = self._checkpoint_digest(prompt, definition)
+        if self.state is not None:
+            cached = self.state.get_checkpoint(checkpoint)
+            if cached is not None:
+                logger().info(
+                    "llm_checkpoint_hit",
+                    prompt_key=definition.key,
+                    prompt_version=definition.version,
+                    model_group=self.model,
+                )
+                return _validate_json_schema(cached, definition.output_structure)
+
         started = time.perf_counter()
         try:
             response = self.client.post(
@@ -236,18 +268,21 @@ class LiteLLMGatewayClient(GeminiStructuredClient):
             ) from exc
 
         raw_output = json.dumps(content, ensure_ascii=False) if isinstance(content, Mapping) else str(content or "")
+        repaired = False
         if isinstance(content, Mapping):
             parsed: object = dict(content)
         elif isinstance(content, str):
             try:
                 parsed = json.loads(content)
             except json.JSONDecodeError as exc:
-                return self._repair_via_routes(
+                result = self._repair_via_routes(
                     raw_output,
                     definition.output_structure,
                     str(exc),
                     operation=definition.key,
                 )
+                repaired = True
+                parsed = result
         else:
             raise ProviderError(
                 "LiteLLM gateway returned empty structured output",
@@ -255,17 +290,22 @@ class LiteLLMGatewayClient(GeminiStructuredClient):
                 provider="litellm",
             )
 
-        try:
+        if repaired:
             result = _validate_json_schema(parsed, definition.output_structure)
-            repaired = False
-        except JsonSchemaValidationError as exc:
-            result = self._repair_via_routes(
-                raw_output,
-                definition.output_structure,
-                str(exc),
-                operation=definition.key,
-            )
-            repaired = True
+        else:
+            try:
+                result = _validate_json_schema(parsed, definition.output_structure)
+            except JsonSchemaValidationError as exc:
+                result = self._repair_via_routes(
+                    raw_output,
+                    definition.output_structure,
+                    str(exc),
+                    operation=definition.key,
+                )
+                repaired = True
+
+        if self.state is not None:
+            self.state.set_checkpoint(checkpoint, result, ttl_seconds=self.checkpoint_ttl_seconds)
 
         upstream_provider, upstream_model, deployment_id = self._upstream_identity(response, payload)
         logger().info(
@@ -335,6 +375,7 @@ def _build_gateway_routes(
     specs: Sequence[LlmRoute],
     *,
     repair_client: GeminiStructuredClient | None,
+    state: RedisState | None,
 ) -> list[tuple[LlmRoute, GeminiStructuredClient]]:
     return [
         (
@@ -345,6 +386,8 @@ def _build_gateway_routes(
                 route.model,
                 timeout_seconds=settings.litellm_request_timeout_seconds,
                 repair_client=repair_client,
+                state=state,
+                checkpoint_ttl_seconds=settings.llm_checkpoint_ttl_seconds,
             ),
         )
         for route in specs
@@ -356,11 +399,20 @@ def build_routed_structured_client(
     *,
     state: RedisState | None = None,
 ) -> CapabilityRoutedStructuredClient:
-    del state
     repair_client = CapabilityRoutedStructuredClient(
-        _build_gateway_routes(settings, settings.llm_repair_route_specs(), repair_client=None),
+        _build_gateway_routes(
+            settings,
+            settings.llm_repair_route_specs(),
+            repair_client=None,
+            state=state,
+        ),
         repair=True,
     )
     return CapabilityRoutedStructuredClient(
-        _build_gateway_routes(settings, settings.llm_route_specs(), repair_client=repair_client),
+        _build_gateway_routes(
+            settings,
+            settings.llm_route_specs(),
+            repair_client=repair_client,
+            state=state,
+        ),
     )
