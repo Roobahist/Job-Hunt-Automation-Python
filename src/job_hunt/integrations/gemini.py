@@ -223,6 +223,26 @@ class GeminiWorkflowAI:
         definition: PromptDefinition,
         values: Mapping[str, object],
     ) -> PromptDefinition:
+        if definition.key in {"cv_project_selection", "cv_work_experience_selection"}:
+            selection_count = values.get("selection_count")
+            if (
+                not isinstance(selection_count, int)
+                or isinstance(selection_count, bool)
+                or selection_count < 0
+            ):
+                raise ConfigurationError(f"{definition.key} requires selection_count as a non-negative integer")
+
+            schema = json.loads(json.dumps(definition.output_structure))
+            properties = schema.get("properties")
+            selected_indices = properties.get("selected_indices") if isinstance(properties, dict) else None
+            if not isinstance(selected_indices, dict) or selected_indices.get("type") != "array":
+                raise ConfigurationError(f"{definition.key} output schema must define selected_indices as an array")
+
+            selected_indices["minItems"] = selection_count
+            selected_indices["maxItems"] = selection_count
+            selected_indices["uniqueItems"] = True
+            return definition.model_copy(update={"output_structure": schema})
+
         if definition.key not in {"cv_project_rewrite", "cv_work_experience_rewrite"}:
             return definition
         rewrite_inputs = values.get("rewrite_inputs_json")
@@ -315,6 +335,7 @@ class GeminiWorkflowAI:
             item_label="project",
             available_count=len(projects),
             max_count=count,
+            exact_count=count,
         )
         selected = [projects[index] for index in indices]
         rewrite_inputs = [
@@ -378,6 +399,7 @@ class GeminiWorkflowAI:
             item_label="work-experience",
             available_count=len(experiences),
             max_count=count,
+            exact_count=count,
         )
         selected = [experiences[index] for index in indices]
         rewrite_inputs = [
