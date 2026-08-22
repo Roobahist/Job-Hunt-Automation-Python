@@ -54,7 +54,7 @@
         "enabled": false
       },
       "models": {
-        "fast": [],
+        "fast": ["mistral-medium-latest"],
         "balanced": ["mistral-medium-latest"],
         "powerful": []
       },
