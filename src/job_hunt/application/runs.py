@@ -123,7 +123,9 @@ class RunCoordinator:
                 # also already carry ownership from an earlier replay in the chain,
                 # which keeps repeated operator retries safe before the task reaches
                 # its persistence callback again.
-                resume_row_id = self._persisted_row_id(original) or self._row_id(replay.get("resume_row_id"))
+                resume_row_id = self._persisted_row_id(original) or self._row_id(
+                    replay.get("resume_row_id")
+                )
                 if resume_row_id is not None:
                     replay["resume_row_id"] = resume_row_id
             else:
