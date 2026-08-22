@@ -55,7 +55,7 @@ Workers request logical groups, not provider API keys.
 
 | Group | Current capacity | Typical operations |
 | --- | --- | --- |
-| `job-fast` | Gemini 3.5 Flash Lite | compatibility, page extraction |
+| `job-fast` | Gemini 3.5 Flash Lite + Mistral Medium | compatibility, page extraction |
 | `job-balanced` | Gemini 3.5 Flash + Mistral Medium | qualification, selection, skills |
 | `job-powerful` | Mistral Large | rewriting, summary, cover letter |
 | `repair-fast` | fast deployments + Mistral Small | first repair attempt |
@@ -75,11 +75,13 @@ Provider responses remain authoritative if account limits change. Groq is not pa
 
 ### Retry/fallback order
 
-Immediate alternatives are exhausted before the whole task is delayed:
+Immediate alternatives are exhausted before the whole task is delayed. The generated LiteLLM router uses `simple-shuffle` with weighted deployment failover enabled, ordinary same-deployment retries disabled, and a failover budget derived from the generated deployment pool size.
 
 ```text
 logical group
-  -> other deployment/key in same group
+  -> chosen deployment/key
+  -> failure excludes that deployment for this request
+  -> another deployment/key in the same group
   -> configured fallback group
   -> deployments/keys in fallback group
   -> LiteLLM returns failure only after immediate capacity fails
@@ -106,6 +108,19 @@ Outer Celery defaults:
 - rate-limit fallback: 65 seconds unless an adapter supplies `retry_after`
 - transient backoff: 5, 10, 20, 40... seconds
 - transient cap: 300 seconds
+
+### Retry ownership and Baserow idempotency
+
+Duplicate detection and task retry are intentionally different concepts.
+
+- A fresh automatic discovery run treats an already-existing Baserow row as a duplicate and exits without spending compatibility, qualification, or document capacity.
+- A Fillout/manual `force=True` request is an explicit fresh regeneration and may reset the existing row once before processing.
+- A Celery retry of the same run is a resume, not a fresh discovery. After persistence, `process_submission` stores that run's Baserow `row_id` in Redis notification metadata. On retry, the workflow may resume only if the currently matching Baserow row has that exact recorded ID.
+- A retry never claims ownership merely because a matching job exists. If the run-recorded row ID and the matching Baserow row disagree, the workflow fails rather than touching another run's row.
+- A forced/manual retry does not reset the row, clear qualification, or set status back to `New` a second time.
+- Manual `Dropped` status remains authoritative. Resuming a run still checks Baserow status at expensive stage boundaries and stops normally if the user dropped the row.
+
+This distinction prevents the failure mode where a transient provider error occurs after persistence, Celery retries the task, and the task then mistakes its own newly created Baserow row for an unrelated duplicate.
 
 ## Structured output and checkpoints
 
@@ -173,15 +188,16 @@ Do not add provider key selection to workflow code. Provider/model/key ownership
 2. `SubmissionNormalizer` converts it to one canonical `Job`.
 3. Job identity is assigned and Baserow is checked for duplicates.
 4. Normal duplicate discovery work is skipped. Forced reprocessing refreshes source metadata while preserving previous documents until replacements succeed.
-5. Compatibility runs through `job-fast`.
-6. Qualification runs through `job-balanced`.
-7. Document generation is gated by `force` or `score >= qualification_threshold`.
-8. Passing work is handed to the `documents` queue.
-9. Independent LLM branches run with bounded parallelism.
-10. JSON results are schema validated and repaired if required.
-11. Tenant renderer code owns LaTeX structure; pdflatex creates PDFs.
-12. Baserow receives persistent PDFs/ZIP.
-13. Telegram finalization runs independently on the notifications queue.
+5. If a transient failure happens after persistence, a Celery retry resumes only the Baserow row ID recorded by that same run in Redis; it is not treated as a fresh duplicate.
+6. Compatibility runs through `job-fast`.
+7. Qualification runs through `job-balanced`.
+8. Document generation is gated by `force` or `score >= qualification_threshold`.
+9. Passing work is handed to the `documents` queue.
+10. Independent LLM branches run with bounded parallelism.
+11. JSON results are schema validated and repaired if required.
+12. Tenant renderer code owns LaTeX structure; pdflatex creates PDFs.
+13. Baserow receives persistent PDFs/ZIP.
+14. Telegram finalization runs independently on the notifications queue.
 
 ## Configuration ownership
 
@@ -345,6 +361,7 @@ Useful ownership map:
 | missing logical group | generated `config/litellm.runtime.yaml` and registry |
 | malformed JSON | prompt schema, concrete provider test, repair group |
 | Apify exhaustion | fast-worker logs and Redis cooldown state |
+| retry becomes duplicate/skip | Redis run notification `row_id`, Baserow matching row, `job_persisted` `resumed` field |
 | stale forced-job metadata | Baserow reset/source-field path |
 | PDF failure | document worker and generated JSON/TEX |
 | Telegram-only failure | notification worker |
@@ -356,7 +373,7 @@ Useful ownership map:
 2. Canonical `Job` is the boundary after normalization.
 3. Application logic does not select provider keys.
 4. Baserow is durable business state; Redis is runtime coordination.
-5. Automatic processing is idempotent.
+5. Automatic processing is idempotent across independent runs; same-run Celery retries resume only the row ID recorded by that run.
 6. Baserow status is user-owned.
 7. Numeric qualification threshold gates documents.
 8. LiteLLM owns immediate LLM fallback; Celery is the outer retry layer.
