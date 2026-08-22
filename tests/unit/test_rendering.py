@@ -87,6 +87,27 @@ def test_real_tenant_templates_and_master_cv_render(
     assert r"A\&B" in bundle.cover_letter_tex.read_text()
 
 
+def test_mojtaba_renderer_does_not_emit_empty_entry_lists() -> None:
+    assert MojtabaCvRenderer._entries([]) == ""
+    assert MojtabaCvRenderer._entries([{}]) == ""
+    assert MojtabaCvRenderer._entries([{"icon": "link", "content": ["", {"text": ""}]}]) == ""
+
+
+def test_mojtaba_renderer_keeps_visible_entries_and_drops_empty_neighbors() -> None:
+    rendered = MojtabaCvRenderer._entries(
+        [
+            {},
+            {"title": "Visible", "content": ["", {"text": "Did useful work"}]},
+            {"icon": "link"},
+        ]
+    )
+    assert rendered.startswith("\\CVEntries{")
+    assert rendered.count("\\CVEntry") == 2  # one wrapper plus one actual entry
+    assert "Visible" in rendered
+    assert "\\CVContent{Did useful work}" in rendered
+    assert "\\CVContent{}" not in rendered
+
+
 def test_mahsa_renderer_wraps_parent_bullets_in_itemize_structure() -> None:
     rendered = MahsaCvRenderer().render(
         "%%__SECTIONS__%%",
@@ -148,6 +169,31 @@ def test_mahsa_renderer_wraps_nested_bullets_and_renders_plain_text_safely() -> 
     assert "\\CVBullet{Nested bullet}" in rendered
     assert "\\CVNestedText{Nested note}" in rendered
     assert "\\CVBullet[false]" not in rendered
+
+
+def test_mahsa_renderer_omits_empty_entry_sections_and_nested_entries() -> None:
+    rendered = MahsaCvRenderer().render(
+        "%%__SECTIONS__%%",
+        {
+            "sections": [
+                {
+                    "type": "entries",
+                    "title": "PROJECTS",
+                    "entries": [
+                        {},
+                        {"title": "Parent"},
+                        {"parent": "Parent", "icon": "link", "content": [{"text": ""}]},
+                    ],
+                },
+                {"type": "entries", "title": "EMPTY", "entries": [{}]},
+                {"type": "education"},
+            ]
+        },
+    )
+    assert "\\CVSection{PROJECTS}" in rendered
+    assert "\\CVEntry{Parent}" in rendered
+    assert "\\CVNestedEntry" not in rendered
+    assert "\\CVSection{EMPTY}" not in rendered
 
 
 def test_mahsa_renderer_omits_empty_references_section() -> None:
