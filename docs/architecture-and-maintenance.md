@@ -14,13 +14,13 @@ Container
   -> provider deployments
 ```
 
-Application code requests logical capability groups. Provider API keys, deployment selection, immediate retries, cooldowns, and inter-group fallbacks belong to LiteLLM.
+Application code requests logical capability groups. Provider API keys, deployment selection, immediate failover, cooldowns, and inter-group fallbacks belong to LiteLLM.
 
 Current groups:
 
 | Group | Deployments | Main use |
 | --- | --- | --- |
-| `job-fast` | Gemini 3.5 Flash Lite | compatibility, page extraction |
+| `job-fast` | Gemini 3.5 Flash Lite, Mistral Medium | compatibility, page extraction |
 | `job-balanced` | Gemini 3.5 Flash, Mistral Medium | qualification, selection, skills |
 | `job-powerful` | Mistral Large | rewriting, summary, cover letter |
 | `repair-fast` | fast generation deployments plus Mistral Small | first repair tier |
@@ -32,11 +32,12 @@ Groq is not part of the active registry. The old direct Gemini pool and direct p
 
 ## Retry hierarchy
 
-One LLM call should exhaust immediate capacity before a whole Celery task is delayed:
+One LLM call should exhaust immediate capacity before a whole Celery task is delayed. The generated LiteLLM router uses `simple-shuffle` with weighted deployment failover, zero ordinary same-deployment retries, and a failover budget derived from the generated deployment pool size.
 
 ```text
 logical group
   -> deployment/key A
+  -> failure excludes A for this request
   -> deployment/key B
   -> other deployments in group
   -> configured fallback group
@@ -51,6 +52,16 @@ Celery defaults to 8 task retries. Rate-limit errors use a 65 second fallback de
 
 Apify uses the same principle at the adapter boundary. A capacity error cools that token and tries other currently available tokens. If every token is already cooling down, the adapter raises a retryable rate-limit error with the shortest known remaining cooldown instead of probing a token known to be unavailable.
 
+### Same-run task resume
+
+Celery retry and duplicate detection must not be conflated.
+
+`process_submission` records the persisted Baserow `row_id` in the Redis run notification as soon as persistence succeeds. If that same Celery task later retries, it may resume only the matching Baserow row with that exact recorded ID. A matching job found without same-run row ownership is still treated as an independent duplicate.
+
+This rule matters for failures between persistence and qualification. Without it, the retry sees the row created by its own first attempt and incorrectly exits as `job_already_tracked`. It also protects forced/manual runs from resetting, clearing qualification, or setting `New` a second time after a transient failure.
+
+If the Redis-recorded row ID and the Baserow row found by job identity disagree, the workflow fails instead of claiming another run's row. Manual `Dropped` status remains authoritative during resumed execution.
+
 ## Structured output and checkpoints
 
 Every active prompt has a Baserow `Output Structure` JSON Schema. The response is parsed and independently validated. Invalid output is sent through a repair group and validated again against the same schema.
@@ -63,7 +74,7 @@ Baserow is durable business state. Redis is runtime coordination.
 
 Baserow owns job source metadata, score/apply values, user status, and final artifacts. Updates are deliberately narrow. Forced reprocessing refreshes source job metadata but does not clear existing qualification or document fields before replacement work succeeds.
 
-Redis owns run/replay data, discovery snapshots, locks, progress metadata, provider cooldowns, and LLM checkpoints.
+Redis owns run/replay data, discovery snapshots, locks, progress metadata, provider cooldowns, LLM checkpoints, and the same-run Baserow row ownership marker used for safe Celery resume.
 
 ## Security boundaries
 
@@ -127,7 +138,7 @@ Preserve these invariants unless a migration explicitly changes them:
 2. Canonical `Job` is the boundary after normalization.
 3. Application logic does not select provider keys.
 4. Baserow is durable state; Redis is runtime coordination.
-5. Automatic processing is idempotent.
+5. Automatic processing is idempotent across independent runs; same-run Celery retries resume only the row ID recorded by that run.
 6. Baserow status is user-owned.
 7. Numeric qualification threshold gates document generation.
 8. LiteLLM owns immediate LLM failover; Celery is the outer retry layer.
