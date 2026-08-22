@@ -1,73 +1,119 @@
 # VPS deployment guide
 
-This repository does not connect to or modify the VPS automatically. Deploy only after local and CI checks pass.
+Production changes should be made in GitHub and deployed through the repository script. VPS-local `.env`, nginx installation, DNS, and certificate state remain outside Git.
+
+## Initial setup
 
 1. Install Docker Engine and Docker Compose and clone the repository.
-2. Create `.env` from `.env.example`. Use independent long operator and Fillout secrets, plus one shared Telegram webhook secret, and restrict file permissions.
-3. Update `config/users.toml` with the real Baserow Configuration table IDs. Keep provider credentials in `.env` or a VPS secret manager.
-4. Install the repository-managed nginx site from `deploy/nginx/job-hunt-automation.conf` after the TLS certificate for `automation.mojtabakanani.me` exists. The config exposes only the Fillout webhook prefix and the exact shared Telegram webhook path. FastAPI and Flower remain bound to localhost and Redis remains Docker-internal.
-5. Use `bash scripts/deploy-vps.sh` for normal deployments. Auto mode fetches the upstream branch, compares it with the currently deployed commit, selects the lowest safe deployment level, fast-forwards the checkout, performs only the necessary build/reload work, and verifies runtime health.
-6. Configure Fillout webhooks after readiness succeeds. Register the single shared Telegram bot webhook at `/webhooks/telegram` using `JOB_HUNT_TELEGRAM_WEBHOOK_SECRET` as Telegram's secret token. Tenant callback routing uses each Baserow configuration's `telegram_chat_id`.
-7. Configure Docker log rotation. Back up Redis because it contains run replay data, discovery snapshots, provider state, and LLM checkpoints. Baserow remains the durable document/business store.
-8. Watch Flower, structured logs, and optionally Langfuse during the first discovery and manual submissions.
+2. Create `.env` from `.env.example`, populate application/provider/tenant secrets, and restrict permissions.
+3. Update `config/users.toml` with real Baserow Configuration table IDs.
+4. Install `deploy/nginx/job-hunt-automation.conf` after TLS is ready. FastAPI/Flower stay localhost-bound and Redis/LiteLLM stay Docker-internal.
+5. Register Fillout and the shared Telegram webhook only after readiness succeeds.
+6. Configure Docker log rotation and back up Redis because it contains replay data, snapshots, cooldown state, and LLM checkpoints. Baserow remains the durable business/document store.
 
-## Deployment levels
-
-The deployment script supports four explicit levels plus automatic selection:
-
-| Level | Name | Use when | Main actions |
-| --- | --- | --- | --- |
-| `0` | pull-only | README/docs/tests/example config or other non-runtime tracked files | fast-forward Git checkout only |
-| `1` | runtime-refresh | mounted tenant/config files or VPS-local `.env` changes | no image build; reload required runtime config and recreate services |
-| `2` | application-rebuild | API/operator-only Python changes | rebuild lightweight application image; leave TeX document image untouched |
-| `3` | full | shared worker code, rendering, dependencies, Docker/Compose, deployment scripts, or uncertain runtime changes | rebuild application and document images, run full validations, recreate all services |
-
-Normal usage:
+## Normal deployment
 
 ```bash
+cd /opt/job-hunt-automation
 bash scripts/deploy-vps.sh
 ```
 
-Preview what auto mode would do without changing the checkout or containers:
+Auto mode:
+
+1. fetches the configured upstream branch
+2. compares the currently deployed commit with upstream
+3. selects the lowest safe deployment level
+4. fast-forwards the checkout
+5. performs only required build/reload work
+6. validates runtime health
+
+Preview without changing checkout/containers:
 
 ```bash
 bash scripts/deploy-vps.sh --dry-run
 ```
 
-Force a level when the reason is not visible to Git, especially after editing the VPS-local `.env`:
+### Important auto-detection rule
+
+Run auto deployment before manually pulling/resetting the checkout. If you first run `git reset --hard origin/main`, the old deployed commit is no longer available to the script as its changed-path baseline. In that recovery pattern, use an explicit level.
+
+Example recovery deployment:
+
+```bash
+cd /opt/job-hunt-automation
+git fetch origin
+git reset --hard origin/main
+bash scripts/deploy-vps.sh --level 3
+```
+
+## Deployment levels
+
+| Level | Name | Use when | Main actions |
+| --- | --- | --- | --- |
+| `0` | pull-only | docs/tests/example/non-runtime tracked files | fast-forward checkout only |
+| `1` | runtime-refresh | mounted config/tenant assets or VPS-local `.env` | regenerate/recreate required runtime services, no image build |
+| `2` | application-rebuild | narrow API/operator Python | rebuild lightweight application image |
+| `3` | full | shared Python, workers, integrations, rendering, dependencies, Docker/Compose, deployment scripts | rebuild app + document images, run full validation, recreate services |
+
+Explicit examples:
+
+```bash
+bash scripts/deploy-vps.sh --level 1
+bash scripts/deploy-vps.sh --level 2
+bash scripts/deploy-vps.sh --level 3
+```
+
+Use the highest required level when a change spans categories.
+
+## Image layout
+
+The lightweight application image is reused by:
+
+- API
+- `worker-fast`
+- `worker-notifications`
+- Beat
+- Flower
+
+Only `worker-documents` uses the TeX-enabled document image. There is no separate Beat image target.
+
+The TeX installation is isolated in a stable Docker layer so source-only Level 3 builds can reuse it when Docker/TeX dependencies did not change.
+
+Mounted `config/` and tenant assets can use Level 1. LiteLLM runtime config is regenerated/reloaded when the selected deployment path requires it.
+
+## Provider/config changes
+
+A provider key change in VPS-local `.env` is invisible to Git, so use Level 1 explicitly:
 
 ```bash
 bash scripts/deploy-vps.sh --level 1
 ```
 
-A full deployment remains available as the safe escape hatch:
+A change only to `config/llm-providers.json` also needs Level 1.
+
+A change to `integrations/llm_routing.py`, workers, shared application/domain code, or provider-config generation Python requires Level 3.
+
+## Verification
+
+The deployment script checks Compose state, API liveness/readiness, Redis, and required LiteLLM groups. Full deployments also run the heavier validations required by shared/document changes.
+
+Repository tests on VPS:
 
 ```bash
-bash scripts/deploy-vps.sh --level 3
+bash scripts/test-vps.sh
 ```
 
-Auto classification intentionally errs toward the safer level for shared Python/runtime files. API-only code can use Level 2. Most other `src/` changes use Level 3 because the document worker imports shared application, workflow, integration, and rendering code.
+Useful runtime checks:
 
-## Why deployment is split this way
-
-The API, `worker-fast`, `worker-notifications`, Beat, and Flower all use the same lightweight application image. Only `worker-documents` uses the TeX-enabled document image. This prevents unrelated API or operator changes from rebuilding or redeploying the large LaTeX image.
-
-The TeX installation is also isolated in a stable Docker layer. When the document image really must be rebuilt, ordinary source changes can reuse the cached TeX layer unless the TeX package list or an earlier Docker layer changed.
-
-Level 3 builds the application and document targets in one Docker Compose build invocation so BuildKit can share/cache common layers efficiently.
-
-Mounted files under `config/` and `tenants/` do not require image rebuilds. Level 1 recreates the relevant services so runtime configuration is refreshed without paying the Docker build cost.
-
-LiteLLM runtime configuration is regenerated only when required by the selected/forced deployment path. The script recreates LiteLLM and validates its configured capability groups before application services are considered healthy.
-
-LaTeX validation runs when tenant document assets/rendering require it or during a forced full deployment; documentation and unrelated application changes do not pay that cost.
-
-## First deployment after deployment-system changes
-
-When the deployment script, Dockerfile, or Compose topology itself changes, use Level 3 once so the VPS adopts the new image/service layout completely. After that migration deployment, normal deployments should return to auto mode.
+```bash
+docker compose ps
+docker compose logs --since 10m litellm
+docker compose logs --since 10m worker-fast
+docker compose logs --since 10m worker-documents
+```
 
 ## Operational notes
 
-Scale Celery workers independently when needed. `worker_prefetch_multiplier=1` should remain enabled because application jobs can contain long provider and document-rendering stages.
+Keep `worker_prefetch_multiplier=1` because job duration varies significantly.
 
-The VPS checkout should use a read-only deploy key. Repository changes are made in GitHub and pulled to the VPS; live `.env`, nginx installation, DNS, and certificate state are VPS-specific and should not be committed.
+The current LiteLLM Compose image uses `ghcr.io/berriai/litellm:main-stable`. Pin a tested version/digest in a dedicated deployment change before treating the routing layer as fully reproducible.
