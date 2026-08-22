@@ -133,7 +133,7 @@ def test_capability_router_does_not_duplicate_litellm_fallbacks() -> None:
     assert fast.calls == 0
 
 
-def test_gateway_client_sends_group_schema_and_authentication() -> None:
+def test_gateway_client_sends_json_object_contract_and_authentication() -> None:
     requests: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -156,10 +156,13 @@ def test_gateway_client_sends_group_schema_and_authentication() -> None:
     assert client.generate("prompt", definition("cover_letter_generation")) == {"compatible": True}
     request = requests[0]
     payload = json.loads(request.content)
+    message = payload["messages"][0]["content"]
     assert request.url.path == "/v1/chat/completions"
     assert request.headers["authorization"] == "Bearer secret"
     assert payload["model"] == "job-powerful"
-    assert payload["response_format"]["type"] == "json_schema"
+    assert payload["response_format"] == {"type": "json_object"}
+    assert "OUTPUT CONTRACT" in message
+    assert '"compatible"' in message
 
 
 def test_gateway_logs_actual_deployment_when_response_model_is_alias(monkeypatch: pytest.MonkeyPatch) -> None:
