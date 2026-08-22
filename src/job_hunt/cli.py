@@ -11,6 +11,7 @@ from pydantic import TypeAdapter
 from redis import Redis
 
 from job_hunt.application.runs import RunCoordinator
+from job_hunt.application.triage import triage_new_jobs
 from job_hunt.config import Settings, load_registry, read_seed
 from job_hunt.container import Container
 from job_hunt.domain.models import JobSubmission, TailoredContent
@@ -74,6 +75,49 @@ def submit(
 def discover(tenant: str) -> None:
     result = _coordinator(_settings()).enqueue_discovery(tenant)
     typer.echo(str(result.run_id))
+
+
+@app.command("triage-new")
+def triage_new(
+    tenant: str,
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="Evaluate rows without changing Baserow.")] = False,
+    limit: Annotated[int | None, typer.Option("--limit", min=1, help="Process at most this many New rows.")] = None,
+) -> None:
+    services = Container(_settings()).tenant(tenant, checkpoint_namespace=f"triage-new:{tenant}")
+    compatibility_filter = services.workflow.compatibility_filter
+    if compatibility_filter is None:
+        raise typer.BadParameter("This tenant has no compatibility filter configured")
+
+    rows = services.baserow.iter_rows(services.config.baserow_table_ids["jobs"])
+    summary = triage_new_jobs(
+        rows=rows,
+        new_status_id=services.config.status_option_ids["new"],
+        threshold=services.config.qualification_threshold,
+        compatibility_filter=compatibility_filter,
+        qualifier=services.workflow.qualifier,
+        repository=services.repository,
+        prompts=services.prompts,
+        master_cv=services.context.master_cv,
+        dry_run=dry_run,
+        limit=limit,
+    )
+
+    for decision in summary.decisions:
+        score = f" score={decision.score}" if decision.score is not None else ""
+        typer.echo(
+            f"row={decision.row_id} action={decision.action}{score} "
+            f"company={decision.company_name!r} title={decision.title!r} reason={decision.reason}"
+        )
+
+    typer.echo(
+        "SUMMARY "
+        f"scanned={summary.scanned} processed={summary.processed} kept={summary.kept} "
+        f"dropped={summary.dropped} compatibility_dropped={summary.compatibility_dropped} "
+        f"qualification_dropped={summary.qualification_dropped} scored={summary.scored} "
+        f"reused_scores={summary.reused_scores} errors={summary.errors} dry_run={dry_run}"
+    )
+    if summary.errors:
+        raise typer.Exit(2)
 
 
 @app.command()
