@@ -4,7 +4,7 @@
       "name": "groq",
       "litellm_prefix": "groq",
       "api_key_prefix": "GROQ_API_KEY_",
-      "enabled": true,
+      "enabled": false,
       "discovery": {
         "enabled": true,
         "url": "https://api.groq.com/openai/v1/models"
@@ -45,6 +45,26 @@
         "fast": ["gemini-3.5-flash-lite"],
         "balanced": ["gemini-3.5-flash"],
         "powerful": ["gemini-3.5-flash"]
+      },
+      "exclude_models": []
+    },
+    {
+      "name": "mistral",
+      "litellm_prefix": "mistral",
+      "api_key_prefix": "MISTRAL_API_KEY_",
+      "enabled": true,
+      "fill_missing_groups": false,
+      "discovery": {
+        "enabled": false
+      },
+      "models": {
+        "fast": [],
+        "balanced": [],
+        "powerful": ["mistral-large-latest"]
+      },
+      "litellm_params": {
+        "rpm": 4,
+        "tpm": 250000
       },
       "exclude_models": []
     }
