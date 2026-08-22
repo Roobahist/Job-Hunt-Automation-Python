@@ -29,6 +29,7 @@ def test_celery_queue_dispatches_submission_and_discovery(monkeypatch: pytest.Mo
             True,
             "snapshot",
             "checkpoint-lineage",
+            4758,
         )
         == "s1"
     )
@@ -40,6 +41,7 @@ def test_celery_queue_dispatches_submission_and_discovery(monkeypatch: pytest.Mo
             True,
             "snapshot",
             "checkpoint-lineage",
+            4758,
         )
     ]
     assert queue.discovery("mojtaba", run_id) == "d1"
