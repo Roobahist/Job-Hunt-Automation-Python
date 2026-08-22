@@ -8,14 +8,67 @@ from job_hunt.integrations.gemini_mahsa import MahsaGeminiWorkflowAI
 
 
 def definition(key: str) -> PromptDefinition:
+    schemas: dict[str, dict[str, Any]] = {
+        "cv_work_experience_selection": {
+            "type": "object",
+            "properties": {"selected_indices": {"type": "array", "items": {"type": "integer"}}},
+            "required": ["selected_indices"],
+            "additionalProperties": False,
+        },
+        "cv_work_experience_rewrite": {
+            "type": "object",
+            "properties": {
+                "contents": {
+                    "type": "array",
+                    "items": {"type": "array", "items": {"type": "string"}},
+                }
+            },
+            "required": ["contents"],
+            "additionalProperties": False,
+        },
+        "cv_skills_tailoring": {
+            "type": "object",
+            "properties": {
+                "groups": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "label": {"type": "string"},
+                            "skills": {"type": "array", "items": {"type": "string"}},
+                        },
+                        "required": ["label", "skills"],
+                        "additionalProperties": False,
+                    },
+                }
+            },
+            "required": ["groups"],
+            "additionalProperties": False,
+        },
+        "cv_references_inclusion": {
+            "type": "object",
+            "properties": {"include_references": {"type": "boolean"}},
+            "required": ["include_references"],
+            "additionalProperties": False,
+        },
+        "cv_summary_rewrite": {
+            "type": "object",
+            "properties": {"summary": {"type": "array", "items": {"type": "string"}}},
+            "required": ["summary"],
+            "additionalProperties": False,
+        },
+        "cover_letter_generation": {
+            "type": "object",
+            "properties": {"paragraphs": {"type": "array", "items": {"type": "string"}}},
+            "required": ["paragraphs"],
+            "additionalProperties": False,
+        },
+    }
     return PromptDefinition(
         key=key,
         version=1,
         template=key,
-        output_structure={
-            "type": "object",
-            "properties": {"value": {}},
-        },
+        output_structure=schemas[key],
         temperature=0.2,
     )
 
