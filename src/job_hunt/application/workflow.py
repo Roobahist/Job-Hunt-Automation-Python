@@ -7,6 +7,7 @@ from typing import Any
 from uuid import UUID
 
 from job_hunt.domain.models import Job, PromptDefinition
+from job_hunt.errors import ErrorKind, WorkflowError
 from job_hunt.logging import logger
 from job_hunt.ports import ArtifactPublisher, CompatibilityFilter, DocumentRenderer, JobRepository, Qualifier, Tailor
 from job_hunt.retry import retry_transient
@@ -78,22 +79,41 @@ class ApplicationWorkflow:
         force: bool,
         progress: ProgressCallback | None = None,
         persisted: PersistedCallback | None = None,
+        resume_row_id: int | None = None,
     ) -> QualificationResult:
         log = logger().bind(run_id=str(run_id), job_identity=job.identity)
         self._progress(progress, "persistence", "start")
         existing = retry_transient(self.repository.find, job)
-        row = (
-            retry_transient(self.repository.reset, int(existing["id"]), job)
-            if existing
-            else retry_transient(self.repository.create, job)
-        )
+        existing_row_id = int(existing["id"]) if existing is not None else None
+        resuming = resume_row_id is not None
+
+        if resuming:
+            # A Celery retry may reuse only the Baserow row that this same run
+            # recorded after persistence. Merely finding a matching row is not
+            # enough to claim ownership because it may belong to another run.
+            if existing_row_id != resume_row_id:
+                raise WorkflowError(
+                    f"Cannot resume run on Baserow row {resume_row_id}: matching row is {existing_row_id}",
+                    ErrorKind.BUSINESS,
+                )
+            row = existing
+        else:
+            row = (
+                retry_transient(self.repository.reset, existing_row_id, job)
+                if existing_row_id is not None
+                else retry_transient(self.repository.create, job)
+            )
+        if row is None:
+            raise WorkflowError("Baserow persistence returned no row", ErrorKind.MALFORMED_PROVIDER_RESPONSE)
         row_id = int(row["id"])
 
-        # Automatic discovery is idempotent. If a row already exists, do not spend
-        # compatibility/qualification/document capacity on it. This is a second
-        # guard behind the discovery-level dedupe and protects overlapping runs.
-        # Fillout/manual force=True is the explicit regeneration override.
-        if existing and not force:
+        # Automatic discovery is idempotent across independent runs. If a row
+        # already exists, do not spend compatibility/qualification/document
+        # capacity on it. The exception is a retry of the same run, identified by
+        # resume_row_id, which must continue instead of treating its own row as a
+        # duplicate. Fillout/manual force=True remains the explicit fresh
+        # regeneration override.
+        if existing and not force and not resuming:
             if persisted is not None:
                 persisted(row_id)
             self._progress(progress, "persistence", "finish")
@@ -102,15 +122,24 @@ class ApplicationWorkflow:
             log.info("job_already_tracked", stage="persist", row_id=row_id, score=score)
             return QualificationResult(row_id=row_id, passed=False, score=score)
 
-        if existing:
+        # Destructive refresh operations belong only to the first attempt of a
+        # forced run. A retry resumes the row after the last durable boundary and
+        # must not clear qualification or reset status again.
+        if existing and not resuming:
             retry_transient(self.repository.clear_qualification, row_id)
-
-        if force:
+        if force and not resuming:
             retry_transient(self.repository.set_status, row_id, "new")
         if persisted is not None:
             persisted(row_id)
         self._progress(progress, "persistence", "finish")
-        log.info("job_persisted", stage="persist", row_id=row_id, reprocessed=bool(existing), forced=force)
+        log.info(
+            "job_persisted",
+            stage="persist",
+            row_id=row_id,
+            reprocessed=bool(existing),
+            forced=force,
+            resumed=resuming,
+        )
 
         # Baserow is user-owned state. A manual Dropped change is a normal cancellation,
         # not a workflow error. Check it at every expensive stage boundary.
