@@ -9,6 +9,7 @@ import httpx
 from job_hunt.domain.models import Job, Qualification
 from job_hunt.errors import ErrorKind, ProviderError
 from job_hunt.integrations.http import raise_provider_error
+from job_hunt.retry import retry_transient
 
 
 class BaserowClient:
@@ -39,14 +40,53 @@ class BaserowClient:
         raise_provider_error("baserow", response)
         return response
 
+    @staticmethod
+    def _json_object(response: httpx.Response) -> dict[str, Any]:
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            content_type = response.headers.get("content-type", "unknown")
+            preview = response.text[:200].replace("\n", " ").strip() or "<empty body>"
+            raise ProviderError(
+                f"Baserow returned a non-JSON response (status={response.status_code}, "
+                f"content_type={content_type}, body={preview!r})",
+                ErrorKind.MALFORMED_PROVIDER_RESPONSE,
+                retryable=True,
+                provider="baserow",
+                status_code=response.status_code,
+            ) from exc
+        if not isinstance(payload, dict):
+            raise ProviderError(
+                f"Baserow returned an unexpected JSON payload type: {type(payload).__name__}",
+                ErrorKind.MALFORMED_PROVIDER_RESPONSE,
+                retryable=True,
+                provider="baserow",
+                status_code=response.status_code,
+            )
+        return payload
+
+    def _row_page(self, url: str, query: Mapping[str, Any]) -> dict[str, Any]:
+        response = self._request("GET", url, params=dict(query))
+        payload = self._json_object(response)
+        results = payload.get("results")
+        if not isinstance(results, list):
+            raise ProviderError(
+                "Baserow row-list response is missing a results array",
+                ErrorKind.MALFORMED_PROVIDER_RESPONSE,
+                retryable=True,
+                provider="baserow",
+                status_code=response.status_code,
+            )
+        return payload
+
     def iter_rows(self, table_id: int, **params: object) -> Iterator[dict[str, Any]]:
         url: str | None = f"/api/database/rows/table/{table_id}/"
         query: dict[str, Any] = {"user_field_names": "true", "size": 200, **params}
         while url:
-            response = self._request("GET", url, params=query)
-            payload = response.json()
-            yield from payload.get("results", [])
-            url = payload.get("next")
+            payload = retry_transient(self._row_page, url, query)
+            yield from payload["results"]
+            next_url = payload.get("next")
+            url = str(next_url) if next_url else None
             query = {}
 
     def get_row(self, table_id: int, row_id: int) -> dict[str, Any]:
@@ -54,7 +94,7 @@ class BaserowClient:
             "GET",
             f"/api/database/rows/table/{table_id}/{row_id}/?user_field_names=true",
         )
-        return cast(dict[str, Any], response.json())
+        return self._json_object(response)
 
     def find_equal(self, table_id: int, field: str, value: object) -> dict[str, Any] | None:
         rows = list(self.iter_rows(table_id, **{f"filter__{field}__equal": value, "size": 2}))
@@ -64,7 +104,7 @@ class BaserowClient:
         response = self._request(
             "POST", f"/api/database/rows/table/{table_id}/?user_field_names=true", json=dict(values)
         )
-        return cast(dict[str, Any], response.json())
+        return self._json_object(response)
 
     def update_row(self, table_id: int, row_id: int, values: Mapping[str, Any]) -> dict[str, Any]:
         response = self._request(
@@ -72,11 +112,11 @@ class BaserowClient:
             f"/api/database/rows/table/{table_id}/{row_id}/?user_field_names=true",
             json=dict(values),
         )
-        return cast(dict[str, Any], response.json())
+        return self._json_object(response)
 
     def upload_via_url(self, url: str) -> dict[str, Any]:
         response = self._request("POST", "/api/user-files/upload-via-url/", json={"url": url})
-        return cast(dict[str, Any], response.json())
+        return self._json_object(response)
 
     def upload_file(self, path: Path) -> dict[str, Any]:
         try:
@@ -92,11 +132,32 @@ class BaserowClient:
                 ErrorKind.VALIDATION,
                 provider="baserow",
             ) from exc
-        return cast(dict[str, Any], response.json())
+        return self._json_object(response)
 
     def list_fields(self, table_id: int) -> list[dict[str, Any]]:
         response = self._request("GET", f"/api/database/fields/table/{table_id}/")
-        return cast(list[dict[str, Any]], response.json())
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            content_type = response.headers.get("content-type", "unknown")
+            preview = response.text[:200].replace("\n", " ").strip() or "<empty body>"
+            raise ProviderError(
+                f"Baserow returned a non-JSON field-list response (status={response.status_code}, "
+                f"content_type={content_type}, body={preview!r})",
+                ErrorKind.MALFORMED_PROVIDER_RESPONSE,
+                retryable=True,
+                provider="baserow",
+                status_code=response.status_code,
+            ) from exc
+        if not isinstance(payload, list):
+            raise ProviderError(
+                f"Baserow field-list response has unexpected type: {type(payload).__name__}",
+                ErrorKind.MALFORMED_PROVIDER_RESPONSE,
+                retryable=True,
+                provider="baserow",
+                status_code=response.status_code,
+            )
+        return cast(list[dict[str, Any]], payload)
 
 
 class BaserowJobRepository:
