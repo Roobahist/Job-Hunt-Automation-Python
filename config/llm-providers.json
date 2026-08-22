@@ -16,8 +16,7 @@
       },
       "discovery_allowlist": [
         "openai/gpt-oss-20b",
-        "openai/gpt-oss-120b",
-        "qwen/qwen3.6-27b"
+        "openai/gpt-oss-120b"
       ],
       "exclude_models": [],
       "blocklist": [
