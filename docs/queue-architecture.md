@@ -1,33 +1,43 @@
 # Queue architecture
 
-The job pipeline is deliberately split by workload type so long document-generation tasks cannot block discovery and qualification.
+The pipeline is split by workload type so long document-generation tasks cannot block discovery/qualification and notification failures cannot consume document capacity.
 
 ## Queues
 
-- `fast`: tenant dispatch, discovery, normalization, persistence, qualification
-- `documents`: CV and cover-letter generation, rendering, artifact upload
-- `notifications`: Telegram delivery and workflow actions
+- `fast`: tenant dispatch, discovery, normalization, persistence, compatibility, qualification
+- `documents`: tailored content generation, rendering, artifact upload
+- `notifications`: Telegram progress, final delivery, and workflow actions
 
-The default worker concurrency is intentionally conservative:
+Default concurrency is conservative:
 
-- `FAST_WORKER_CONCURRENCY=3`
-- `DOCUMENT_WORKER_CONCURRENCY=1`
-- `NOTIFICATION_WORKER_CONCURRENCY=1`
+```text
+FAST_WORKER_CONCURRENCY=3
+DOCUMENT_WORKER_CONCURRENCY=1
+NOTIFICATION_WORKER_CONCURRENCY=1
+```
 
-Document generation already uses bounded internal LLM parallelism through `JOB_HUNT_LLM_PARALLELISM`, so document-task concurrency should only be increased after provider-rate observations support it.
+Document generation also uses bounded internal LLM parallelism through `JOB_HUNT_LLM_PARALLELISM`. Increase document worker concurrency only after checking provider quotas and VPS resources.
 
-## LLM capacity control
+## LLM capacity ownership
 
-Gemini capacity is shared across tenants and workers. Provider cooldowns and optional RPM/TPM/RPD counters are stored in Redis, so they remain global even when checkpoints are isolated per run lineage.
+Workers request logical LiteLLM groups. LiteLLM owns concrete provider/account deployment choice, immediate retries, cooldowns, and configured group fallbacks.
 
-Use `JOB_HUNT_GEMINI_LIMITS_JSON` to configure proactive per-account, per-model limits. Provider 429 responses also trigger candidate cooldown and key/model rotation.
+The application does not maintain duplicate Gemini-specific RPM/TPM/RPD counters. Current model RPM/TPM metadata lives in `config/llm-providers.json`; provider responses remain authoritative when real quota state differs.
+
+Redis checkpoints are isolated by run lineage, while LiteLLM provider capacity is application-wide.
 
 ## Task handoff
 
-`process_submission` persists and qualifies a job, then queues `generate_documents` and returns immediately. It never waits synchronously for document generation.
+`process_submission` persists and qualifies a job, then queues `generate_documents` and returns. It does not wait synchronously for documents.
 
-`generate_documents` persists generated artifacts, queues `notify_documents`, and returns. Telegram delivery therefore cannot occupy document-generation worker capacity.
+`generate_documents` persists artifacts, queues notification finalization, and returns. Telegram delivery therefore cannot occupy document-worker capacity.
 
-## Telegram grouping
+## Retry placement
 
-A single file is sent with the workflow action buttons attached directly. Multiple files are sent as one media group, followed by a reply containing the action buttons. This is required because Telegram media groups do not support an inline keyboard on the media-group request itself.
+Immediate provider/key/model failover occurs inside LiteLLM before a retryable error reaches Celery. Celery task retry is the outer layer after the gateway cannot find a usable immediate route.
+
+Apify token rotation happens inside the Apify adapter before task-level retry for the same reason.
+
+## Telegram delivery
+
+The active workflow sends the generated application ZIP with action controls. Progress is maintained as an editable processing document/message. Notification state is independent from successful document persistence.
