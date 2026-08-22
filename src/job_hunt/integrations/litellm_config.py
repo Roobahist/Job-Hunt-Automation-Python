@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -275,6 +276,13 @@ def _nonnegative_int(env: Mapping[str, str], name: str, default: int) -> int:
     return value
 
 
+def _deployment_retry_budget(model_list: Sequence[Mapping[str, Any]]) -> int:
+    counts = Counter(str(entry["model_name"]) for entry in model_list)
+    generation_counts = [counts[group] for group in CAPABILITY_GROUPS if counts[group]]
+    repair_counts = [counts[group] for group in REPAIR_GROUP_MAP.values() if counts[group]]
+    return max([0, *(count - 1 for count in generation_counts), *(count - 1 for count in repair_counts)])
+
+
 def build_litellm_config(
     *,
     env: Mapping[str, str],
@@ -306,14 +314,18 @@ def build_litellm_config(
     if "repair-fast" in present_groups and "repair-balanced" in present_groups:
         fallbacks.append({"repair-fast": ["repair-balanced"]})
 
-    # The application defines capability groups and fallback intent. LiteLLM owns
-    # deployment selection, provider-normalized retries, cooldowns, and failover.
-    # Avoid deriving retry counts from our deployment topology or duplicating its router.
+    retry_budget = _deployment_retry_budget(model_list)
+    num_retries = _nonnegative_int(env, "LITELLM_NUM_RETRIES", retry_budget)
+
+    # A failed deployment must be cooled down immediately so the next retry is routed
+    # to another key/model. The retry budget defaults to enough attempts to traverse
+    # the largest logical pool; callers can override it explicitly when needed.
     return {
         "model_list": model_list,
         "router_settings": {
             "routing_strategy": env.get("LITELLM_ROUTING_STRATEGY", "latency-based-routing"),
-            "allowed_fails": _nonnegative_int(env, "LITELLM_ALLOWED_FAILS", 1),
+            "num_retries": num_retries,
+            "allowed_fails": _nonnegative_int(env, "LITELLM_ALLOWED_FAILS", 0),
             "cooldown_time": _nonnegative_int(env, "LITELLM_COOLDOWN_SECONDS", 65),
             "fallbacks": fallbacks,
         },
