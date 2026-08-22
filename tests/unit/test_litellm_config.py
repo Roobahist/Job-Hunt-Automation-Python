@@ -104,6 +104,13 @@ def test_missing_capability_bucket_borrows_nearest_available_models() -> None:
     assert groups["job-fast"] == ["openai/gpt-oss-120b"]
 
 
+def test_provider_can_disable_missing_group_backfill() -> None:
+    groups = group_models(["openai/gpt-oss-120b"], fill_missing=False)
+    assert groups["job-powerful"] == ["openai/gpt-oss-120b"]
+    assert groups["job-balanced"] == []
+    assert groups["job-fast"] == []
+
+
 def test_excluded_models_never_enter_any_capability_pool() -> None:
     groups = group_models(
         ["openai/gpt-oss-120b", "llama-3.1-8b-instant"],
@@ -222,6 +229,26 @@ def test_arbitrary_openai_compatible_provider_can_discover_models() -> None:
     assert "openai/vendor-8b" in models
     api_bases = {item["litellm_params"]["api_base"] for item in config["model_list"]}
     assert api_bases == {"https://vendor.test/v1"}
+
+
+def test_powerful_only_provider_stays_out_of_lower_capability_groups() -> None:
+    mistral = provider(
+        "mistral",
+        "MISTRAL_API_KEY_",
+        powerful=["mistral-large-latest"],
+    )
+    mistral["fill_missing_groups"] = False
+    mistral["litellm_params"] = {"rpm": 4, "tpm": 250000}
+    config = build_litellm_config(
+        env={"MISTRAL_API_KEY_1": "key"},
+        registry=registry(mistral),
+    )
+    mistral_entries = [
+        item for item in config["model_list"] if item["litellm_params"]["model"].startswith("mistral/")
+    ]
+    assert {item["model_name"] for item in mistral_entries} == {"job-powerful"}
+    assert all(item["litellm_params"]["rpm"] == 4 for item in mistral_entries)
+    assert all(item["litellm_params"]["tpm"] == 250000 for item in mistral_entries)
 
 
 def test_provider_without_keys_is_skipped() -> None:
