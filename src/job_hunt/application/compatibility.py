@@ -5,11 +5,12 @@ from typing import Any
 
 from job_hunt.domain.models import Job, PromptDefinition
 from job_hunt.errors import ConfigurationError
-from job_hunt.integrations.gemini import GeminiStructuredClient, _render
+from job_hunt.integrations.gemini import _render
+from job_hunt.ports import StructuredClient
 
 
 class GeminiCompatibilityFilter:
-    def __init__(self, client: GeminiStructuredClient) -> None:
+    def __init__(self, client: StructuredClient) -> None:
         self.client = client
 
     @staticmethod
