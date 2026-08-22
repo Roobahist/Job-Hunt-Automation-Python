@@ -9,6 +9,37 @@ from job_hunt.integrations.gemini_mahsa import MahsaGeminiWorkflowAI
 
 def definition(key: str) -> PromptDefinition:
     schemas: dict[str, dict[str, Any]] = {
+        "job_compatibility_filter": {
+            "type": "object",
+            "properties": {
+                "compatible": {"type": "boolean"},
+                "reasoning": {"type": "string"},
+            },
+            "required": ["compatible", "reasoning"],
+            "additionalProperties": False,
+        },
+        "job_page_content_extraction": {
+            "type": "object",
+            "properties": {
+                "company_name": {"type": "string"},
+                "job_title": {"type": "string"},
+                "job_description": {"type": "string"},
+                "location": {"type": ["string", "null"]},
+                "contract_type": {"type": ["string", "null"]},
+            },
+            "required": ["company_name", "job_title", "job_description"],
+            "additionalProperties": False,
+        },
+        "qualification_scoring": {
+            "type": "object",
+            "properties": {
+                "qualification_score": {"type": "integer", "minimum": 0, "maximum": 100},
+                "should_apply": {"type": "boolean"},
+                "reasoning": {"type": "string"},
+            },
+            "required": ["qualification_score", "should_apply", "reasoning"],
+            "additionalProperties": False,
+        },
         "cv_work_experience_selection": {
             "type": "object",
             "properties": {"selected_indices": {"type": "array", "items": {"type": "integer"}}},
