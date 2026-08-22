@@ -51,11 +51,9 @@ services:
     depends_on: {redis: {condition: service_healthy}}
     restart: unless-stopped
 
+  # Non-rendering workers reuse the lightweight API image. They do not carry TeX packages.
   worker-fast:
-    image: job-hunt-automation-worker:latest
-    build:
-      context: .
-      target: worker
+    image: job-hunt-automation-api:latest
     env_file: .env
     command: >-
       celery -A job_hunt.worker.celery_app worker
@@ -68,8 +66,12 @@ services:
     depends_on: *app-depends
     restart: unless-stopped
 
+  # Only the document queue uses the TeX-enabled image.
   worker-documents:
-    image: job-hunt-automation-worker:latest
+    image: job-hunt-automation-documents:latest
+    build:
+      context: .
+      target: worker
     env_file: .env
     command: >-
       celery -A job_hunt.worker.celery_app worker
@@ -83,7 +85,7 @@ services:
     restart: unless-stopped
 
   worker-notifications:
-    image: job-hunt-automation-worker:latest
+    image: job-hunt-automation-api:latest
     env_file: .env
     command: >-
       celery -A job_hunt.worker.celery_app worker
