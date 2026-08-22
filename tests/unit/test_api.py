@@ -67,8 +67,11 @@ class FakeQueue:
         force: bool,
         snapshot_id: str | None = None,
         checkpoint_namespace: str | None = None,
+        resume_row_id: int | None = None,
     ) -> str:
-        self.calls.append(("submission", tenant, payload, run_id, force, snapshot_id, checkpoint_namespace))
+        self.calls.append(
+            ("submission", tenant, payload, run_id, force, snapshot_id, checkpoint_namespace, resume_row_id)
+        )
         return "task-1"
 
     def discovery(self, tenant: str, run_id: UUID) -> str:
@@ -201,6 +204,7 @@ def test_submit_status_and_retry() -> None:
     assert api.get(f"/v1/runs/{run_id}", headers=auth()).json()["task_id"] == "task-1"
     assert api.post(f"/v1/runs/{run_id}/retry", headers=auth()).status_code == 202
     assert queue.calls[0][4] is True
+    assert queue.calls[0][-1] is None
 
 
 def test_discovery_and_fillout_auth_form_validation() -> None:
@@ -222,6 +226,7 @@ def test_discovery_and_fillout_auth_form_validation() -> None:
     )
     assert accepted.status_code == 202
     assert queue.calls[-1][4] is True
+    assert queue.calls[-1][-1] is None
 
 
 def test_fillout_invalid_values_return_structured_validation_error() -> None:
@@ -331,7 +336,7 @@ def test_telegram_acknowledgement_failure_does_not_retry_action() -> None:
     )
     FakeContainer.notifier.fail_answers = False
     assert response.status_code == 200
-    assert FakeContainer.repositories["mojtaba"].statuses == [(43, "applied")]
+    assert FakeContainer.repositories["mojtaba"].statuses == [(43, "dropped")]
 
 
 def test_validation_error_is_structured() -> None:
