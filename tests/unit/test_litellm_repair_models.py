@@ -30,7 +30,7 @@ def test_repair_only_model_does_not_enter_generation_groups() -> None:
                 "models": {"fast": [], "balanced": [], "powerful": []},
                 "repair_models": {
                     "fast": ["mistral-small-latest"],
-                    "balanced": [],
+                    "balanced": ["mistral-small-latest"],
                 },
                 "litellm_params": {"rpm": 50, "tpm": 50000},
                 "exclude_models": [],
@@ -52,10 +52,13 @@ def test_repair_only_model_does_not_enter_generation_groups() -> None:
         if entry["litellm_params"]["model"] == "mistral/mistral-small-latest"
     ]
 
-    assert len(mistral_entries) == 1
-    assert mistral_entries[0]["model_name"] == "repair-fast"
-    assert mistral_entries[0]["litellm_params"]["rpm"] == 50
-    assert mistral_entries[0]["litellm_params"]["tpm"] == 50000
+    assert len(mistral_entries) == 2
+    assert {entry["model_name"] for entry in mistral_entries} == {
+        "repair-fast",
+        "repair-balanced",
+    }
+    assert all(entry["litellm_params"]["rpm"] == 50 for entry in mistral_entries)
+    assert all(entry["litellm_params"]["tpm"] == 50000 for entry in mistral_entries)
 
     generation_models = {
         entry["litellm_params"]["model"]
