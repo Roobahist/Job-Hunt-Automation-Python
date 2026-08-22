@@ -145,7 +145,9 @@ def test_existing_non_dropped_row_is_not_requalified_automatically() -> None:
     assert not result.passed  # type: ignore[attr-defined]
     assert result.score == 75  # type: ignore[attr-defined]
     assert ai.qualify_calls == 0
+    assert ("reset", 7) not in repo.calls
     assert ("clear_qualification", 7) not in repo.calls
+    assert ("status", "new") not in repo.calls
     assert ("qualification", 90) not in repo.calls
 
 
@@ -156,6 +158,7 @@ def test_existing_dropped_row_is_not_requalified_automatically() -> None:
     assert not result.passed  # type: ignore[attr-defined]
     assert result.score == 75  # type: ignore[attr-defined]
     assert ai.qualify_calls == 0
+    assert ("reset", 7) not in repo.calls
     assert ("clear_qualification", 7) not in repo.calls
     assert ("status", "new") not in repo.calls
 
