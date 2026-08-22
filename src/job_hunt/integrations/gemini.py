@@ -193,14 +193,37 @@ class GeminiWorkflowAI:
             "job_json": job.model_dump(mode="json"),
         }
 
+    @staticmethod
+    def _runtime_definition(
+        definition: PromptDefinition,
+        values: Mapping[str, object],
+    ) -> PromptDefinition:
+        if definition.key not in {"cv_project_rewrite", "cv_work_experience_rewrite"}:
+            return definition
+        rewrite_inputs = values.get("rewrite_inputs_json")
+        if not isinstance(rewrite_inputs, list):
+            raise ConfigurationError(f"{definition.key} requires rewrite_inputs_json as an array")
+
+        schema = json.loads(json.dumps(definition.output_structure))
+        properties = schema.get("properties")
+        contents = properties.get("contents") if isinstance(properties, dict) else None
+        if not isinstance(contents, dict) or contents.get("type") != "array":
+            raise ConfigurationError(f"{definition.key} output schema must define contents as an array")
+
+        expected_count = len(rewrite_inputs)
+        contents["minItems"] = expected_count
+        contents["maxItems"] = expected_count
+        return definition.model_copy(update={"output_structure": schema})
+
     def _run(
         self,
         definition: PromptDefinition,
         values: Mapping[str, object],
     ) -> dict[str, Any]:
+        runtime_definition = self._runtime_definition(definition, values)
         return self.client.generate(
             _render(definition.template, values, definition.key),
-            definition,
+            runtime_definition,
         )
 
     def qualify(
