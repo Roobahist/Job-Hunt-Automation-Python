@@ -114,10 +114,14 @@ def test_repository_create_find_status_and_narrow_updates() -> None:
     assert repo.has_status(3, "dropped")
     assert not repo.has_status(3, "applied")
 
-    updates_before_reset = len(client.updates)
     reset = repo.reset(3, job)
-    assert reset == {"id": 3}
-    assert len(client.updates) == updates_before_reset
+    assert reset["id"] == 3
+    assert client.updates[-1]["Job ID"] == 4452378707
+    assert client.updates[-1]["Link"] == job.url
+    assert "Score" not in client.updates[-1]
+    assert "CV" not in client.updates[-1]
+    assert "Cover Letter" not in client.updates[-1]
+    assert "Status" not in client.updates[-1]
 
     repo.save_qualification(3, Qualification(score=20, should_apply=False, reasoning="low"))
     assert client.updates[-1] == {"Score": 20, "Apply": False}
