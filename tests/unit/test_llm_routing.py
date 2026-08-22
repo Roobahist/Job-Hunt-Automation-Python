@@ -8,6 +8,7 @@ import pytest
 from job_hunt.config import LlmRoute, Settings
 from job_hunt.domain.models import PromptDefinition
 from job_hunt.errors import ConfigurationError, ErrorKind, ProviderError
+from job_hunt.integrations import llm_routing
 from job_hunt.integrations.gemini import GeminiStructuredClient
 from job_hunt.integrations.llm_routing import (
     LiteLLMGatewayClient,
@@ -159,6 +160,59 @@ def test_gateway_client_sends_group_schema_and_authentication() -> None:
     assert request.headers["authorization"] == "Bearer secret"
     assert payload["model"] == "job-powerful"
     assert payload["response_format"]["type"] == "json_schema"
+
+
+def test_gateway_logs_actual_deployment_when_response_model_is_alias(monkeypatch: pytest.MonkeyPatch) -> None:
+    events: list[tuple[str, dict[str, object]]] = []
+    model_info_requests = 0
+
+    class CaptureLogger:
+        def info(self, event: str, **kwargs: object) -> None:
+            events.append((event, kwargs))
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal model_info_requests
+        if request.url.path == "/v1/model/info":
+            model_info_requests += 1
+            return httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {
+                            "model_name": "job-powerful",
+                            "litellm_params": {"model": "groq/openai/gpt-oss-120b"},
+                            "model_info": {"id": "deployment-123"},
+                        }
+                    ]
+                },
+            )
+        return httpx.Response(
+            200,
+            headers={"x-litellm-model-id": "deployment-123"},
+            json={
+                "model": "job-powerful",
+                "choices": [{"message": {"content": '{"compatible":true}'}}],
+                "usage": {"total_tokens": 4},
+            },
+        )
+
+    monkeypatch.setattr(llm_routing, "logger", lambda: CaptureLogger())
+    client = LiteLLMGatewayClient(
+        "http://litellm:4000",
+        "secret",
+        "job-powerful",
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert client.generate("prompt", definition("cover_letter_generation")) == {"compatible": True}
+    assert client.generate("prompt", definition("cover_letter_generation")) == {"compatible": True}
+    generation_events = [fields for event, fields in events if event == "llm_generation"]
+    assert len(generation_events) == 2
+    assert generation_events[0]["model_group"] == "job-powerful"
+    assert generation_events[0]["upstream_provider"] == "groq"
+    assert generation_events[0]["upstream_model"] == "groq/openai/gpt-oss-120b"
+    assert generation_events[0]["deployment_id"] == "deployment-123"
+    assert model_info_requests == 1
 
 
 def test_gateway_client_uses_independent_repair_route_for_invalid_json() -> None:
