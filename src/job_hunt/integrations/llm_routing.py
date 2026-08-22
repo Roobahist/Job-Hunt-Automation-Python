@@ -111,6 +111,7 @@ class LiteLLMGatewayClient(GeminiStructuredClient):
             timeout=timeout_seconds,
             transport=transport,
         )
+        self._deployment_catalog: dict[str, tuple[str | None, str]] | None = None
 
     def _repair_via_routes(
         self,
@@ -130,6 +131,54 @@ class LiteLLMGatewayClient(GeminiStructuredClient):
             _repair_prompt(raw_output, schema, validation_error),
             _repair_definition(operation, schema),
         )
+
+    def _load_deployment_catalog(self) -> dict[str, tuple[str | None, str]]:
+        if self._deployment_catalog is not None:
+            return self._deployment_catalog
+
+        catalog: dict[str, tuple[str | None, str]] = {}
+        try:
+            response = self.client.get("/v1/model/info")
+            response.raise_for_status()
+            payload = response.json()
+            entries = payload.get("data", []) if isinstance(payload, Mapping) else []
+            for entry in entries:
+                if not isinstance(entry, Mapping):
+                    continue
+                model_info = entry.get("model_info", {})
+                params = entry.get("litellm_params", {})
+                if not isinstance(model_info, Mapping) or not isinstance(params, Mapping):
+                    continue
+                deployment_id = str(model_info.get("id", "")).strip()
+                provider_model = str(params.get("model", "")).strip()
+                if not deployment_id or not provider_model:
+                    continue
+                provider = provider_model.split("/", 1)[0] if "/" in provider_model else None
+                catalog[deployment_id] = (provider, provider_model)
+        except (httpx.HTTPError, ValueError, TypeError):
+            # Observability must never turn a successful LLM completion into a failed job.
+            catalog = {}
+
+        self._deployment_catalog = catalog
+        return catalog
+
+    def _upstream_identity(
+        self,
+        response: httpx.Response,
+        payload: Mapping[str, Any],
+    ) -> tuple[str | None, str | None, str | None]:
+        deployment_id = response.headers.get("x-litellm-model-id")
+        if deployment_id:
+            identity = self._load_deployment_catalog().get(deployment_id)
+            if identity is not None:
+                provider, model = identity
+                return provider, model, deployment_id
+
+        payload_model = str(payload.get("model", "")).strip()
+        if payload_model and payload_model != self.model:
+            provider = payload_model.split("/", 1)[0] if "/" in payload_model else None
+            return provider, payload_model, deployment_id
+        return None, None, deployment_id
 
     def generate(self, prompt: str, definition: PromptDefinition) -> dict[str, Any]:
         started = time.perf_counter()
@@ -210,12 +259,15 @@ class LiteLLMGatewayClient(GeminiStructuredClient):
             )
             repaired = True
 
+        upstream_provider, upstream_model, deployment_id = self._upstream_identity(response, payload)
         logger().info(
             "llm_generation",
             prompt_key=definition.key,
             provider="litellm",
             model_group=self.model,
-            upstream_model=payload.get("model"),
+            upstream_provider=upstream_provider,
+            upstream_model=upstream_model,
+            deployment_id=deployment_id,
             latency_ms=int((time.perf_counter() - started) * 1000),
             usage=payload.get("usage", {}),
             repaired=repaired,
