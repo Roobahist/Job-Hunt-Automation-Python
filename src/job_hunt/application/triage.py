@@ -130,7 +130,7 @@ def triage_new_jobs(
     scanned, candidates = _candidate_rows(rows, new_status_id=new_status_id, after_id=after_id)
     processed = kept = dropped = compatibility_dropped = qualification_dropped = 0
     scored = reused_scores = errors = 0
-    next_after_id: int | None = after_id
+    next_after_id: int | None = None
 
     for row in candidates:
         if limit is not None and processed >= limit:
@@ -138,8 +138,6 @@ def triage_new_jobs(
         processed += 1
 
         row_id = _row_id(row) or -1
-        if row_id > 0:
-            next_after_id = row_id
         title = str(row.get("Title") or "").strip()
         company_name = str(row.get("Company Name") or "").strip()
 
@@ -160,6 +158,7 @@ def triage_new_jobs(
                         reason="compatibility",
                     )
                 )
+                next_after_id = job.internal_id
                 continue
 
             existing_score = _existing_score(row.get("Score"))
@@ -188,6 +187,7 @@ def triage_new_jobs(
                         score=score,
                     )
                 )
+                next_after_id = job.internal_id
                 continue
 
             kept += 1
@@ -201,6 +201,7 @@ def triage_new_jobs(
                     score=score,
                 )
             )
+            next_after_id = job.internal_id
         except Exception as exc:
             errors += 1
             decisions.append(
@@ -212,6 +213,7 @@ def triage_new_jobs(
                     reason=str(exc),
                 )
             )
+            break
 
     return TriageSummary(
         scanned=scanned,
