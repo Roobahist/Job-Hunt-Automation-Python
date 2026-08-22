@@ -82,6 +82,10 @@ def triage_new(
     tenant: str,
     dry_run: Annotated[bool, typer.Option("--dry-run", help="Evaluate rows without changing Baserow.")] = False,
     limit: Annotated[int | None, typer.Option("--limit", min=1, help="Process at most this many New rows.")] = None,
+    after_id: Annotated[
+        int | None,
+        typer.Option("--after-id", min=0, help="Only process New rows whose Baserow row ID is greater than this cursor."),
+    ] = None,
 ) -> None:
     services = Container(_settings()).tenant(tenant, checkpoint_namespace=f"triage-new:{tenant}")
     compatibility_filter = services.workflow.compatibility_filter
@@ -100,6 +104,7 @@ def triage_new(
         master_cv=services.context.master_cv,
         dry_run=dry_run,
         limit=limit,
+        after_id=after_id,
     )
 
     for decision in summary.decisions:
@@ -109,13 +114,17 @@ def triage_new(
             f"company={decision.company_name!r} title={decision.title!r} reason={decision.reason}"
         )
 
+    next_cursor = str(summary.next_after_id) if summary.next_after_id is not None else "none"
     typer.echo(
         "SUMMARY "
         f"scanned={summary.scanned} processed={summary.processed} kept={summary.kept} "
         f"dropped={summary.dropped} compatibility_dropped={summary.compatibility_dropped} "
         f"qualification_dropped={summary.qualification_dropped} scored={summary.scored} "
-        f"reused_scores={summary.reused_scores} errors={summary.errors} dry_run={dry_run}"
+        f"reused_scores={summary.reused_scores} errors={summary.errors} dry_run={dry_run} "
+        f"next_after_id={next_cursor}"
     )
+    if summary.next_after_id is not None:
+        typer.echo(f"NEXT: job-hunt triage-new {tenant} --limit {limit or 100} --after-id {summary.next_after_id}")
     if summary.errors:
         raise typer.Exit(2)
 
