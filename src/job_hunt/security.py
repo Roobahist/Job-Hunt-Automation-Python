@@ -25,6 +25,8 @@ def validate_public_url(
     parts = urlsplit(url)
     if parts.scheme not in {"http", "https"} or not parts.hostname:
         raise WorkflowError("Only public HTTP(S) URLs are accepted", ErrorKind.VALIDATION)
+    if parts.username is not None or parts.password is not None:
+        raise WorkflowError("Credential-bearing URLs are not accepted", ErrorKind.VALIDATION)
     try:
         records = resolver(parts.hostname, parts.port or (443 if parts.scheme == "https" else 80))
     except OSError as exc:
