@@ -275,6 +275,40 @@ def _nonnegative_int(env: Mapping[str, str], name: str, default: int) -> int:
     return value
 
 
+def _fallback_map(fallbacks: Sequence[Mapping[str, Sequence[str]]]) -> dict[str, list[str]]:
+    result: dict[str, list[str]] = {}
+    for entry in fallbacks:
+        for source, targets in entry.items():
+            result[str(source)] = [str(target) for target in targets]
+    return result
+
+
+def _reachable_groups(start: str, fallbacks: Mapping[str, Sequence[str]]) -> list[str]:
+    ordered: list[str] = []
+    pending = [start]
+    while pending:
+        group = pending.pop(0)
+        if group in ordered:
+            continue
+        ordered.append(group)
+        pending.extend(str(target) for target in fallbacks.get(group, ()))
+    return ordered
+
+
+def _router_retry_budget(
+    model_list: Sequence[Mapping[str, Any]],
+    fallbacks: Sequence[Mapping[str, Sequence[str]]],
+) -> int:
+    counts: dict[str, int] = {}
+    for entry in model_list:
+        group = str(entry.get("model_name", ""))
+        if group:
+            counts[group] = counts.get(group, 0) + 1
+    fallback_map = _fallback_map(fallbacks)
+    route_sizes = [sum(counts.get(group, 0) for group in _reachable_groups(start, fallback_map)) for start in counts]
+    return max(0, max(route_sizes, default=1) - 1)
+
+
 def build_litellm_config(
     *,
     env: Mapping[str, str],
@@ -306,14 +340,16 @@ def build_litellm_config(
     if "repair-fast" in present_groups and "repair-balanced" in present_groups:
         fallbacks.append({"repair-fast": ["repair-balanced"]})
 
-    # The application defines capability groups and fallback intent. LiteLLM owns
-    # deployment selection, provider-normalized retries, cooldowns, and failover.
-    # Avoid deriving retry counts from our deployment topology or duplicating its router.
+    # LiteLLM owns the retry loop. A failed deployment is cooled immediately, and the
+    # retry budget scales with the generated routing topology so the proxy can try every
+    # deployment reachable from the largest capability/fallback path before surfacing an error.
+    retry_budget = _router_retry_budget(model_list, fallbacks)
     return {
         "model_list": model_list,
         "router_settings": {
             "routing_strategy": env.get("LITELLM_ROUTING_STRATEGY", "latency-based-routing"),
-            "allowed_fails": _nonnegative_int(env, "LITELLM_ALLOWED_FAILS", 1),
+            "num_retries": retry_budget,
+            "allowed_fails": 0,
             "cooldown_time": _nonnegative_int(env, "LITELLM_COOLDOWN_SECONDS", 65),
             "fallbacks": fallbacks,
         },
