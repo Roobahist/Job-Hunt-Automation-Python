@@ -29,6 +29,7 @@ class TriageSummary:
     scored: int
     reused_scores: int
     errors: int
+    next_after_id: int | None
     decisions: tuple[TriageDecision, ...]
 
 
@@ -36,6 +37,11 @@ def _select_option_id(value: object) -> int | None:
     if isinstance(value, Mapping):
         candidate = value.get("id")
         return candidate if isinstance(candidate, int) and not isinstance(candidate, bool) else None
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _row_id(row: Mapping[str, Any]) -> int | None:
+    value = row.get("id")
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
@@ -73,8 +79,8 @@ def _existing_score(value: object) -> int | None:
 
 
 def job_from_baserow_row(row: Mapping[str, Any]) -> Job:
-    row_id = row.get("id")
-    if not isinstance(row_id, int) or isinstance(row_id, bool):
+    row_id = _row_id(row)
+    if row_id is None:
         raise ValueError("Baserow row is missing an integer id")
     return Job(
         source="baserow-maintenance",
@@ -89,6 +95,23 @@ def job_from_baserow_row(row: Mapping[str, Any]) -> Job:
     )
 
 
+def _candidate_rows(
+    rows: Iterable[Mapping[str, Any]],
+    *,
+    new_status_id: int,
+    after_id: int | None,
+) -> tuple[int, list[Mapping[str, Any]]]:
+    materialized = list(rows)
+    candidates = [
+        row
+        for row in materialized
+        if _select_option_id(row.get("Status")) == new_status_id
+        and (after_id is None or (_row_id(row) is not None and _row_id(row) > after_id))
+    ]
+    candidates.sort(key=lambda row: _row_id(row) if _row_id(row) is not None else 2**63 - 1)
+    return len(materialized), candidates
+
+
 def triage_new_jobs(
     *,
     rows: Iterable[Mapping[str, Any]],
@@ -101,21 +124,22 @@ def triage_new_jobs(
     master_cv: Mapping[str, Any],
     dry_run: bool = False,
     limit: int | None = None,
+    after_id: int | None = None,
 ) -> TriageSummary:
     decisions: list[TriageDecision] = []
-    scanned = processed = kept = dropped = compatibility_dropped = qualification_dropped = 0
+    scanned, candidates = _candidate_rows(rows, new_status_id=new_status_id, after_id=after_id)
+    processed = kept = dropped = compatibility_dropped = qualification_dropped = 0
     scored = reused_scores = errors = 0
+    next_after_id: int | None = after_id
 
-    for row in rows:
-        scanned += 1
-        if _select_option_id(row.get("Status")) != new_status_id:
-            continue
+    for row in candidates:
         if limit is not None and processed >= limit:
             break
         processed += 1
 
-        row_id_value = row.get("id")
-        row_id = row_id_value if isinstance(row_id_value, int) and not isinstance(row_id_value, bool) else -1
+        row_id = _row_id(row) or -1
+        if row_id > 0:
+            next_after_id = row_id
         title = str(row.get("Title") or "").strip()
         company_name = str(row.get("Company Name") or "").strip()
 
@@ -199,5 +223,6 @@ def triage_new_jobs(
         scored=scored,
         reused_scores=reused_scores,
         errors=errors,
+        next_after_id=next_after_id,
         decisions=tuple(decisions),
     )
