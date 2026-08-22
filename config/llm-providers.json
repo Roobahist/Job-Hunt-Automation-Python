@@ -34,7 +34,7 @@
       ]
     },
     {
-      "name": "gemini",
+      "name": "gemini-fast",
       "litellm_prefix": "gemini",
       "api_key_prefix": "GEMINI_API_KEY_",
       "enabled": true,
@@ -44,9 +44,35 @@
       },
       "models": {
         "fast": ["gemini-3.5-flash-lite"],
+        "balanced": [],
+        "powerful": []
+      },
+      "litellm_params": {
+        "rpm": 15,
+        "tpm": 250000
+      },
+      "observed_daily_request_limit": 500,
+      "exclude_models": []
+    },
+    {
+      "name": "gemini-balanced",
+      "litellm_prefix": "gemini",
+      "api_key_prefix": "GEMINI_API_KEY_",
+      "enabled": true,
+      "fill_missing_groups": false,
+      "discovery": {
+        "enabled": false
+      },
+      "models": {
+        "fast": [],
         "balanced": ["gemini-3.5-flash"],
         "powerful": []
       },
+      "litellm_params": {
+        "rpm": 5,
+        "tpm": 250000
+      },
+      "observed_daily_request_limit": 20,
       "exclude_models": []
     },
     {
