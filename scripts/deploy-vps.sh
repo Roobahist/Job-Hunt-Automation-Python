@@ -29,7 +29,6 @@ while (($#)); do
             ;;
         --dry-run)
             dry_run=true
-            shift
             ;;
         -h|--help)
             usage
@@ -114,9 +113,9 @@ classify_path() {
             ;;
     esac
 
-    # HTTP/operator-only code can use the lightweight application image without rebuilding TeX.
+    # HTTP/operator/config-generation code uses only the lightweight application image.
     case "$path" in
-        src/job_hunt/api/*|src/job_hunt/cli.py|src/job_hunt/queueing.py|src/job_hunt/application/triage.py|scripts/generate-litellm-config.py)
+        src/job_hunt/api/*|src/job_hunt/cli.py|src/job_hunt/queueing.py|src/job_hunt/application/triage.py|src/job_hunt/integrations/litellm_config.py|scripts/generate-litellm-config.py)
             printf '2'
             return
             ;;
