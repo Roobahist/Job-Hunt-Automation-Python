@@ -727,6 +727,7 @@ def process_submission(
     force: bool = False,
     snapshot_id: str | None = None,
     checkpoint_namespace: str | None = None,
+    resume_row_id: int | None = None,
 ) -> dict[str, Any]:
     store = _store()
     identifier = UUID(run_id)
@@ -735,7 +736,7 @@ def process_submission(
     chat_id: str | None = None
     active_stage = "normalization"
     retry_number = int(getattr(self.request, "retries", 0))
-    resume_row_id = _resume_row_id(store, identifier, retry_number)
+    owned_row_id = resume_row_id if resume_row_id is not None else _resume_row_id(store, identifier, retry_number)
     store.update(
         identifier,
         state=RunState.RUNNING,
@@ -801,7 +802,7 @@ def process_submission(
                 force=force,
                 progress=progress,
                 persisted=persisted,
-                resume_row_id=resume_row_id,
+                resume_row_id=owned_row_id,
             )
         finally:
             if lock.owned():
