@@ -105,12 +105,41 @@ Generated application messages can expose workflow actions such as opening the j
 
 ## Deployment checks
 
-For normal VPS deployments use:
+Normal VPS deployment uses the change-aware deployment script:
 
 ```bash
 bash scripts/deploy-vps.sh
 ```
 
-The script performs a fast-forward-only pull, builds the required images, regenerates `config/litellm.runtime.yaml`, recreates LiteLLM, verifies LiteLLM liveliness and configured capability groups, validates the tenant/application configuration, starts the workers, and checks API and Redis health.
+Preview its decision without changing the checkout or containers:
 
-Use `bash scripts/test-vps.sh` to run the repository test service against the current VPS checkout.
+```bash
+bash scripts/deploy-vps.sh --dry-run
+```
+
+The script selects the lowest safe level from the changed paths:
+
+- Level 0: Git fast-forward only for documentation/tests/example configuration.
+- Level 1: runtime refresh without image builds for mounted configuration/tenant assets or explicit VPS-local `.env` changes.
+- Level 2: rebuild the lightweight application image for API/operator-only code while leaving the TeX document image untouched.
+- Level 3: full application + document image rebuild and validations for shared worker/rendering/dependency/build changes.
+
+Only `worker-documents` uses the TeX-enabled image. `api`, `worker-fast`, `worker-notifications`, Beat, and Flower reuse the lightweight application image.
+
+When forcing an explicit level:
+
+```bash
+bash scripts/deploy-vps.sh --level 1
+bash scripts/deploy-vps.sh --level 2
+bash scripts/deploy-vps.sh --level 3
+```
+
+Use Level 1 after a VPS-local `.env` change because Git cannot detect it. Use Level 3 after Dockerfile, Compose, dependency, deployment-script, shared worker, or rendering changes. The first deployment after changing the deployment topology itself must be Level 3.
+
+The deployment script performs LiteLLM regeneration/reload and LaTeX validation only when the selected path requires them, then checks Compose state, API liveness/readiness, and Redis.
+
+Run repository tests on the VPS with:
+
+```bash
+bash scripts/test-vps.sh
+```
