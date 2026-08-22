@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import Any, cast
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -21,8 +22,10 @@ class BaserowClient:
         *,
         timeout_seconds: int = 60,
     ) -> None:
+        self._base_url = base_url.rstrip("/")
+        self._base_origin = urlsplit(self._base_url)
         self._client = client or httpx.Client(
-            base_url=base_url.rstrip("/"),
+            base_url=self._base_url,
             headers={"Authorization": f"Token {token}"},
             timeout=timeout_seconds,
         )
@@ -57,13 +60,13 @@ class BaserowClient:
             ) from exc
         if not isinstance(payload, dict):
             raise ProviderError(
-                f"Baserow returned an unexpected JSON payload type: {type(payload).__name__}",
+                "Baserow returned JSON that was not an object",
                 ErrorKind.MALFORMED_PROVIDER_RESPONSE,
                 retryable=True,
                 provider="baserow",
                 status_code=response.status_code,
             )
-        return payload
+        return cast(dict[str, Any], payload)
 
     def _row_page(self, url: str, query: Mapping[str, Any]) -> dict[str, Any]:
         response = self._request("GET", url, params=dict(query))
@@ -71,7 +74,7 @@ class BaserowClient:
         results = payload.get("results")
         if not isinstance(results, list):
             raise ProviderError(
-                "Baserow row-list response is missing a results array",
+                "Baserow row page is missing a results array",
                 ErrorKind.MALFORMED_PROVIDER_RESPONSE,
                 retryable=True,
                 provider="baserow",
@@ -79,14 +82,31 @@ class BaserowClient:
             )
         return payload
 
+    def _pagination_url(self, value: object) -> str | None:
+        if not value:
+            return None
+        raw = str(value).strip()
+        if not raw:
+            return None
+        parsed = urlsplit(raw)
+        if not parsed.scheme and not parsed.netloc:
+            return raw
+        if parsed.hostname != self._base_origin.hostname:
+            raise ProviderError(
+                f"Baserow pagination URL changed host from {self._base_origin.hostname!r} to {parsed.hostname!r}",
+                ErrorKind.MALFORMED_PROVIDER_RESPONSE,
+                provider="baserow",
+            )
+        path = parsed.path or "/"
+        return f"{path}?{parsed.query}" if parsed.query else path
+
     def iter_rows(self, table_id: int, **params: object) -> Iterator[dict[str, Any]]:
         url: str | None = f"/api/database/rows/table/{table_id}/"
         query: dict[str, Any] = {"user_field_names": "true", "size": 200, **params}
         while url:
             payload = retry_transient(self._row_page, url, query)
             yield from payload["results"]
-            next_url = payload.get("next")
-            url = str(next_url) if next_url else None
+            url = self._pagination_url(payload.get("next"))
             query = {}
 
     def get_row(self, table_id: int, row_id: int) -> dict[str, Any]:
@@ -139,11 +159,8 @@ class BaserowClient:
         try:
             payload = response.json()
         except ValueError as exc:
-            content_type = response.headers.get("content-type", "unknown")
-            preview = response.text[:200].replace("\n", " ").strip() or "<empty body>"
             raise ProviderError(
-                f"Baserow returned a non-JSON field-list response (status={response.status_code}, "
-                f"content_type={content_type}, body={preview!r})",
+                "Baserow returned a non-JSON field list",
                 ErrorKind.MALFORMED_PROVIDER_RESPONSE,
                 retryable=True,
                 provider="baserow",
@@ -151,7 +168,7 @@ class BaserowClient:
             ) from exc
         if not isinstance(payload, list):
             raise ProviderError(
-                f"Baserow field-list response has unexpected type: {type(payload).__name__}",
+                "Baserow field list response was not an array",
                 ErrorKind.MALFORMED_PROVIDER_RESPONSE,
                 retryable=True,
                 provider="baserow",
@@ -193,8 +210,6 @@ class BaserowJobRepository:
         )
 
     def reset(self, row_id: int, job: Job) -> Mapping[str, Any]:
-        # Refresh source metadata while deliberately leaving qualification and artifact
-        # fields alone. Later workflow stages replace those only after new work succeeds.
         return self.client.update_row(self.table_id, row_id, self._job_fields(job))
 
     def clear_qualification(self, row_id: int) -> None:
